@@ -4,7 +4,7 @@ World Is Agent is in experimental MVP0 development.
 
 This document is the public source of truth for current repository capabilities, validation scope, and known limits.
 
-Last updated: 2026-09-04.
+Last updated: 2026-09-06.
 
 ## Validation Scope
 
@@ -37,8 +37,10 @@ Stardew Valley is the first real adapter and validation environment.
 | Memory | Process-local short-term memory scoped by AgentSession. |
 | Definitions | Optional static Runtime catalog for Game Definitions and Agent Definitions scoped by `game_id + definition_id`. |
 | Context | Runtime Context Engine builds stable Context Projection from event, ContextFacts, observation, recent memory, current-turn transcript, definitions, Agent Instance Descriptor, runtime policy, and Turn Tool View snapshot. |
+| Context budget | Deterministic provider-neutral estimated-token budget selection, section cropping, tool size admission, and final request hard gates. |
+| Context diagnostics | `ContextBuildReport` and bounded `ToolAdmissionReport` summaries record fallback, cropping, dropped content, tool admission, and final request estimated-token size. |
 | Providers | Provider-neutral model interface with Fake, DeepSeek, and OpenAI implementations. |
-| Trace | JSONL turn trace written under `runtime/.local/traces.jsonl`. |
+| Trace | JSONL turn trace written under `runtime/.local/traces.jsonl`, including bounded context request summaries. |
 
 ## Experimental
 
@@ -57,8 +59,8 @@ Stardew Valley is the first real adapter and validation environment.
 | Area | Current limit |
 | --- | --- |
 | Durable agent state | Memory is in-process and lost on runtime restart. |
-| Context Budget and BuildReport | Budgeted selection/cropping, tool size admission, BuildReport, and comprehensive context diagnostics remain future Phase7 work. |
 | Long-term semantic memory | No vector store, embedding index, or durable episodic memory backend. |
+| Provider-specific token sizing | Context budget uses deterministic estimated tokens, not exact provider tokenizer or automatic model window detection. |
 | Automatic reconnect | Adapter reconnect and environment recovery are future work. |
 | Durable async continuation | Async action waiting is process-local. |
 | Cross-stream ordering | Same-agent FIFO is validated inside one live EnvironmentSession. |

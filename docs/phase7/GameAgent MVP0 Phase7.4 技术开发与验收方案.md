@@ -1,13 +1,15 @@
 # GameAgent MVP0 Phase7.4 技术开发与验收方案
 
-> **Status:** Implementation Plan Accepted
-> **Date:** 2026-09-04
+> **Status:** Accepted
+> **Date:** 2026-09-06
 > **Phase:** Phase7.4 Selection, Budget 与 Observability
 > **Roadmap Baseline:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md) v1.9
 > **Previous Gate:** Phase7.3 Accepted
 > **Review Required Before Coding:** Yes
 > **Code Baseline:** `main` @ `aff1826`
-> **Plan Amendment:** Token Budget Amendment accepted for implementation; Code Accepted remains pending user review.
+> **Accepted Commit:** `main` @ `e50794c`
+> **Review Result:** Accepted
+> **Plan Amendment:** Token Budget Amendment accepted and implemented.
 
 ---
 

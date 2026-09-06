@@ -1,14 +1,14 @@
 # GameAgent MVP0 Phase7.5 技术开发与验收方案
 
 > **Status:** Implementation Plan Draft
-> **Date:** 2026-09-04
+> **Date:** 2026-09-06
 > **Phase:** Phase7.5 Stardew Context Integration 与验收
 > **Roadmap Baseline:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md) v1.9
-> **Previous Gate:** Phase7.4 implementation in progress
+> **Previous Gate:** Phase7.4 Accepted
 > **Implementation Gate:** Phase7.4 Code Accepted
 > **Review Required Before Coding:** Yes
 > **Planning Baseline:** `main` @ `f4b1946`
-> **Coding Baseline:** 进入 Phase7.5 implementation 前记录 Phase7.4 Accepted commit
+> **Coding Baseline:** `main` @ `e50794c`
 
 ---
 
