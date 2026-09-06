@@ -1655,6 +1655,36 @@ func TestEstimateRequestTokensCountsMessageContentWithoutJSONEscaping(t *testing
 	}
 }
 
+func TestEstimateRequestTokensDoesNotDoubleCountRenderedToolTranscript(t *testing.T) {
+	content := `[{"id":"call_1","name":"inspect","arguments":{"topic":"生日快乐"}}]`
+	plain := model.Request{
+		Messages: []model.Message{{
+			Role:    model.RoleAssistant,
+			Content: content,
+		}},
+	}
+	withAuxiliaryFields := model.Request{
+		Messages: []model.Message{{
+			Role:    model.RoleAssistant,
+			Content: content,
+			ToolCalls: []model.ToolCall{{
+				ID:        "call_1",
+				Name:      "inspect",
+				Arguments: map[string]any{"topic": "生日快乐"},
+			}},
+		}},
+	}
+
+	plainSize := estimateRequestTokensForTest(t, plain)
+	auxiliarySize := estimateRequestTokensForTest(t, withAuxiliaryFields)
+	if auxiliarySize.MessagesEstimatedTokens != plainSize.MessagesEstimatedTokens {
+		t.Fatalf("MessagesEstimatedTokens = %d with auxiliary transcript fields, want %d", auxiliarySize.MessagesEstimatedTokens, plainSize.MessagesEstimatedTokens)
+	}
+	if auxiliarySize.TotalEstimatedTokens != plainSize.TotalEstimatedTokens {
+		t.Fatalf("TotalEstimatedTokens = %d with auxiliary transcript fields, want %d", auxiliarySize.TotalEstimatedTokens, plainSize.TotalEstimatedTokens)
+	}
+}
+
 func TestEstimateRequestTokensNormalizesToolInputSchemas(t *testing.T) {
 	compactSchema := `{"description":"你好","type":"object"}`
 	prettySchema := `{
@@ -1683,6 +1713,19 @@ func TestEstimateRequestTokensNormalizesToolInputSchemas(t *testing.T) {
 	}
 	if prettySize.TotalEstimatedTokens != compactSize.TotalEstimatedTokens {
 		t.Fatalf("TotalEstimatedTokens = %d for pretty schema, want compact estimate %d", prettySize.TotalEstimatedTokens, compactSize.TotalEstimatedTokens)
+	}
+}
+
+func TestEstimateRequestTokensRejectsToolSchemaTrailingContent(t *testing.T) {
+	_, err := agentcontext.EstimateRequestTokens(model.Request{
+		Tools: []model.ToolDefinition{{
+			Name:        "inspect",
+			Description: "Inspect.",
+			InputSchema: `{"type":"object"} trailing`,
+		}},
+	})
+	if err == nil {
+		t.Fatal("EstimateRequestTokens succeeded for schema with trailing content, want error")
 	}
 }
 

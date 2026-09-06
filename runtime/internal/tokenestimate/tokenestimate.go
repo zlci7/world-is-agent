@@ -2,6 +2,8 @@ package tokenestimate
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 )
 
@@ -49,13 +51,29 @@ func EstimateStableJSON(value any) (int, error) {
 
 // EstimateJSONDocument estimates a parsed JSON document after stable compaction.
 func EstimateJSONDocument(document string) (int, error) {
+	value, err := ParseJSONDocument(document)
+	if err != nil {
+		return 0, err
+	}
+	return EstimateStableJSON(value)
+}
+
+// ParseJSONDocument parses exactly one JSON document and preserves number text.
+func ParseJSONDocument(document string) (any, error) {
 	decoder := json.NewDecoder(strings.NewReader(document))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return EstimateStableJSON(value)
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("json document contains multiple values")
+		}
+		return nil, err
+	}
+	return value, nil
 }
 
 func isASCIIWordLike(r rune) bool {

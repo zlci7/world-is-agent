@@ -114,6 +114,20 @@ func TestEstimateJSONDocumentNormalizesEquivalentJSON(t *testing.T) {
 	}
 }
 
+func TestParseJSONDocumentRequiresSingleCompleteDocument(t *testing.T) {
+	if _, err := ParseJSONDocument(`{"type":"object"}   `); err != nil {
+		t.Fatalf("ParseJSONDocument(valid with trailing whitespace) error = %v", err)
+	}
+	for _, input := range []string{
+		`{"type":"object"} trailing`,
+		`{"type":"object"} {}`,
+	} {
+		if _, err := ParseJSONDocument(input); err == nil {
+			t.Fatalf("ParseJSONDocument(%q) succeeded, want error", input)
+		}
+	}
+}
+
 func repeatRune(r rune, count int) string {
 	out := make([]rune, count)
 	for i := range out {
