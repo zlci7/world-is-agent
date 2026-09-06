@@ -2396,6 +2396,43 @@ func TestHandleEventRejectsToolCallIDReusedAcrossSteps(t *testing.T) {
 	assertTraceContains(t, recorder.events, trace.EventTurnCompleted)
 }
 
+func TestHandleEventFailsWhenToolCallIDDuplicatedWithinStep(t *testing.T) {
+	registry := newSpeakRegistry()
+	env := &fakeEnvironment{}
+	recorder := &recordingTraceRecorder{}
+	provider := &scriptedProvider{
+		responses: []model.Response{{
+			Decision: model.ModelDecision{
+				ToolCalls: []model.ToolCall{
+					{ID: "call_1", Name: "speak", Arguments: map[string]any{"text": "first"}},
+					{ID: "call_1", Name: "speak", Arguments: map[string]any{"text": "duplicate"}},
+				},
+				Control: model.ControlDirective{Kind: model.ControlContinue},
+			},
+		}},
+	}
+	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
+	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
+
+	err := loop.HandleEvent(context.Background(), env, conn, key, entityTarget(key), registry, gameEvent("event_1", key))
+	if err == nil || !strings.Contains(err.Error(), "duplicate tool call id") {
+		t.Fatalf("HandleEvent error = %v, want duplicate tool call id invalid model response", err)
+	}
+	if got := len(provider.requests); got != 1 {
+		t.Fatalf("provider request count = %d, want no retry after duplicate tool call id", got)
+	}
+	if got := len(env.submittedActions); got != 0 {
+		t.Fatalf("submitted action count = %d, want 0", got)
+	}
+	completion := requireSingleTurnCompletion(t, env.turnCompletions)
+	if completion.Error == nil || completion.Error.Code != "invalid_model_response" {
+		t.Fatalf("completion error = %+v, want invalid_model_response", completion.Error)
+	}
+	assertTraceNotContains(t, recorder.events, trace.EventActionSubmitStarted)
+	assertTraceContains(t, recorder.events, trace.EventTurnFailed)
+}
+
 func TestHandleEventFailsWhenMaxStepsExceeded(t *testing.T) {
 	registry := newSpeakRegistry()
 	env := &fakeEnvironment{}

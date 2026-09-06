@@ -363,6 +363,19 @@ func (l *Loop) runBoundedSteps(
 			})
 			return err
 		}
+		if duplicateID, ok := duplicateToolCallIDWithinStep(calls); ok {
+			err := fmt.Errorf("%w: duplicate tool call id %q", errInvalidModelDecision, duplicateID)
+			turnTracer.Emit(trace.EventAgentStepFailed, trace.EventData{
+				Fields: trace.Fields{"step_index": stepIndex, "reason": "invalid_model_response"},
+			})
+			l.failTurn(ctx, env, turnTracer, key, event, turnID, "model", "invalid_model_response", err, trace.EventData{
+				Fields: trace.Fields{
+					"step_index":   stepIndex,
+					"tool_call_id": duplicateID,
+				},
+			})
+			return err
+		}
 		totalToolCalls += len(calls)
 		idValidationResults, hasPriorStepDuplicateID := validateToolCallIDsAcrossSteps(calls, seenToolCallIDs)
 		rememberToolCallIDs(calls, seenToolCallIDs)
@@ -772,6 +785,21 @@ func validateToolCallIDsAcrossSteps(calls []model.ToolCall, seen map[string]stru
 		results[i] = skippedToolResult(call, toolResultCodeBatchValidationFailed, "batch validation failed")
 	}
 	return results, true
+}
+
+func duplicateToolCallIDWithinStep(calls []model.ToolCall) (string, bool) {
+	seen := make(map[string]struct{}, len(calls))
+	for _, call := range calls {
+		id := strings.TrimSpace(call.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			return id, true
+		}
+		seen[id] = struct{}{}
+	}
+	return "", false
 }
 
 func rememberToolCallIDs(calls []model.ToolCall, seen map[string]struct{}) {
