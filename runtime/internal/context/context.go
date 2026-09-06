@@ -348,6 +348,12 @@ func sectionReportsForProjection(projection ContextProjection) SectionReports {
 
 func applyProjectionBudgets(projection ContextProjection, budget BudgetConfig, report ContextBuildReport) (ContextProjection, ContextBuildReport, error) {
 	sectionCropped := map[string]string{}
+	if report.RecentMemory.DroppedCount > 0 {
+		sectionCropped["recent_memory"] = ReasonMemoryBudgetExceeded
+	}
+	if report.Transcript.DroppedCount > 0 {
+		sectionCropped["current_turn_transcript"] = ReasonTranscriptBudgetExceeded
+	}
 	var err error
 	projection, definitionCrop, definitionErr := applyDefinitionBudget(projection, budget)
 	if definitionCrop.Agent {
@@ -484,6 +490,7 @@ func enforceGlobalRequestBudget(projection ContextProjection, budget BudgetConfi
 				return projection, report, err
 			}
 			report.addReason(ReasonRequiredContextOverBudget)
+			report = report.WithFinalRequestSize(size)
 			if RequiredRequestSectionExceedsBudget(size, budget) {
 				report.addReason(ReasonRequiredSectionOverBudget)
 			}
@@ -533,14 +540,21 @@ func dropOldestTranscriptGroup(projection *ContextProjection, report *ContextBui
 }
 
 func dropContextFactOptionalFields(projection *ContextProjection) bool {
+	droppedAttributes := false
+	for i := range projection.CurrentEventContextFacts {
+		if len(projection.CurrentEventContextFacts[i].Attributes) > 0 {
+			projection.CurrentEventContextFacts[i].Attributes = nil
+			droppedAttributes = true
+		}
+	}
+	if droppedAttributes {
+		return true
+	}
+
 	changed := false
 	for i := range projection.CurrentEventContextFacts {
 		if projection.CurrentEventContextFacts[i].Text != "" && projection.CurrentEventContextFacts[i].Text != truncatedMarker {
 			projection.CurrentEventContextFacts[i].Text = truncatedMarker
-			changed = true
-		}
-		if len(projection.CurrentEventContextFacts[i].Attributes) > 0 {
-			projection.CurrentEventContextFacts[i].Attributes = nil
 			changed = true
 		}
 	}

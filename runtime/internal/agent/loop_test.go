@@ -678,6 +678,14 @@ func TestHandleEventFailsBeforeProviderWhenRequestHardLimitExceeded(t *testing.T
 		agentcontext.ReasonRequiredContextOverBudget,
 		agentcontext.ReasonRequiredSectionOverBudget,
 	})
+	failed := traceEventsByName(recorder.events, trace.EventContextRequestBuildFailed)
+	if len(failed) != 1 {
+		t.Fatalf("context_request_build_failed event count = %d, want 1", len(failed))
+	}
+	totalTokens, ok := failed[0].Fields["request_total_estimated_tokens"].(int)
+	if !ok || totalTokens == 0 {
+		t.Fatalf("request_total_estimated_tokens = %#v, want non-zero int", failed[0].Fields["request_total_estimated_tokens"])
+	}
 	assertTraceNotContains(t, recorder.events, trace.EventModelRequestStarted)
 }
 

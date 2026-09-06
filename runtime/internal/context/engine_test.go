@@ -824,6 +824,10 @@ func TestEngineBuildReportsMemoryBudgetWithoutDroppingRequiredProjection(t *test
 	if result.Report.RecentMemory.DroppedCount != 1 {
 		t.Fatalf("RecentMemory.DroppedCount = %d, want 1", result.Report.RecentMemory.DroppedCount)
 	}
+	memorySection := reportSection(t, result.Report, "recent_memory")
+	if !memorySection.Cropped || memorySection.Reason != agentcontext.ReasonMemoryBudgetExceeded {
+		t.Fatalf("recent_memory section = %+v, want cropped with memory budget reason", memorySection)
+	}
 	if !reportHasReason(result.Report, agentcontext.ReasonMemoryBudgetExceeded) {
 		t.Fatalf("ReasonCodes = %v, want memory budget reason", result.Report.ReasonCodes)
 	}
@@ -1307,6 +1311,51 @@ func TestEngineBuildCropsStructuredSectionsWithoutInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestEngineBuildDropsContextFactAttributesBeforeShortText(t *testing.T) {
+	input := validEngineInput(t)
+	input.Event.ContextFacts = []*protocolv1alpha2.ContextFact{{
+		Kind:           "utterance",
+		ActorEntityId:  "player:local",
+		TargetEntityId: "npc:Abigail",
+		ScopeId:        "conversation:1",
+		Label:          "birthday",
+		Text:           "生日快乐",
+		Attributes: mustStruct(t, map[string]any{
+			"large": strings.Repeat("attribute-secret", 80),
+		}),
+	}}
+	expectedFacts := []agentcontext.ContextFactProjection{{
+		Kind:           "utterance",
+		ActorEntityID:  "player:local",
+		TargetEntityID: "npc:Abigail",
+		ScopeID:        "conversation:1",
+		Label:          "birthday",
+		Text:           "生日快乐",
+	}}
+	limit, err := tokenestimate.EstimateStableJSON(expectedFacts)
+	if err != nil {
+		t.Fatalf("EstimateStableJSON(expected facts) error = %v", err)
+	}
+
+	result, err := agentcontext.NewEngine(agentcontext.BudgetConfig{
+		MaxContextFactsTokens: limit,
+	}).Build(input)
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	fact := result.Projection.CurrentEventContextFacts[0]
+	if fact.Text != "生日快乐" {
+		t.Fatalf("fact text = %q, want short text preserved after attributes are dropped", fact.Text)
+	}
+	if len(fact.Attributes) != 0 {
+		t.Fatalf("fact attributes = %+v, want dropped", fact.Attributes)
+	}
+	section := reportSection(t, result.Report, "current_event_context_facts")
+	if !section.Cropped || section.Reason != agentcontext.ReasonContextFactsBudgetExceeded {
+		t.Fatalf("context fact section = %+v, want cropped with context facts reason", section)
+	}
+}
+
 func TestEngineBuildFailsWhenContextFactIdentityAndMarkerExceedSectionBudget(t *testing.T) {
 	input := validEngineInput(t)
 	input.Event.ContextFacts = []*protocolv1alpha2.ContextFact{{
@@ -1453,6 +1502,10 @@ func TestEngineBuildPreservesLatestTranscriptCausalGroupWithinBudget(t *testing.
 	}
 	if result.Report.Transcript.DroppedCount != 2 {
 		t.Fatalf("Transcript.DroppedCount = %d, want two old messages dropped", result.Report.Transcript.DroppedCount)
+	}
+	transcriptSection := reportSection(t, result.Report, "current_turn_transcript")
+	if !transcriptSection.Cropped || transcriptSection.Reason != agentcontext.ReasonTranscriptBudgetExceeded {
+		t.Fatalf("current_turn_transcript section = %+v, want cropped with transcript budget reason", transcriptSection)
 	}
 	if !reportHasReason(result.Report, agentcontext.ReasonTranscriptBudgetExceeded) {
 		t.Fatalf("ReasonCodes = %v, want transcript budget reason", result.Report.ReasonCodes)
@@ -1878,13 +1931,19 @@ func reportHasReason(report agentcontext.ContextBuildReport, reason string) bool
 func reportSectionProjectionEstimatedTokens(t *testing.T, report agentcontext.ContextBuildReport, name string) int {
 	t.Helper()
 
+	return reportSection(t, report, name).ProjectionEstimatedTokens
+}
+
+func reportSection(t *testing.T, report agentcontext.ContextBuildReport, name string) agentcontext.SectionReport {
+	t.Helper()
+
 	for _, section := range report.Sections {
 		if section.Name == name {
-			return section.ProjectionEstimatedTokens
+			return section
 		}
 	}
 	t.Fatalf("section %q not found in %+v", name, report.Sections)
-	return 0
+	return agentcontext.SectionReport{}
 }
 
 func mustMarshalProjectionJSON(t *testing.T, value any) []byte {
