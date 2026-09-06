@@ -476,7 +476,7 @@ Preflight 规则：
 2. 任一 ToolCall preflight 失败时，不发送任何 ActionRequest。
 3. preflight 失败的 call 生成 `status=invalid`。
 4. preflight 成功但因 batch preflight 原子失败未执行的 call 生成 `status=skipped, code=batch_validation_failed`。
-5. 同一 AgentStep 内 ToolCall.ID duplicate 属于 Scheduler preflight failure。
+5. 同一 AgentStep 内 ToolCall.ID duplicate 在 Phase7.4 后由 Loop 于模型响应边界拒绝为 `invalid_model_response`；Scheduler preflight 保留为执行层内部保护。
 6. 同一 Turn 内后续 AgentStep 复用已出现过的 ToolCall.ID 时，由 Loop 生成 model-visible preflight failure，不进入 Scheduler。
 7. Runtime 仅校验 InputSchema 的 top-level object / properties.type / required / enum / additionalProperties=false 子集；Adapter 仍负责业务级与完整 schema 校验。
 ```
@@ -1359,7 +1359,7 @@ git diff --check
 | provider internal settle sentinel | provider wrapper unit | sentinel 被剥离，不进入 ToolCalls / budget / Scheduler |
 | batch preflight failure | agent/scheduler unit | 不发送任何 ActionRequest，每个 proposed ToolCall 都有 ToolResult |
 | BuildActionRequest failure in preflight | scheduler unit | 不执行任何 ActionRequest |
-| duplicate ToolCall.ID in one step | scheduler unit | preflight failure |
+| duplicate ToolCall.ID in one step | agent unit | Phase7.4 后由 Loop 在写入 Transcript / Scheduler preflight 前拒绝为 invalid_model_response |
 | duplicate ToolCall.ID across steps | agent unit | model-visible preflight failure，不发送任何 ActionRequest |
 | valid calls skipped by batch validation | agent unit | skipped(batch_validation_failed) 进入 transcript |
 | prior group failure | scheduler/agent unit | 当前 group 完成，后续 group skipped(prior_group_failed) |

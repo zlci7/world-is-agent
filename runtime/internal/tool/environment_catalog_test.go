@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/model"
@@ -521,6 +522,51 @@ func TestBuildTurnToolViewBoundsAcceptedDiagnostics(t *testing.T) {
 	}
 }
 
+func TestBuildTurnToolViewBoundsDiagnosticNameLength(t *testing.T) {
+	acceptedName := "aaa_" + strings.Repeat("accepted_", MaxToolAdmissionDiagnosticNameRunes)
+	droppedName := "zzz_" + strings.Repeat("dropped_", MaxToolAdmissionDiagnosticNameRunes)
+	catalog := mustEnvironmentCatalog(t,
+		capability(acceptedName, "short", `{"type":"object"}`),
+		capability(droppedName, "short", `{"type":"object"}`),
+	)
+
+	result := catalog.BuildTurnToolView(ToolAdmissionConfig{
+		MaxToolCount:             1,
+		MaxToolDescriptionTokens: 64,
+		MaxToolSchemaTokens:      64,
+		MaxTotalToolSchemaTokens: 1024,
+	})
+
+	if _, ok := result.View.Lookup(acceptedName); !ok {
+		t.Fatal("accepted tool missing under its full name")
+	}
+	if got := result.View.Available()[0].Name; got != acceptedName {
+		t.Fatalf("model-visible tool name = %q, want full name", got)
+	}
+	if got := result.Report.AcceptedToolNames[0]; got == acceptedName || runeCount(got) > MaxToolAdmissionDiagnosticNameRunes || !strings.HasSuffix(got, "...") {
+		t.Fatalf("AcceptedToolNames[0] = %q, want bounded display name", got)
+	}
+	if got := result.Report.DroppedToolNames[0]; got == droppedName || runeCount(got) > MaxToolAdmissionDiagnosticNameRunes || !strings.HasSuffix(got, "...") {
+		t.Fatalf("DroppedToolNames[0] = %q, want bounded display name", got)
+	}
+	if got := result.Report.DroppedTools[0].Name; got == droppedName || runeCount(got) > MaxToolAdmissionDiagnosticNameRunes || !strings.HasSuffix(got, "...") {
+		t.Fatalf("DroppedTools[0].Name = %q, want bounded display name", got)
+	}
+}
+
+func TestToolAdmissionDiagnosticNameTruncationIsRuneSafe(t *testing.T) {
+	name := strings.Repeat("名", MaxToolAdmissionDiagnosticNameRunes)
+
+	got := diagnosticToolName(name + "tail")
+
+	if runeCount(got) > MaxToolAdmissionDiagnosticNameRunes || !strings.HasSuffix(got, "...") {
+		t.Fatalf("diagnosticToolName length/suffix = %q, want bounded name with suffix", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("diagnosticToolName produced invalid UTF-8: %q", got)
+	}
+}
+
 func invalidToolPolicyExtensions(t *testing.T) *structpb.Struct {
 	t.Helper()
 	extensions, err := structpb.NewStruct(map[string]any{
@@ -580,6 +626,10 @@ func assertToolAdmissionDrops(t *testing.T, report ToolAdmissionReport, want []T
 	if report.DroppedToolCount != len(want) {
 		t.Fatalf("DroppedToolCount = %d, want %d", report.DroppedToolCount, len(want))
 	}
+}
+
+func runeCount(value string) int {
+	return len([]rune(value))
 }
 
 func assertNilEnvironmentToolCatalogPanics(t *testing.T, access func(*EnvironmentToolCatalog)) {

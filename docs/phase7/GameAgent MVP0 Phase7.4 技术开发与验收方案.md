@@ -640,6 +640,8 @@ truncated_count
 stable reason code
 ```
 
+ToolAdmissionReport 中的工具名称是诊断展示名，不是 lookup key。展示名必须同时满足列表数量有界和单项长度有界；实际 Final TurnToolView / Scheduler lookup 继续使用完整 tool name。
+
 建议稳定 reason code：
 
 ```text
@@ -757,8 +759,11 @@ AgentLoop 负责：
 在 Turn setup 完成 Tool admission
 把 Final TurnToolView 传给每个 AgentStep
 buildModelRequest 合并 report、补齐 final request estimated token size、执行 hard gate
+在写入 Transcript / 调用 Scheduler 前拒绝同一 AgentStep 内重复 ToolCall.ID
 runBoundedSteps 消费 request / report / error，统一写 trace 和控制 Provider 调用
 ```
+
+ToolCall.ID 唯一性在 Phase7.4 后分为两层：同一步重复 ID 属于模型响应边界错误，由 Loop 以 `invalid_model_response` 结束当前 Turn；后续步骤复用此前 ID 继续由 Loop 生成 model-visible tool failure，不进入 Scheduler。Scheduler 保留 batch duplicate preflight 作为执行层内部保护。
 
 Phase7.4 引入 `BudgetConfig` 时，同步清理现有 `RendererConfig` / `NewRenderer(config)` 死配置。Renderer 保持无状态入口，避免形成 `EngineConfig`、`RendererConfig`、`BudgetConfig` 三份重复配置。
 

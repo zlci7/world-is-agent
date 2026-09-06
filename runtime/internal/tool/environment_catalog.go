@@ -68,7 +68,8 @@ const (
 	ToolDropReasonSchemaTooLarge            = "tool_schema_too_large"
 	ToolDropReasonTotalSchemaBudgetExceeded = "tool_total_schema_budget_exceeded"
 
-	MaxToolAdmissionDiagnosticNames = 16
+	MaxToolAdmissionDiagnosticNames     = 16
+	MaxToolAdmissionDiagnosticNameRunes = 128
 
 	defaultMaxToolCount             = 64
 	defaultMaxToolDescriptionTokens = 2048
@@ -302,13 +303,14 @@ func (c ToolAdmissionConfig) withDefaults() ToolAdmissionConfig {
 
 func (r *ToolAdmissionReport) addDrop(name string, reason string) {
 	r.DroppedToolCount++
+	displayName := diagnosticToolName(name)
 	if len(r.DroppedToolNames) < MaxToolAdmissionDiagnosticNames {
-		r.DroppedToolNames = append(r.DroppedToolNames, name)
+		r.DroppedToolNames = append(r.DroppedToolNames, displayName)
 	} else {
 		r.DroppedToolNamesTruncatedCount++
 	}
 	if len(r.DroppedTools) < MaxToolAdmissionDiagnosticNames {
-		r.DroppedTools = append(r.DroppedTools, ToolAdmissionDrop{Name: name, Reason: reason})
+		r.DroppedTools = append(r.DroppedTools, ToolAdmissionDrop{Name: displayName, Reason: reason})
 	} else {
 		r.DroppedToolsTruncatedCount++
 	}
@@ -321,10 +323,20 @@ func (r *ToolAdmissionReport) addDrop(name string, reason string) {
 func (r *ToolAdmissionReport) addAccepted(name string) {
 	r.AcceptedToolCount++
 	if len(r.AcceptedToolNames) < MaxToolAdmissionDiagnosticNames {
-		r.AcceptedToolNames = append(r.AcceptedToolNames, name)
+		r.AcceptedToolNames = append(r.AcceptedToolNames, diagnosticToolName(name))
 	} else {
 		r.AcceptedToolNamesTruncatedCount++
 	}
+}
+
+func diagnosticToolName(name string) string {
+	const suffix = "..."
+	runes := []rune(name)
+	if len(runes) <= MaxToolAdmissionDiagnosticNameRunes {
+		return name
+	}
+	keep := MaxToolAdmissionDiagnosticNameRunes - len([]rune(suffix))
+	return string(runes[:keep]) + suffix
 }
 
 func positiveOrDefault(value int, fallback int) int {

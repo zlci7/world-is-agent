@@ -1410,11 +1410,13 @@ Runtime 通用层 SHOULD 负责：
 Capability envelope 可解析
 Capability name 合法
 Tool 已注册
-ToolCall ID 在当前 batch / turn 内唯一
+ToolCall ID 在当前 AgentStep / Turn 内唯一
 ToolCall arguments 非 nil
 arguments 可被 Runtime / Protocol 动态结构承载
 ToolCall arguments 在 Protocol 边界转换为 google.protobuf.Struct
 ```
+
+同一 AgentStep 内重复 ToolCall.ID 属于模型响应边界错误，由 AgentLoop 在写入 Transcript 和调用 Scheduler 前拒绝；Scheduler 的 batch duplicate preflight 是执行层内部保护。
 
 Runtime 通用 Environment Tool 层 SHOULD NOT 负责：
 
