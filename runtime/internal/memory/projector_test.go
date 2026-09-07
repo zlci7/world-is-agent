@@ -20,8 +20,9 @@ func TestProjectorBuildsRecordFromSuccessfulTurn(t *testing.T) {
 	args := map[string]any{"text": "hello"}
 
 	record, err := projector.Project(memory.ProjectInput{
-		SessionKey: key,
-		TurnID:     "turn-1",
+		SessionKey:     key,
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindSettledTurn,
 		Event: &protocolv1alpha2.GameEvent{
 			EventId:   "event-1",
 			EventType: "player_interacted_with_npc",
@@ -50,6 +51,15 @@ func TestProjectorBuildsRecordFromSuccessfulTurn(t *testing.T) {
 
 	if record.MemoryID == "" {
 		t.Fatal("MemoryID is empty")
+	}
+	if record.ProjectionKind != memory.ProjectionKindSettledTurn {
+		t.Fatalf("ProjectionKind = %q, want %q", record.ProjectionKind, memory.ProjectionKindSettledTurn)
+	}
+	if record.ProjectionVersion != memory.ProjectionVersionRecentV1 {
+		t.Fatalf("ProjectionVersion = %d, want %d", record.ProjectionVersion, memory.ProjectionVersionRecentV1)
+	}
+	if record.ProjectionBatchKey != `["stardew-valley","world-a","npc:Abigail","turn-1","event-1","settled_turn",1]` {
+		t.Fatalf("ProjectionBatchKey = %q", record.ProjectionBatchKey)
 	}
 	if record.SessionKey != key {
 		t.Fatalf("SessionKey = %+v, want %+v", record.SessionKey, key)
@@ -89,14 +99,53 @@ func TestProjectorBuildsRecordFromSuccessfulTurn(t *testing.T) {
 	}
 }
 
+func TestProjectorBuildsDifferentProjectionBatchKeysForProjectionKinds(t *testing.T) {
+	projector := memory.NewProjector(func() time.Time { return time.Unix(200, 0) })
+	key := session.AgentSessionKey{GameID: "fake-game", WorldID: "world-a", EntityID: "agent-1"}
+	event := &protocolv1alpha2.GameEvent{EventId: "event-1"}
+
+	settled, err := projector.Project(memory.ProjectInput{
+		SessionKey:     key,
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindSettledTurn,
+		Event:          event,
+	})
+	if err != nil {
+		t.Fatalf("settled Project returned error: %v", err)
+	}
+	priorActions, err := projector.Project(memory.ProjectInput{
+		SessionKey:     key,
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindPriorSuccessfulActions,
+		Event:          event,
+		Outcomes: []memory.ProjectOutcome{{
+			ToolCall: model.ToolCall{Name: "speak"},
+			ActionResult: &protocolv1alpha2.ActionResult{
+				Status: protocolv1alpha2.ActionStatus_ACTION_STATUS_SUCCEEDED,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("prior actions Project returned error: %v", err)
+	}
+
+	if settled.ProjectionBatchKey == priorActions.ProjectionBatchKey {
+		t.Fatalf("ProjectionBatchKey should differ by projection kind: %q", settled.ProjectionBatchKey)
+	}
+	if priorActions.ProjectionBatchKey != `["fake-game","world-a","agent-1","turn-1","event-1","prior_successful_actions",1]` {
+		t.Fatalf("prior actions ProjectionBatchKey = %q", priorActions.ProjectionBatchKey)
+	}
+}
+
 func TestProjectorCopiesToolCallArgumentMap(t *testing.T) {
 	projector := memory.NewProjector(func() time.Time { return time.Unix(200, 0) })
 	args := map[string]any{"text": "hello"}
 
 	record, err := projector.Project(memory.ProjectInput{
-		SessionKey: session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
-		TurnID:     "turn-1",
-		Event:      &protocolv1alpha2.GameEvent{EventId: "event-1"},
+		SessionKey:     session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindSettledTurn,
+		Event:          &protocolv1alpha2.GameEvent{EventId: "event-1"},
 		ToolCall: model.ToolCall{
 			Name:      "speak",
 			Arguments: args,
@@ -121,8 +170,9 @@ func TestProjectorBuildsRecordWithMultipleOutcomes(t *testing.T) {
 	key := session.AgentSessionKey{GameID: "fake-game", WorldID: "world-a", EntityID: "npc:Abigail"}
 
 	record, err := projector.Project(memory.ProjectInput{
-		SessionKey: key,
-		TurnID:     "turn-1",
+		SessionKey:     key,
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindSettledTurn,
 		Event: &protocolv1alpha2.GameEvent{
 			EventId:   "event-1",
 			EventType: "player_interacted_with_npc",
@@ -184,9 +234,10 @@ func TestProjectorCopiesEventContextFacts(t *testing.T) {
 	}
 
 	record, err := projector.Project(memory.ProjectInput{
-		SessionKey: session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
-		TurnID:     "turn-1",
-		Event:      event,
+		SessionKey:     session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindSettledTurn,
+		Event:          event,
 		Outcomes: []memory.ProjectOutcome{{
 			ToolCall: model.ToolCall{Name: "present_dialogue", Arguments: map[string]any{"text": "Sure."}},
 			ActionResult: &protocolv1alpha2.ActionResult{
@@ -220,8 +271,9 @@ func TestProjectorBuildsRecordFromContextFactsWithoutOutcomes(t *testing.T) {
 	projector := memory.NewProjector(func() time.Time { return time.Unix(500, 0) })
 
 	record, err := projector.Project(memory.ProjectInput{
-		SessionKey: session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
-		TurnID:     "turn-1",
+		SessionKey:     session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindSettledTurn,
 		Event: &protocolv1alpha2.GameEvent{
 			EventId:   "event-1",
 			EventType: "player_said_to_npc",
@@ -250,7 +302,8 @@ func TestProjectorRejectsMissingTurnID(t *testing.T) {
 	projector := memory.NewProjector(func() time.Time { return time.Unix(200, 0) })
 
 	_, err := projector.Project(memory.ProjectInput{
-		SessionKey: session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
+		SessionKey:     session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
+		ProjectionKind: memory.ProjectionKindSettledTurn,
 		Event: &protocolv1alpha2.GameEvent{
 			EventId:   "event-1",
 			EventType: "player_interacted_with_npc",
@@ -265,12 +318,29 @@ func TestProjectorRejectsMissingTurnID(t *testing.T) {
 	}
 }
 
-func TestProjectorRejectsNilActionResult(t *testing.T) {
+func TestProjectorRejectsMissingProjectionKind(t *testing.T) {
 	projector := memory.NewProjector(func() time.Time { return time.Unix(200, 0) })
 
 	_, err := projector.Project(memory.ProjectInput{
 		SessionKey: session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
 		TurnID:     "turn-1",
+		Event: &protocolv1alpha2.GameEvent{
+			EventId:   "event-1",
+			EventType: "player_interacted_with_npc",
+		},
+	})
+	if !errors.Is(err, memory.ErrProject) {
+		t.Fatalf("Project error = %v, want ErrProject", err)
+	}
+}
+
+func TestProjectorRejectsNilActionResult(t *testing.T) {
+	projector := memory.NewProjector(func() time.Time { return time.Unix(200, 0) })
+
+	_, err := projector.Project(memory.ProjectInput{
+		SessionKey:     session.AgentSessionKey{GameID: "stardew-valley", WorldID: "world-a", EntityID: "npc:Abigail"},
+		TurnID:         "turn-1",
+		ProjectionKind: memory.ProjectionKindSettledTurn,
 		Event: &protocolv1alpha2.GameEvent{
 			EventId:   "event-1",
 			EventType: "player_interacted_with_npc",

@@ -49,6 +49,7 @@ type BudgetConfig struct {
 	MaxEventTokens                int
 	MaxContextFactsTokens         int
 	MaxRecentMemoryTokens         int
+	MaxRecentMemoryRecords        int
 	MaxTranscriptTokens           int
 	MaxToolCount                  int
 	MaxToolDescriptionTokens      int
@@ -135,6 +136,7 @@ func DefaultBudgetConfig() BudgetConfig {
 		MaxEventTokens:                4096,
 		MaxContextFactsTokens:         4096,
 		MaxRecentMemoryTokens:         4096,
+		MaxRecentMemoryRecords:        5,
 		MaxTranscriptTokens:           16384,
 		MaxToolCount:                  64,
 		MaxToolDescriptionTokens:      2048,
@@ -157,6 +159,7 @@ func (c BudgetConfig) WithDefaults() BudgetConfig {
 	c.MaxEventTokens = positiveOrDefault(c.MaxEventTokens, defaults.MaxEventTokens)
 	c.MaxContextFactsTokens = positiveOrDefault(c.MaxContextFactsTokens, defaults.MaxContextFactsTokens)
 	c.MaxRecentMemoryTokens = positiveOrDefault(c.MaxRecentMemoryTokens, defaults.MaxRecentMemoryTokens)
+	c.MaxRecentMemoryRecords = positiveOrDefault(c.MaxRecentMemoryRecords, defaults.MaxRecentMemoryRecords)
 	c.MaxTranscriptTokens = positiveOrDefault(c.MaxTranscriptTokens, defaults.MaxTranscriptTokens)
 	c.MaxToolCount = positiveOrDefault(c.MaxToolCount, defaults.MaxToolCount)
 	c.MaxToolDescriptionTokens = positiveOrDefault(c.MaxToolDescriptionTokens, defaults.MaxToolDescriptionTokens)
@@ -264,6 +267,7 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 	bounds := projectionBoundsFromEngineConfig(e.config)
 	recentMemory, recentMemoryReport := projectRecentMemories(
 		input.RecentMemories,
+		e.config.MaxRecentMemoryRecords,
 		e.config.MaxRecentMemoryTokens,
 		currentGameTimeFromEventObservation(input.Event, input.Observation),
 		bounds,

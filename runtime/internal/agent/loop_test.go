@@ -140,6 +140,30 @@ func (s failAppendStore) Recent(ctx context.Context, key session.AgentSessionKey
 	return nil, nil
 }
 
+type recordingRecentStore struct {
+	recentLimit int
+	records     []memory.Record
+}
+
+func (s *recordingRecentStore) Append(ctx context.Context, record memory.Record) error {
+	s.records = append(s.records, record)
+	return nil
+}
+
+func (s *recordingRecentStore) Recent(ctx context.Context, key session.AgentSessionKey, limit int) ([]memory.Record, error) {
+	s.recentLimit = limit
+	if limit <= 0 || len(s.records) == 0 {
+		return nil, nil
+	}
+	start := len(s.records) - limit
+	if start < 0 {
+		start = 0
+	}
+	out := make([]memory.Record, len(s.records[start:]))
+	copy(out, s.records[start:])
+	return out, nil
+}
+
 type failProjector struct{}
 
 func (failProjector) Project(input memory.ProjectInput) (memory.Record, error) {
@@ -185,7 +209,7 @@ func TestHandleEventLoadsRecentMemoryOnLaterTurn(t *testing.T) {
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -236,12 +260,93 @@ func TestHandleEventLoadsRecentMemoryOnLaterTurn(t *testing.T) {
 	assertTraceContains(t, recorder.events, trace.EventContextUpdated)
 }
 
+func TestHandleEventDefaultSQLiteStorePersistsMemoryAcrossLoopInstances(t *testing.T) {
+	registry := newSpeakRegistry()
+	env := &fakeEnvironment{}
+	cfg := defaultLoopConfig(t)
+	cfg.MemoryStore.Root = filepath.Join(t.TempDir(), "memory")
+	firstProvider := &recordingProvider{}
+	secondProvider := &recordingProvider{}
+	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
+	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
+
+	firstLoop := agent.NewLoop(firstProvider, trace.NoopRecorder{}, cfg)
+	if err := firstLoop.HandleEvent(context.Background(), env, conn, key, entityTarget(key), registry, gameEvent("event_1", key)); err != nil {
+		t.Fatalf("first HandleEvent returned error: %v", err)
+	}
+
+	secondLoop := agent.NewLoop(secondProvider, trace.NoopRecorder{}, cfg)
+	if err := secondLoop.HandleEvent(context.Background(), env, conn, key, entityTarget(key), registry, gameEvent("event_2", key)); err != nil {
+		t.Fatalf("second HandleEvent returned error: %v", err)
+	}
+
+	if len(secondProvider.requests) != 1 {
+		t.Fatalf("second provider request count = %d, want 1", len(secondProvider.requests))
+	}
+	secondContent := secondProvider.requests[0].Messages[0].Content
+	if !strings.Contains(secondContent, `tool "speak" status "ACTION_STATUS_SUCCEEDED" arguments {"text":"remember this line"}`) {
+		t.Fatalf("second loop request missing persisted recent memory:\n%s", secondContent)
+	}
+}
+
+func TestHandleEventReadsStoreCapacityBeforeFutureFilteringAndRecentLimit(t *testing.T) {
+	registry := newSpeakRegistry()
+	env := &fakeEnvironment{}
+	provider := &recordingProvider{
+		response: model.Response{
+			Decision: model.ModelDecision{
+				Control: model.ControlDirective{Kind: model.ControlSettle},
+			},
+		},
+	}
+	cfg := defaultLoopConfig(t)
+	cfg.RecentMemoryLimit = 1
+	cfg.MemoryStore.MaxRecordsPerEntity = 3
+	cfg.MaxRecentMemoryTokens = 4096
+	key := session.AgentSessionKey{GameID: "fake-game", WorldID: "world:test", EntityID: "npc:Abigail"}
+	store := &recordingRecentStore{
+		records: []memory.Record{
+			agentTestMemoryRecord(key, "mem-old-visible", "old visible", time.Unix(100, 0), &memory.GameTimeSnapshot{Year: 1, Season: 1, Day: 1, Hour: 10}),
+			agentTestMemoryRecord(key, "mem-new-visible", "new visible", time.Unix(200, 0), &memory.GameTimeSnapshot{Year: 1, Season: 1, Day: 1, Hour: 11}),
+			agentTestMemoryRecord(key, "mem-future", "future hidden", time.Unix(300, 0), &memory.GameTimeSnapshot{Year: 1, Season: 1, Day: 1, Hour: 13}),
+		},
+	}
+	event := gameEvent("event_now", key)
+	event.GameTime = &protocolv1alpha2.GameTime{
+		Year:   ptrInt32(1),
+		Season: ptrInt32(1),
+		Day:    ptrInt32(1),
+		Hour:   ptrInt32(12),
+	}
+	loop := agent.NewLoop(provider, trace.NoopRecorder{}, cfg, agent.WithMemoryStore(store))
+
+	if err := loop.HandleEvent(context.Background(), env, agent.ConnectionContext{GameID: key.GameID, SessionID: "session:test"}, key, entityTarget(key), registry, event); err != nil {
+		t.Fatalf("HandleEvent returned error: %v", err)
+	}
+
+	if store.recentLimit != 3 {
+		t.Fatalf("store Recent limit = %d, want max_records_per_entity 3", store.recentLimit)
+	}
+	if len(provider.requests) != 1 {
+		t.Fatalf("provider request count = %d, want 1", len(provider.requests))
+	}
+	content := provider.requests[0].Messages[0].Content
+	if !strings.Contains(content, `player:local said "new visible"`) {
+		t.Fatalf("request missing newest visible recent memory:\n%s", content)
+	}
+	for _, unwanted := range []string{"old visible", "future hidden"} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("request should not include %q:\n%s", unwanted, content)
+		}
+	}
+}
+
 func TestHandleEventFailsBeforeProviderWhenContextScopeMismatches(t *testing.T) {
 	registry := newSpeakRegistry()
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 	event := gameEvent("event_scope_mismatch", key)
@@ -298,7 +403,7 @@ func TestHandleEventRendersDefinitionsFromInjectedCatalogAndCanonicalTarget(t *t
 	if err != nil {
 		t.Fatalf("NewCatalog returned error: %v", err)
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithDefinitionCatalog(catalog))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithDefinitionCatalog(catalog))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "creature:alpha"}
 	event := gameEvent("event_1", key)
@@ -345,7 +450,7 @@ func TestHandleEventRejectsMissingCanonicalTarget(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "creature:alpha"}
 
@@ -369,7 +474,7 @@ func TestHandleEventRejectsCanonicalTargetEntityMismatch(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "creature:alpha"}
 	target := &protocolv1alpha2.EntityRef{
@@ -392,7 +497,7 @@ func TestHandleEventRejectsNilEnvironmentToolCatalog(t *testing.T) {
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -419,7 +524,7 @@ func TestHandleEventCompletesSettleOnlyWithEmptyEnvironmentToolCatalog(t *testin
 			},
 		}},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -469,7 +574,7 @@ func TestHandleEventReturnsToolNotRegisteredWithEmptyEnvironmentToolCatalog(t *t
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -521,7 +626,7 @@ func TestHandleEventUsesTurnToolViewForModelRequestAndScheduler(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -579,7 +684,7 @@ func TestHandleEventAppliesToolAdmissionToModelRequestAndScheduler(t *testing.T)
 			},
 		},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxToolCount = 1
 	config.MaxSteps = 2
 	loop := agent.NewLoop(provider, recorder, config)
@@ -625,7 +730,7 @@ func TestHandleEventEmitsBoundedToolAdmissionTraceSummary(t *testing.T) {
 			Control: model.ControlDirective{Kind: model.ControlSettle},
 		},
 	}}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxToolCount = 1
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -653,7 +758,7 @@ func TestHandleEventFailsBeforeProviderWhenRequestHardLimitExceeded(t *testing.T
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxSystemTokens = 1
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -716,7 +821,7 @@ func TestHandleEventKeepsSeparateInstanceScopeForSharedDefinition(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewCatalog returned error: %v", err)
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithDefinitionCatalog(catalog))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithDefinitionCatalog(catalog))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	alphaKey := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:alpha", EntityID: "creature:alpha"}
 	betaKey := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:beta", EntityID: "creature:beta"}
@@ -815,7 +920,7 @@ func TestHandleEventKeepsMemoryScopeSeparateForSharedDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog returned error: %v", err)
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithDefinitionCatalog(catalog))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithDefinitionCatalog(catalog))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	alphaKey := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:shared", EntityID: "creature:alpha"}
 	betaKey := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:shared", EntityID: "creature:beta"}
@@ -870,7 +975,7 @@ func TestHandleEventRendersDifferentBundledStardewDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCatalogFromDir returned error: %v", err)
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithDefinitionCatalog(catalog))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithDefinitionCatalog(catalog))
 	conn := agent.ConnectionContext{GameID: "stardew-valley", SessionID: "session:test"}
 	abigailKey := session.AgentSessionKey{GameID: conn.GameID, WorldID: "farm:one", EntityID: "npc:Abigail"}
 	linusKey := session.AgentSessionKey{GameID: conn.GameID, WorldID: "farm:one", EntityID: "npc:Linus"}
@@ -930,7 +1035,7 @@ func TestHandleEventDefaultStoreRetainsAtLeastRecentMemoryLimit(t *testing.T) {
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.RecentMemoryLimit = 25
 	config.MaxRecentMemoryTokens = 65536
 	config.MaxRecentMemoryTokens = 65536
@@ -960,7 +1065,7 @@ func TestHandleEventSkipsMemoryWhenDisabled(t *testing.T) {
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MemoryEnabled = boolPtr(false)
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -989,7 +1094,7 @@ func TestWithMemoryStoreNilDoesNotDisableDefaultMemoryStore(t *testing.T) {
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(nil))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(nil))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1009,13 +1114,30 @@ func TestWithMemoryStoreNilDoesNotDisableDefaultMemoryStore(t *testing.T) {
 	}
 }
 
+func TestNewLoopPanicsOnUnsupportedMemoryStoreKind(t *testing.T) {
+	config := defaultLoopConfig(t)
+	config.MemoryStore.Kind = "sqltie"
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("NewLoop did not panic for unsupported memory store kind")
+		}
+		if !strings.Contains(fmt.Sprint(recovered), `unsupported memory_store.kind "sqltie"`) {
+			t.Fatalf("panic = %v, want unsupported memory_store.kind", recovered)
+		}
+	}()
+
+	_ = agent.NewLoop(&recordingProvider{}, trace.NoopRecorder{}, config)
+}
+
 func TestHandleEventFailOpenWhenMemoryLoadFails(t *testing.T) {
 	registry := newSpeakRegistry()
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
 	store := &failRecentStore{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(store))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1039,7 +1161,7 @@ func TestHandleEventCompletesWhenMemoryAppendFails(t *testing.T) {
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(failAppendStore{}))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(failAppendStore{}))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1056,7 +1178,7 @@ func TestHandleEventCompletesWhenMemoryProjectionFails(t *testing.T) {
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &recordingProvider{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryProjector(failProjector{}))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryProjector(failProjector{}))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1385,6 +1507,33 @@ func gameEvent(eventID string, key session.AgentSessionKey) *protocolv1alpha2.Ga
 	}
 }
 
+func agentTestMemoryRecord(key session.AgentSessionKey, memoryID string, text string, createdAt time.Time, gameTime *memory.GameTimeSnapshot) memory.Record {
+	return memory.Record{
+		MemoryID:   memoryID,
+		SessionKey: key,
+		GameTime:   gameTime,
+		SourceContextFacts: []memory.SourceContextFact{{
+			Kind:           "utterance",
+			ActorEntityID:  "player:local",
+			TargetEntityID: key.EntityID,
+			Text:           text,
+		}},
+		CreatedAt: createdAt,
+	}
+}
+
+func ptrInt32(value int32) *int32 {
+	return &value
+}
+
+func defaultLoopConfig(t *testing.T) agent.Config {
+	t.Helper()
+
+	config := agent.DefaultConfig()
+	config.MemoryStore.Root = filepath.Join(t.TempDir(), "memory")
+	return config
+}
+
 func entityTarget(key session.AgentSessionKey) *protocolv1alpha2.EntityRef {
 	return &protocolv1alpha2.EntityRef{
 		EntityId:     key.EntityID,
@@ -1562,7 +1711,7 @@ func TestHandleEventRunsOneTurnNPCInteraction(t *testing.T) {
 	registry := newSpeakRegistry()
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
-	loop := agent.NewLoop(fake.NewProvider(), recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), recorder, defaultLoopConfig(t))
 
 	event := &protocolv1alpha2.GameEvent{
 		EventId:        "event_1",
@@ -1688,7 +1837,7 @@ func TestHandleEventExecutesSingleToolCallFromModelDecision(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1717,7 +1866,7 @@ func TestHandleEventCompletesOnSettleOnlyDecision(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1740,7 +1889,7 @@ func TestHandleEventSendsTurnCompletionOnSettle(t *testing.T) {
 	provider := &scriptedProvider{responses: []model.Response{
 		{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 	}}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1769,7 +1918,7 @@ func TestHandleEventSendsTurnCompletionOnFailure(t *testing.T) {
 	provider := &scriptedProvider{responses: []model.Response{
 		{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlContinue}}},
 	}}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1799,7 +1948,7 @@ func TestTurnCompletionSendFailureDoesNotChangeCompletedTurnStatus(t *testing.T)
 	provider := &scriptedProvider{responses: []model.Response{
 		{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 	}}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1828,7 +1977,7 @@ func TestHandleEventActionRequestCarriesSourceCorrelation(t *testing.T) {
 			},
 		},
 	}}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1863,7 +2012,7 @@ func TestHandleEventWritesContextFactMemoryOnSettleOnlyDecision(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(store))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1906,7 +2055,7 @@ func TestHandleEventRunsBatchToolCallsThenSettle(t *testing.T) {
 			},
 		}},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -1950,7 +2099,7 @@ func TestHandleEventRejectsExclusivePolicyToolMixedWithOtherToolCalls(t *testing
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2000,7 +2149,7 @@ func TestHandleEventSettlesAfterSuccessfulPolicyToolWithoutNextModelRequest(t *t
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2041,7 +2190,7 @@ func TestHandleEventSuspendsResumesAndReobservesAfterAsyncAction(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2119,7 +2268,7 @@ func TestHandleEventAsyncSuccessContinuesToResumeStepBeforeSettling(t *testing.T
 					},
 				},
 			}
-			loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+			loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 			conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 			key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2173,7 +2322,7 @@ func TestHandleEventRejectsSecondAsyncActionPerTurn(t *testing.T) {
 			},
 		},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxAsyncActionsPerTurn = 1
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -2218,7 +2367,7 @@ func TestHandleEventFailsTurnWhenReobserveFailsAfterAsyncSuccess(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(store))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2278,7 +2427,7 @@ func TestHandleEventAsyncTerminalFailureFeedsNextStep(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2317,7 +2466,7 @@ func TestHandleEventRunsMultipleStepsUntilSettle(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2371,7 +2520,7 @@ func TestHandleEventRejectsToolCallIDReusedAcrossSteps(t *testing.T) {
 			},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2411,7 +2560,7 @@ func TestHandleEventFailsWhenToolCallIDDuplicatedWithinStep(t *testing.T) {
 			},
 		}},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2443,7 +2592,7 @@ func TestHandleEventFailsWhenMaxStepsExceeded(t *testing.T) {
 			{Decision: model.ModelDecision{ToolCalls: []model.ToolCall{{ID: "call_2", Name: "speak", Arguments: map[string]any{"text": "two"}}}, Control: model.ControlDirective{Kind: model.ControlContinue}}},
 		},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxSteps = 2
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -2474,7 +2623,7 @@ func TestHandleEventFailsWhenMaxToolCallsPerStepExceeded(t *testing.T) {
 			},
 		}},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxToolCallsPerStep = 1
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -2503,7 +2652,7 @@ func TestHandleEventFailsWhenMaxToolCallsPerTurnExceeded(t *testing.T) {
 			}, Control: model.ControlDirective{Kind: model.ControlContinue}}},
 		},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxToolCallsPerTurn = 2
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -2524,7 +2673,7 @@ func TestHandleEventTurnTimeoutCanPreemptBudgetsWithDelayedProvider(t *testing.T
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
 	provider := &scriptedProvider{delay: 200 * time.Millisecond}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.TurnTimeout = 30 * time.Millisecond
 	config.LLMTimeout = time.Second
 	loop := agent.NewLoop(provider, recorder, config)
@@ -2548,7 +2697,7 @@ func TestFailedMultiStepTurnDoesNotAppendMemory(t *testing.T) {
 			{Decision: model.ModelDecision{ToolCalls: []model.ToolCall{{ID: "call_1", Name: "speak", Arguments: map[string]any{"text": "side effect happened"}}}, Control: model.ControlDirective{Kind: model.ControlContinue}}},
 		},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxSteps = 1
 	loop := agent.NewLoop(provider, recorder, config, agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -2575,7 +2724,7 @@ func TestFailedTurnWithContextFactDoesNotAppendMemory(t *testing.T) {
 			},
 		}},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(store))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2611,7 +2760,7 @@ func TestActionTechnicalFailureRecordsCompletedParallelSiblingMemory(t *testing.
 			},
 		}},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.ActionTimeout = time.Second
 	loop := agent.NewLoop(provider, recorder, config, agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -2660,7 +2809,7 @@ func TestActionTechnicalFailureRecordsCompletedSequentialMemory(t *testing.T) {
 			},
 		}},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(store))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2705,7 +2854,7 @@ func TestCompletedTurnAfterRejectedActionWritesOnlySuccessfulOutcomes(t *testing
 			{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig(), agent.WithMemoryStore(store))
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithMemoryStore(store))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2740,7 +2889,7 @@ func TestHandleEventRetriesAfterInvalidToolCallBatchWithinStepBudget(t *testing.
 			{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2776,7 +2925,7 @@ func TestHandleEventRetriesAfterActionResultTerminalFailure(t *testing.T) {
 					{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 				},
 			}
-			loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+			loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 			conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 			key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2806,7 +2955,7 @@ func TestHandleEventDoesNotSettleAfterFailedBatchEvenWhenControlSettleRequested(
 			{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2831,7 +2980,7 @@ func TestHandleEventFailsWhenFailureLoopExhaustsMaxSteps(t *testing.T) {
 			}},
 		},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxSteps = 1
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
@@ -2857,7 +3006,7 @@ func TestMultiStepTraceEventsShareTurnIDAndIncreaseStepIndex(t *testing.T) {
 			{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2900,7 +3049,7 @@ func TestToolBatchTraceFieldsIncludeCallCountAndConcurrency(t *testing.T) {
 			},
 		}},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2931,7 +3080,7 @@ func TestMultiStepTerminalEventIsUniqueAndLast(t *testing.T) {
 			{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 		},
 	}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t))
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}
 	key := session.AgentSessionKey{GameID: conn.GameID, WorldID: "world:test", EntityID: "npc:Abigail"}
 
@@ -2960,7 +3109,7 @@ func TestMaxStepsTraceFailureReason(t *testing.T) {
 			{Decision: model.ModelDecision{ToolCalls: []model.ToolCall{{ID: "call_1", Name: "speak", Arguments: map[string]any{"text": "one"}}}, Control: model.ControlDirective{Kind: model.ControlContinue}}},
 		},
 	}
-	config := agent.DefaultConfig()
+	config := defaultLoopConfig(t)
 	config.MaxSteps = 1
 	loop := agent.NewLoop(provider, recorder, config)
 	conn := agent.ConnectionContext{GameID: "fake-game", SessionID: "session:test"}

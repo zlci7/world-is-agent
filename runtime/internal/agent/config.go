@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	agentcontext "gameagent/runtime/internal/context"
+	"gameagent/runtime/internal/memory"
 	"os"
 	"time"
 )
@@ -47,6 +48,7 @@ type Config struct {
 	AsyncActionTimeout            time.Duration
 	MemoryEnabled                 *bool
 	RecentMemoryLimit             int
+	MemoryStore                   MemoryStoreConfig
 	MaxSteps                      int
 	MaxToolCallsPerStep           int
 	MaxToolCallsPerTurn           int
@@ -74,38 +76,39 @@ type Config struct {
 }
 
 type fileConfig struct {
-	TurnTimeoutMS                 int64        `json:"turn_timeout_ms"`
-	LLMTimeoutMS                  int64        `json:"llm_timeout_ms"`
-	ObserveTimeoutMS              int64        `json:"observe_timeout_ms"`
-	ActionTimeoutMS               int64        `json:"action_timeout_ms"`
-	ActionStartTimeoutMS          int64        `json:"action_start_timeout_ms"`
-	AsyncActionTimeoutMS          int64        `json:"async_action_timeout_ms"`
-	MemoryEnabled                 *bool        `json:"memory_enabled"`
-	RecentMemoryLimit             int          `json:"recent_memory_limit"`
-	MaxSteps                      int          `json:"max_steps"`
-	MaxToolCallsPerStep           int          `json:"max_tool_calls_per_step"`
-	MaxToolCallsPerTurn           int          `json:"max_tool_calls_per_turn"`
-	MaxAsyncActionsPerTurn        int          `json:"max_async_actions_per_turn"`
-	MaxParallelToolCalls          int          `json:"max_parallel_tool_calls"`
-	MaxRequestTokens              int          `json:"max_request_tokens"`
-	MaxSystemTokens               int          `json:"max_system_tokens"`
-	MaxUserMessageTokens          int          `json:"max_user_message_tokens"`
-	MaxDefinitionTokens           int          `json:"max_definition_tokens"`
-	MaxObservationTokens          int          `json:"max_observation_tokens"`
-	MaxEventTokens                int          `json:"max_event_tokens"`
-	MaxContextFactsTokens         int          `json:"max_context_facts_tokens"`
-	MaxRecentMemoryTokens         int          `json:"max_recent_memory_tokens"`
-	MaxTranscriptTokens           int          `json:"max_transcript_tokens"`
-	MaxToolCount                  int          `json:"max_tool_count"`
-	MaxToolDescriptionTokens      int          `json:"max_tool_description_tokens"`
-	MaxToolSchemaTokens           int          `json:"max_tool_schema_tokens"`
-	MaxTotalToolSchemaTokens      int          `json:"max_total_tool_schema_tokens"`
-	MaxToolResultOutputTokens     int          `json:"max_tool_result_output_tokens"`
-	MaxToolResultOutputDepth      int          `json:"max_tool_result_output_depth"`
-	MaxToolResultOutputFields     int          `json:"max_tool_result_output_fields"`
-	MaxToolResultOutputArrayItems int          `json:"max_tool_result_output_array_items"`
-	DefinitionCatalogRoot         string       `json:"definition_catalog_root"`
-	Prompt                        PromptConfig `json:"prompt"`
+	TurnTimeoutMS                 int64                 `json:"turn_timeout_ms"`
+	LLMTimeoutMS                  int64                 `json:"llm_timeout_ms"`
+	ObserveTimeoutMS              int64                 `json:"observe_timeout_ms"`
+	ActionTimeoutMS               int64                 `json:"action_timeout_ms"`
+	ActionStartTimeoutMS          int64                 `json:"action_start_timeout_ms"`
+	AsyncActionTimeoutMS          int64                 `json:"async_action_timeout_ms"`
+	MemoryEnabled                 *bool                 `json:"memory_enabled"`
+	RecentMemoryLimit             int                   `json:"recent_memory_limit"`
+	MemoryStore                   memoryStoreFileConfig `json:"memory_store"`
+	MaxSteps                      int                   `json:"max_steps"`
+	MaxToolCallsPerStep           int                   `json:"max_tool_calls_per_step"`
+	MaxToolCallsPerTurn           int                   `json:"max_tool_calls_per_turn"`
+	MaxAsyncActionsPerTurn        int                   `json:"max_async_actions_per_turn"`
+	MaxParallelToolCalls          int                   `json:"max_parallel_tool_calls"`
+	MaxRequestTokens              int                   `json:"max_request_tokens"`
+	MaxSystemTokens               int                   `json:"max_system_tokens"`
+	MaxUserMessageTokens          int                   `json:"max_user_message_tokens"`
+	MaxDefinitionTokens           int                   `json:"max_definition_tokens"`
+	MaxObservationTokens          int                   `json:"max_observation_tokens"`
+	MaxEventTokens                int                   `json:"max_event_tokens"`
+	MaxContextFactsTokens         int                   `json:"max_context_facts_tokens"`
+	MaxRecentMemoryTokens         int                   `json:"max_recent_memory_tokens"`
+	MaxTranscriptTokens           int                   `json:"max_transcript_tokens"`
+	MaxToolCount                  int                   `json:"max_tool_count"`
+	MaxToolDescriptionTokens      int                   `json:"max_tool_description_tokens"`
+	MaxToolSchemaTokens           int                   `json:"max_tool_schema_tokens"`
+	MaxTotalToolSchemaTokens      int                   `json:"max_total_tool_schema_tokens"`
+	MaxToolResultOutputTokens     int                   `json:"max_tool_result_output_tokens"`
+	MaxToolResultOutputDepth      int                   `json:"max_tool_result_output_depth"`
+	MaxToolResultOutputFields     int                   `json:"max_tool_result_output_fields"`
+	MaxToolResultOutputArrayItems int                   `json:"max_tool_result_output_array_items"`
+	DefinitionCatalogRoot         string                `json:"definition_catalog_root"`
+	Prompt                        PromptConfig          `json:"prompt"`
 }
 
 type PromptConfig struct {
@@ -115,19 +118,44 @@ type PromptConfig struct {
 	ToolInstruction string `json:"tool_instruction"`
 }
 
+const MemoryStoreKindSQLite = "sqlite"
+
+type MemoryStoreConfig struct {
+	Kind                          string
+	Root                          string
+	BusyTimeout                   time.Duration
+	MaxRecordsPerEntity           int
+	MaxProjectionBatchesPerEntity int
+}
+
+type memoryStoreFileConfig struct {
+	Kind                          string `json:"kind"`
+	Root                          string `json:"root"`
+	BusyTimeoutMS                 int64  `json:"busy_timeout_ms"`
+	MaxRecordsPerEntity           int    `json:"max_records_per_entity"`
+	MaxProjectionBatchesPerEntity int    `json:"max_projection_batches_per_entity"`
+}
+
 // DefaultConfig 返回 Agent Runtime 的默认运行配置。
 // 默认开启短期 Memory，并加载当前 Runtime 预算上限。
 func DefaultConfig() Config {
 	budget := agentcontext.DefaultBudgetConfig()
 	return Config{
-		TurnTimeout:                   90 * time.Second,
-		LLMTimeout:                    8 * time.Second,
-		ObserveTimeout:                3 * time.Second,
-		ActionTimeout:                 3 * time.Second,
-		ActionStartTimeout:            3 * time.Second,
-		AsyncActionTimeout:            45 * time.Second,
-		MemoryEnabled:                 boolPtr(defaultMemoryEnabled),
-		RecentMemoryLimit:             5,
+		TurnTimeout:        90 * time.Second,
+		LLMTimeout:         8 * time.Second,
+		ObserveTimeout:     3 * time.Second,
+		ActionTimeout:      3 * time.Second,
+		ActionStartTimeout: 3 * time.Second,
+		AsyncActionTimeout: 45 * time.Second,
+		MemoryEnabled:      boolPtr(defaultMemoryEnabled),
+		RecentMemoryLimit:  5,
+		MemoryStore: MemoryStoreConfig{
+			Kind:                          MemoryStoreKindSQLite,
+			Root:                          memory.DefaultSQLiteMemoryRoot,
+			BusyTimeout:                   memory.DefaultSQLiteBusyTimeout,
+			MaxRecordsPerEntity:           memory.DefaultMaxRecordsPerSession,
+			MaxProjectionBatchesPerEntity: 100,
+		},
 		MaxSteps:                      3,
 		MaxToolCallsPerStep:           4,
 		MaxToolCallsPerTurn:           6,
@@ -198,6 +226,7 @@ func LoadConfigFile(path string) (Config, error) {
 		ActionStartTimeout:            durationMS(raw.ActionStartTimeoutMS),
 		AsyncActionTimeout:            durationMS(raw.AsyncActionTimeoutMS),
 		RecentMemoryLimit:             raw.RecentMemoryLimit,
+		MemoryStore:                   raw.MemoryStore.toConfig(),
 		MaxSteps:                      raw.MaxSteps,
 		MaxToolCallsPerStep:           raw.MaxToolCallsPerStep,
 		MaxToolCallsPerTurn:           raw.MaxToolCallsPerTurn,
@@ -223,6 +252,10 @@ func LoadConfigFile(path string) (Config, error) {
 		DefinitionCatalogRoot:         raw.DefinitionCatalogRoot,
 		Prompt:                        raw.Prompt,
 	}.WithDefaults()
+
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
 }
@@ -270,6 +303,55 @@ func (p PromptConfig) WithDefaults() PromptConfig {
 	return p
 }
 
+func (raw memoryStoreFileConfig) toConfig() MemoryStoreConfig {
+	return MemoryStoreConfig{
+		Kind:                          raw.Kind,
+		Root:                          raw.Root,
+		BusyTimeout:                   durationMS(raw.BusyTimeoutMS),
+		MaxRecordsPerEntity:           raw.MaxRecordsPerEntity,
+		MaxProjectionBatchesPerEntity: raw.MaxProjectionBatchesPerEntity,
+	}
+}
+
+func (c MemoryStoreConfig) WithDefaults(recentMemoryLimit int) MemoryStoreConfig {
+	if c.Kind == "" {
+		c.Kind = MemoryStoreKindSQLite
+	}
+	if c.Root == "" {
+		c.Root = memory.DefaultSQLiteMemoryRoot
+	}
+	if c.BusyTimeout <= 0 {
+		c.BusyTimeout = memory.DefaultSQLiteBusyTimeout
+	}
+
+	defaultMaxRecords := memory.DefaultMaxRecordsPerSession
+	if recentMemoryLimit > defaultMaxRecords {
+		defaultMaxRecords = recentMemoryLimit
+	}
+	if c.MaxRecordsPerEntity <= 0 {
+		c.MaxRecordsPerEntity = defaultMaxRecords
+	}
+	if c.MaxRecordsPerEntity < recentMemoryLimit {
+		c.MaxRecordsPerEntity = recentMemoryLimit
+	}
+
+	if c.MaxProjectionBatchesPerEntity <= 0 {
+		c.MaxProjectionBatchesPerEntity = max(100, c.MaxRecordsPerEntity*4)
+	}
+	return c
+}
+
+func (c MemoryStoreConfig) Validate() error {
+	if c.Kind != MemoryStoreKindSQLite {
+		return fmt.Errorf("unsupported memory_store.kind %q", c.Kind)
+	}
+	return nil
+}
+
+func (c Config) Validate() error {
+	return c.MemoryStore.Validate()
+}
+
 // WithDefaults 为 Agent Config 补齐缺省字段。
 // Memory 配置和 Runtime 预算在这里统一归一化，避免 Loop 初始化时处理零值分支。
 func (c Config) WithDefaults() Config {
@@ -299,6 +381,7 @@ func (c Config) WithDefaults() Config {
 	if c.RecentMemoryLimit <= 0 {
 		c.RecentMemoryLimit = defaults.RecentMemoryLimit
 	}
+	c.MemoryStore = c.MemoryStore.WithDefaults(c.RecentMemoryLimit)
 	if c.MaxSteps <= 0 {
 		c.MaxSteps = defaults.MaxSteps
 	}

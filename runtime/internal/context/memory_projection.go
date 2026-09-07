@@ -9,20 +9,22 @@ import (
 	"gameagent/runtime/internal/memory"
 )
 
-func projectRecentMemories(records []memory.Record, limit int, currentTime *memory.GameTimeSnapshot, bounds projectionBounds) ([]MemoryProjection, RetentionReport) {
+func projectRecentMemories(records []memory.Record, recordLimit int, tokenLimit int, currentTime *memory.GameTimeSnapshot, bounds projectionBounds) ([]MemoryProjection, RetentionReport) {
 	if len(records) == 0 {
 		return nil, RetentionReport{}
 	}
 
 	selected := selectTimelineMemories(records, currentTime)
+	visibleCount := len(selected)
+	selected = trimRecentMemoryRecords(selected, recordLimit)
 	projections := make([]MemoryProjection, 0, len(selected))
 	for _, record := range selected {
 		projections = append(projections, projectRecentMemory(record, currentTime, bounds))
 	}
-	trimmed := trimMemoryProjections(projections, limit)
+	trimmed := trimMemoryProjections(projections, tokenLimit)
 	return trimmed, RetentionReport{
 		RetainedCount: len(trimmed),
-		DroppedCount:  len(projections) - len(trimmed),
+		DroppedCount:  visibleCount - len(trimmed),
 	}
 }
 
@@ -56,33 +58,42 @@ func selectTimelineMemories(records []memory.Record, currentTime *memory.GameTim
 		selected = append(selected, record)
 	}
 
-	stabilizeEqualGameTimeSequences(selected)
+	sort.SliceStable(selected, func(i, j int) bool {
+		return memoryRecordBefore(selected[i], selected[j])
+	})
 	return selected
 }
 
-func stabilizeEqualGameTimeSequences(records []memory.Record) {
-	for start := 0; start < len(records); {
-		if !hasComparableGameTimeSequence(records[start]) {
-			start++
-			continue
-		}
-
-		end := start + 1
-		for end < len(records) && sameGameInstant(records[start].GameTime, records[end].GameTime) && records[end].SourceEventSequence != 0 {
-			end++
-		}
-
-		if end-start > 1 {
-			sort.SliceStable(records[start:end], func(i, j int) bool {
-				return records[start+i].SourceEventSequence < records[start+j].SourceEventSequence
-			})
-		}
-		start = end
+func trimRecentMemoryRecords(records []memory.Record, limit int) []memory.Record {
+	if len(records) == 0 || limit <= 0 {
+		return nil
 	}
+	if len(records) <= limit {
+		out := make([]memory.Record, len(records))
+		copy(out, records)
+		return out
+	}
+	out := make([]memory.Record, limit)
+	copy(out, records[len(records)-limit:])
+	return out
 }
 
-func hasComparableGameTimeSequence(record memory.Record) bool {
-	return record.GameTime != nil && record.SourceEventSequence != 0
+func memoryRecordBefore(left, right memory.Record) bool {
+	if left.GameTime != nil && right.GameTime != nil {
+		if cmp := compareGameTime(left.GameTime, right.GameTime); cmp != 0 {
+			return cmp < 0
+		}
+		if left.SourceEventSequence != 0 && right.SourceEventSequence != 0 && left.SourceEventSequence != right.SourceEventSequence {
+			return left.SourceEventSequence < right.SourceEventSequence
+		}
+	}
+	if !left.CreatedAt.IsZero() && !right.CreatedAt.IsZero() && !left.CreatedAt.Equal(right.CreatedAt) {
+		return left.CreatedAt.Before(right.CreatedAt)
+	}
+	if !left.CreatedAt.IsZero() && !right.CreatedAt.IsZero() {
+		return left.MemoryID < right.MemoryID
+	}
+	return false
 }
 
 func trimMemoryProjections(projections []MemoryProjection, limit int) []MemoryProjection {

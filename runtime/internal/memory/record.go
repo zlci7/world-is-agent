@@ -9,6 +9,10 @@ import (
 type Record struct {
 	MemoryID string
 
+	ProjectionKind     ProjectionKind
+	ProjectionVersion  int
+	ProjectionBatchKey string
+
 	SessionKey session.AgentSessionKey
 
 	SourceTurnID        string
@@ -24,6 +28,15 @@ type Record struct {
 
 	CreatedAt time.Time
 }
+
+type ProjectionKind string
+
+const (
+	ProjectionKindSettledTurn            ProjectionKind = "settled_turn"
+	ProjectionKindPriorSuccessfulActions ProjectionKind = "prior_successful_actions"
+
+	ProjectionVersionRecentV1 = 1
+)
 
 type GameTimeSnapshot struct {
 	Year   int32

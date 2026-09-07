@@ -31,6 +31,14 @@ type recordingGatewayProvider struct {
 	requests []model.Request
 }
 
+func gatewayTestConfig(t *testing.T) agent.Config {
+	t.Helper()
+
+	config := agent.DefaultConfig()
+	config.MemoryStore.Root = t.TempDir()
+	return config
+}
+
 func (p *recordingGatewayProvider) Generate(ctx context.Context, req model.Request) (model.Response, error) {
 	p.mu.Lock()
 	p.requests = append(p.requests, req)
@@ -190,7 +198,7 @@ func TestConnectRunsOneTurnWithFakeAdapter(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -361,7 +369,7 @@ func TestConnectRejectsIllegalCapabilityListEntityScope(t *testing.T) {
 			listener := bufconn.Listen(1024 * 1024)
 			grpcServer := grpc.NewServer()
 			provider := &scriptedGatewayProvider{}
-			loop := agent.NewLoop(provider, trace.NoopRecorder{}, agent.DefaultConfig())
+			loop := agent.NewLoop(provider, trace.NoopRecorder{}, gatewayTestConfig(t))
 			protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 			startGatewayServer(t, grpcServer, listener)
 
@@ -403,7 +411,7 @@ func TestConnectAcceptsPaddedEventIdentityThroughContextBuild(t *testing.T) {
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
 	provider := &scriptedGatewayProvider{}
-	loop := agent.NewLoop(provider, trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -471,7 +479,7 @@ func TestConnectForwardsDynamicEmoteToolCall(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -622,7 +630,7 @@ func TestConnectSettlesAfterPresentDialogueAndPreservesSourceCorrelation(t *test
 		},
 	}}}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -697,7 +705,7 @@ func TestConnectRunsAsyncMoveToSuspendResumeTurnLifecycle(t *testing.T) {
 		},
 	}}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -786,7 +794,7 @@ func TestConnectRunsSingleStepBatchWithTwoActionsAndSettle(t *testing.T) {
 		},
 	}}}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -849,7 +857,7 @@ func TestConnectRunsParallelSafeBatchAndOrdersTranscriptByToolCallOrder(t *testi
 		{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 	}}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -909,7 +917,7 @@ func TestConnectRunsMultiStepForNonStardewTriggerWithDefinitionID(t *testing.T) 
 		{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 	}}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -965,7 +973,7 @@ func TestConnectRetriesAfterRejectedActionResult(t *testing.T) {
 		{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}},
 	}}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -1014,7 +1022,7 @@ func TestConnectMaxStepsExceededProducesSingleTerminalTrace(t *testing.T) {
 		}},
 	}}
 	recorder := &recordingGatewayTraceRecorder{}
-	config := agent.DefaultConfig()
+	config := gatewayTestConfig(t)
 	config.MaxSteps = 1
 	loop := agent.NewLoop(provider, recorder, config)
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
@@ -1069,7 +1077,7 @@ func TestConnectRejectsGameEventWhenEventQueueIsFull(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1153,7 +1161,7 @@ func TestConnectRoutesDifferentNPCsToIndependentLanes(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1232,7 +1240,7 @@ func TestConnectAcceptsNonStardewTriggerWithRoutedEntity(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1308,7 +1316,7 @@ func TestConnectSerializesEventsForSameNPC(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1414,7 +1422,7 @@ func TestConnectQueuedSameNPCEventReadsPreviousTurnMemory(t *testing.T) {
 	grpcServer := grpc.NewServer()
 	provider := &recordingGatewayProvider{}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1539,7 +1547,7 @@ func TestConnectSameAgentSessionReadsMemoryAfterReconnect(t *testing.T) {
 	grpcServer := grpc.NewServer()
 	provider := &recordingGatewayProvider{}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1616,7 +1624,7 @@ func TestConnectKeepsSameNameToolsIsolatedPerEnvironmentSession(t *testing.T) {
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
 	provider := &sameNameToolGatewayProvider{}
-	loop := agent.NewLoop(provider, trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 	startGatewayServer(t, grpcServer, listener)
 
@@ -1689,7 +1697,7 @@ func TestConnectDoesNotLeakMemoryAcrossNPCs(t *testing.T) {
 	grpcServer := grpc.NewServer()
 	provider := &recordingGatewayProvider{}
 	recorder := &recordingGatewayTraceRecorder{}
-	loop := agent.NewLoop(provider, recorder, agent.DefaultConfig())
+	loop := agent.NewLoop(provider, recorder, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1757,7 +1765,7 @@ func TestConnectDrainsQueuedEventOnDisconnect(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)
@@ -1843,7 +1851,7 @@ func TestConnectReturnsDuplicateAckForRepeatedEventID(t *testing.T) {
 
 	listener := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
-	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, agent.DefaultConfig())
+	loop := agent.NewLoop(fake.NewProvider(), trace.NoopRecorder{}, gatewayTestConfig(t))
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, NewServer(loop))
 
 	serverErrCh := make(chan error, 1)

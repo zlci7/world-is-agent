@@ -10,6 +10,11 @@
   "max_tool_calls_per_turn": 6,
   "max_async_actions_per_turn": 1,
   "max_parallel_tool_calls": 4,
+  "memory_store": {
+    "kind": "sqlite",
+    "root": "runtime/.local/memory",
+    "busy_timeout_ms": 5000
+  },
   "max_tool_result_output_tokens": 8192,
   "max_tool_result_output_depth": 4,
   "max_tool_result_output_fields": 64,

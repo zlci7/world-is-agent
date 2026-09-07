@@ -55,13 +55,6 @@ var (
 	errInvalidModelDecision = errors.New("invalid model response")
 )
 
-type memoryProjectionMode int
-
-const (
-	memoryProjectionSettledTurn memoryProjectionMode = iota
-	memoryProjectionPriorSuccessfulActions
-)
-
 type LoopOption func(*Loop)
 
 // WithMemoryStore 覆盖 Loop 默认使用的 MemoryStore。
@@ -107,12 +100,15 @@ func NewLoop(modelProvider model.Provider, recorder trace.Recorder, config Confi
 		recorder = trace.NoopRecorder{}
 	}
 	config = config.WithDefaults()
+	if err := config.Validate(); err != nil {
+		panic(err)
+	}
 
 	loop := &Loop{
 		model:           modelProvider,
 		recorder:        recorder,
 		config:          config,
-		memoryStore:     memory.NewInMemoryStoreWithMaxRecords(defaultMemoryStoreMaxRecords(config.RecentMemoryLimit)),
+		memoryStore:     newDefaultMemoryStore(config),
 		memoryProjector: memory.NewProjector(nil),
 		contextEngine: agentcontext.NewEngine(agentcontext.EngineConfig{
 			MaxRequestTokens:              config.MaxRequestTokens,
@@ -123,6 +119,7 @@ func NewLoop(modelProvider model.Provider, recorder trace.Recorder, config Confi
 			MaxEventTokens:                config.MaxEventTokens,
 			MaxContextFactsTokens:         config.MaxContextFactsTokens,
 			MaxRecentMemoryTokens:         config.MaxRecentMemoryTokens,
+			MaxRecentMemoryRecords:        config.RecentMemoryLimit,
 			MaxTranscriptTokens:           config.MaxTranscriptTokens,
 			MaxToolCount:                  config.MaxToolCount,
 			MaxToolDescriptionTokens:      config.MaxToolDescriptionTokens,
@@ -143,13 +140,22 @@ func NewLoop(modelProvider model.Provider, recorder trace.Recorder, config Confi
 	return loop
 }
 
-// defaultMemoryStoreMaxRecords 计算默认 InMemory backend 的保留上限。
+func newDefaultMemoryStore(config Config) memory.Store {
+	if config.MemoryStore.Kind == MemoryStoreKindSQLite {
+		return memory.NewSQLiteMemoryStore(memory.SQLiteStoreOptions{
+			Root:                          config.MemoryStore.Root,
+			BusyTimeout:                   config.MemoryStore.BusyTimeout,
+			MaxRecordsPerEntity:           config.MemoryStore.MaxRecordsPerEntity,
+			MaxProjectionBatchesPerEntity: config.MemoryStore.MaxProjectionBatchesPerEntity,
+		})
+	}
+	return memory.NewInMemoryStoreWithMaxRecords(defaultMemoryStoreMaxRecords(config.RecentMemoryLimit))
+}
+
+// defaultMemoryStoreMaxRecords 计算 InMemory backend 的保留上限。
 // 保留数量必须不少于 RecentMemoryLimit，避免配置被 store 层隐式截断。
 func defaultMemoryStoreMaxRecords(recentMemoryLimit int) int {
-	if recentMemoryLimit > memory.DefaultMaxRecordsPerSession {
-		return recentMemoryLimit
-	}
-	return memory.DefaultMaxRecordsPerSession
+	return max(recentMemoryLimit, memory.DefaultMaxRecordsPerSession)
 }
 
 // HandleEvent 处理一次 GameEvent，并在需要时执行完整的 Agent Turn。
@@ -322,7 +328,7 @@ func (l *Loop) runBoundedSteps(
 				turnTracer.Emit(trace.EventAgentStepCompleted, trace.EventData{
 					Fields: trace.Fields{"step_index": stepIndex},
 				})
-				l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memoryProjectionSettledTurn)
+				l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindSettledTurn)
 				l.completeTurn(ctx, env, turnTracer, key, event, turnID, lastCompletedActionEventData(successfulActions))
 				return nil
 			}
@@ -423,7 +429,7 @@ func (l *Loop) runBoundedSteps(
 		outcome, err := scheduler.Run(ctx, env, key.WorldID, key.EntityID, calls)
 		if err != nil {
 			successfulActions = append(successfulActions, outcome.SuccessfulActions...)
-			l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memoryProjectionPriorSuccessfulActions)
+			l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindPriorSuccessfulActions)
 			reason := actionFailureReason(err)
 			turnTracer.Emit(trace.EventToolBatchFailed, trace.EventData{
 				Fields: trace.Fields{
@@ -455,7 +461,7 @@ func (l *Loop) runBoundedSteps(
 			resumedObservation, err := env.Observe(resumeObserveCtx, key.WorldID, key.EntityID)
 			cancelResumeObserve()
 			if err != nil {
-				l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memoryProjectionPriorSuccessfulActions)
+				l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindPriorSuccessfulActions)
 				reason := observationFailureReason(err)
 				turnTracer.Emit(trace.EventAgentStepFailed, trace.EventData{
 					Fields: trace.Fields{"step_index": stepIndex, "reason": reason},
@@ -501,7 +507,7 @@ func (l *Loop) runBoundedSteps(
 			turnTracer.Emit(trace.EventTurnSettled, trace.EventData{
 				Fields: trace.Fields{"step_index": stepIndex},
 			})
-			l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memoryProjectionSettledTurn)
+			l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindSettledTurn)
 			l.completeTurn(ctx, env, turnTracer, key, event, turnID, lastCompletedActionEventData(successfulActions))
 			return nil
 		}
@@ -949,7 +955,7 @@ func (l *Loop) loadRecentMemories(
 		return nil
 	}
 
-	records, err := l.memoryStore.Recent(ctx, key, l.config.RecentMemoryLimit)
+	records, err := l.memoryStore.Recent(ctx, key, l.recentMemoryCandidateLimit())
 	if err != nil {
 		turnTracer.Emit(trace.EventContextLoadFailed, trace.EventData{
 			Fields: trace.Fields{
@@ -970,6 +976,10 @@ func (l *Loop) loadRecentMemories(
 	return records
 }
 
+func (l *Loop) recentMemoryCandidateLimit() int {
+	return max(l.config.MemoryStore.MaxRecordsPerEntity, l.config.RecentMemoryLimit)
+}
+
 func (l *Loop) updateMemoryForCompletedTurn(
 	ctx context.Context,
 	turnTracer trace.TurnTracer,
@@ -977,7 +987,7 @@ func (l *Loop) updateMemoryForCompletedTurn(
 	turnID string,
 	event *protocolv1alpha2.GameEvent,
 	successfulActions []completedToolAction,
-	mode memoryProjectionMode,
+	projectionKind memory.ProjectionKind,
 ) {
 	if !l.config.MemoryEnabledValue() || l.memoryStore == nil || l.memoryProjector == nil {
 		return
@@ -994,21 +1004,22 @@ func (l *Loop) updateMemoryForCompletedTurn(
 		})
 	}
 	if len(outcomes) == 0 {
-		if mode != memoryProjectionSettledTurn || !hasContextFacts(event) {
+		if projectionKind != memory.ProjectionKindSettledTurn || !hasContextFacts(event) {
 			return
 		}
 	}
 
 	projectEvent := event
-	if mode == memoryProjectionPriorSuccessfulActions {
+	if projectionKind == memory.ProjectionKindPriorSuccessfulActions {
 		projectEvent = eventWithoutContextFacts(event)
 	}
 
 	record, err := l.memoryProjector.Project(memory.ProjectInput{
-		SessionKey: key,
-		TurnID:     turnID,
-		Event:      projectEvent,
-		Outcomes:   outcomes,
+		SessionKey:     key,
+		TurnID:         turnID,
+		ProjectionKind: projectionKind,
+		Event:          projectEvent,
+		Outcomes:       outcomes,
 	})
 	if err != nil {
 		turnTracer.Emit(trace.EventContextUpdateFailed, trace.EventData{
@@ -1022,8 +1033,10 @@ func (l *Loop) updateMemoryForCompletedTurn(
 	if err := l.memoryStore.Append(ctx, record); err != nil {
 		turnTracer.Emit(trace.EventContextUpdateFailed, trace.EventData{
 			Fields: trace.Fields{
-				"memory_id": record.MemoryID,
-				"reason":    err.Error(),
+				"memory_id":            record.MemoryID,
+				"projection_kind":      string(record.ProjectionKind),
+				"projection_batch_key": record.ProjectionBatchKey,
+				"reason":               err.Error(),
 			},
 		})
 		return
@@ -1031,9 +1044,11 @@ func (l *Loop) updateMemoryForCompletedTurn(
 
 	turnTracer.Emit(trace.EventContextUpdated, trace.EventData{
 		Fields: trace.Fields{
-			"memory_id":      record.MemoryID,
-			"outcome_count":  len(record.Outcomes),
-			"successful_ops": len(outcomes),
+			"memory_id":            record.MemoryID,
+			"projection_kind":      string(record.ProjectionKind),
+			"projection_batch_key": record.ProjectionBatchKey,
+			"outcome_count":        len(record.Outcomes),
+			"successful_ops":       len(outcomes),
 		},
 	})
 }

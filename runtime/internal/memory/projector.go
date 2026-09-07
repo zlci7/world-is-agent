@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,8 +16,9 @@ import (
 var ErrProject = errors.New("project memory")
 
 type ProjectInput struct {
-	SessionKey session.AgentSessionKey
-	TurnID     string
+	SessionKey     session.AgentSessionKey
+	TurnID         string
+	ProjectionKind ProjectionKind
 
 	Event        *protocolv1alpha2.GameEvent
 	ToolCall     model.ToolCall
@@ -54,14 +56,25 @@ func (p Projector) Project(input ProjectInput) (Record, error) {
 	if input.SessionKey.GameID == "" || input.SessionKey.WorldID == "" || input.SessionKey.EntityID == "" {
 		return Record{}, fmt.Errorf("%w: session key is required", ErrProject)
 	}
+	if !validProjectionKind(input.ProjectionKind) {
+		return Record{}, fmt.Errorf("%w: projection_kind is required", ErrProject)
+	}
 
 	outcomes, err := projectOutcomes(input)
 	if err != nil {
 		return Record{}, err
 	}
 
+	projectionBatchKey, err := BuildProjectionBatchKey(input.SessionKey, input.TurnID, input.Event.GetEventId(), input.ProjectionKind, ProjectionVersionRecentV1)
+	if err != nil {
+		return Record{}, err
+	}
+
 	return Record{
 		MemoryID:            idgen.New("mem"),
+		ProjectionKind:      input.ProjectionKind,
+		ProjectionVersion:   ProjectionVersionRecentV1,
+		ProjectionBatchKey:  projectionBatchKey,
 		SessionKey:          input.SessionKey,
 		SourceTurnID:        input.TurnID,
 		SourceEventID:       input.Event.GetEventId(),
@@ -72,6 +85,43 @@ func (p Projector) Project(input ProjectInput) (Record, error) {
 		Outcomes:            outcomes,
 		CreatedAt:           p.now(),
 	}, nil
+}
+
+func BuildProjectionBatchKey(key session.AgentSessionKey, turnID string, eventID string, kind ProjectionKind, version int) (string, error) {
+	if key.GameID == "" || key.WorldID == "" || key.EntityID == "" {
+		return "", fmt.Errorf("%w: session key is required", ErrProject)
+	}
+	if strings.TrimSpace(turnID) == "" {
+		return "", fmt.Errorf("%w: turn_id is required", ErrProject)
+	}
+	if !validProjectionKind(kind) {
+		return "", fmt.Errorf("%w: projection_kind is required", ErrProject)
+	}
+	if version <= 0 {
+		return "", fmt.Errorf("%w: projection_version is required", ErrProject)
+	}
+	data, err := json.Marshal([]any{
+		key.GameID,
+		key.WorldID,
+		key.EntityID,
+		turnID,
+		eventID,
+		string(kind),
+		version,
+	})
+	if err != nil {
+		return "", fmt.Errorf("%w: projection_batch_key: %v", ErrProject, err)
+	}
+	return string(data), nil
+}
+
+func validProjectionKind(kind ProjectionKind) bool {
+	switch kind {
+	case ProjectionKindSettledTurn, ProjectionKindPriorSuccessfulActions:
+		return true
+	default:
+		return false
+	}
 }
 
 func projectOutcomes(input ProjectInput) ([]TurnOutcome, error) {

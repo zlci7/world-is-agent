@@ -31,6 +31,13 @@ func TestLoadConfigFileLoadsPromptConfig(t *testing.T) {
   "max_tool_result_output_depth": 3,
   "max_tool_result_output_fields": 16,
   "max_tool_result_output_array_items": 8,
+  "memory_store": {
+    "kind": "sqlite",
+    "root": "runtime/.custom/memory",
+    "busy_timeout_ms": 1234,
+    "max_records_per_entity": 11,
+    "max_projection_batches_per_entity": 44
+  },
   "definition_catalog_root": "runtime/config/games",
   "prompt": {
     "language": "Simplified Chinese",
@@ -105,6 +112,21 @@ func TestLoadConfigFileLoadsPromptConfig(t *testing.T) {
 	if cfg.MaxToolResultOutputArrayItems != 8 {
 		t.Fatalf("expected max tool result output array items 8, got %d", cfg.MaxToolResultOutputArrayItems)
 	}
+	if cfg.MemoryStore.Kind != "sqlite" {
+		t.Fatalf("expected memory store kind sqlite, got %q", cfg.MemoryStore.Kind)
+	}
+	if cfg.MemoryStore.Root != "runtime/.custom/memory" {
+		t.Fatalf("expected memory store root from config, got %q", cfg.MemoryStore.Root)
+	}
+	if cfg.MemoryStore.BusyTimeout != 1234*time.Millisecond {
+		t.Fatalf("expected memory store busy timeout 1234ms, got %s", cfg.MemoryStore.BusyTimeout)
+	}
+	if cfg.MemoryStore.MaxRecordsPerEntity != 11 {
+		t.Fatalf("expected max records per entity 11, got %d", cfg.MemoryStore.MaxRecordsPerEntity)
+	}
+	if cfg.MemoryStore.MaxProjectionBatchesPerEntity != 44 {
+		t.Fatalf("expected max projection batches per entity 44, got %d", cfg.MemoryStore.MaxProjectionBatchesPerEntity)
+	}
 	if cfg.DefinitionCatalogRoot != "runtime/config/games" {
 		t.Fatalf("expected definition catalog root from config, got %q", cfg.DefinitionCatalogRoot)
 	}
@@ -162,6 +184,46 @@ func TestConfigWithDefaultsFillsPromptConfig(t *testing.T) {
 	}
 	if cfg.RecentMemoryLimit <= 0 {
 		t.Fatalf("expected positive default recent memory limit, got %d", cfg.RecentMemoryLimit)
+	}
+}
+
+func TestConfigWithDefaultsFillsSQLiteMemoryStoreConfig(t *testing.T) {
+	cfg := (agent.Config{RecentMemoryLimit: 30}).WithDefaults()
+
+	if cfg.MemoryStore.Kind != "sqlite" {
+		t.Fatalf("default memory store kind = %q, want sqlite", cfg.MemoryStore.Kind)
+	}
+	if cfg.MemoryStore.Root != "runtime/.local/memory" {
+		t.Fatalf("default memory store root = %q, want runtime/.local/memory", cfg.MemoryStore.Root)
+	}
+	if cfg.MemoryStore.BusyTimeout != 5*time.Second {
+		t.Fatalf("default memory store busy timeout = %s, want 5s", cfg.MemoryStore.BusyTimeout)
+	}
+	if cfg.MemoryStore.MaxRecordsPerEntity != 30 {
+		t.Fatalf("default max records per entity = %d, want recent memory limit 30", cfg.MemoryStore.MaxRecordsPerEntity)
+	}
+	if cfg.MemoryStore.MaxProjectionBatchesPerEntity != 120 {
+		t.Fatalf("default max projection batches per entity = %d, want 120", cfg.MemoryStore.MaxProjectionBatchesPerEntity)
+	}
+}
+
+func TestLoadConfigFileRejectsUnsupportedMemoryStoreKind(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "agent.json")
+	data := []byte(`{
+  "memory_store": {
+    "kind": "sqltie"
+  }
+}`)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := agent.LoadConfigFile(configPath)
+	if err == nil {
+		t.Fatal("LoadConfigFile returned nil error, want unsupported memory_store.kind error")
+	}
+	if !strings.Contains(err.Error(), `unsupported memory_store.kind "sqltie"`) {
+		t.Fatalf("LoadConfigFile error = %v, want unsupported memory_store.kind", err)
 	}
 }
 
