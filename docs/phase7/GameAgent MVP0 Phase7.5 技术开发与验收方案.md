@@ -258,6 +258,8 @@ Final TurnToolView tools
 
 Recording Provider 是精确断言 prompt 内容的权威入口。真实模型 smoke 只能证明链路和体验，不用于固定 prompt 断言。
 
+`Current Turn Transcript` 只用同一 `AgentTurn` 内的 multi-step 验证。`present_dialogue` 成功后会结束当前 turn，玩家后续回复属于下一 turn，应通过 `Recent Memory` 或新的 `player_said_to_npc` event 验证，不能用两轮对话代替同一 turn transcript 验证。
+
 核心断言：
 
 ```text
@@ -283,6 +285,11 @@ shared definition request
     多个 entity 可共享同一 definition_id
     Agent Descriptor 使用各自 entity_id / display_name
     Memory 按 AgentSessionKey 隔离
+
+same-turn multi-step request
+    受控 Provider 返回 emote / face_player 后继续下一 step
+    上一步 ToolCall 与 ToolResult 成对进入下一次 model.Request
+    不使用 present_dialogue 的跨 turn 玩家回复证明 Current Turn Transcript
 ```
 
 ## 4.3 Adapter 不提供完整 prompt
@@ -314,7 +321,8 @@ Recording Provider 捕获的 Request.System 来自 Runtime config
 Recording Provider 捕获的 Game / Agent Definition 来自 Definition Catalog
 fake Adapter 发送的 Event payload 不包含 Game Definition / Agent Definition / Instruction 也能生成完整 context
 Observation.state.stardew 作为 generic JSON 进入 Current Observation，不被 Runtime Core 解析成 Definition 或 Instruction
-adapters/stardew/tests/check-context-static.ps1 继续禁止 Adapter prompt-builder drift
+运行现有 Adapter 静态回归
+通过代码检查和 Recording Provider 验证 prompt 来源归属
 ```
 
 ## 4.4 ContextBuildReport 验证
@@ -323,13 +331,15 @@ Phase7.5 不改变 `ContextBuildReport` schema，但需要在 Stardew-shaped 集
 
 ```text
 context_request_built trace event 出现
-report summary 记录 definition fallback 状态
-report summary 记录 section estimated token summary
+report summary 分别记录 Game Definition fallback 与 Agent Definition fallback 状态
+report summary 记录 Report.Sections 的 section name / included / cropped / reason / projection estimated tokens
 report summary 记录 final request estimated token summary
 report summary 记录 ToolAdmissionReport bounded summary
 report 不包含完整 prompt 文本
 report 不包含大段 Observation.state 原文
 ```
+
+section projection estimate 与 final request estimate 是两种口径：前者来自 `ContextBuildReport.Sections`，用于解释 ContextProjection；后者来自最终 `model.Request` sizing summary，用于说明发给 Provider 的请求大小。Section 未进入 projection 时使用现有 `Included=false` 表达，不新增 dropped 字段。Phase7.5 只补 trace 映射和断言，不修改 `ContextBuildReport` schema。
 
 预算失败路径只做回归确认，不把真实 Stardew smoke 建成 over-budget 场景。
 
@@ -360,12 +370,10 @@ Adapter build / install：
 
 ```powershell
 $gamePath = "D:\SteamLibrary\steamapps\common\Stardew Valley"
-dotnet build adapters/stardew/GameAgent.Stardew.csproj `
-  --configuration Debug `
-  -p:GamePath="$gamePath"
-
 powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 -GamePath "$gamePath"
 ```
+
+`install-stardew-adapter.ps1` 必须把 `-GamePath` 继续透传给内部 `dotnet build` 的 `-p:GamePath=...`。自定义 Stardew 安装目录时，安装脚本是唯一 hard-gate 流程；不要求先手动 build 再复制产物。
 
 SMAPI 内推荐使用：
 
@@ -377,6 +385,10 @@ gameagent_probe_npc Linus
 也可以使用正常点击 NPC 触发。
 
 真实 smoke 至少需要一条 `present_dialogue` action path 通过：某一轮必须出现 `ActionRequest` 和 `ActionResult`。`settle` 是合法收敛结果，但 settle-only turn 不能单独满足 Stardew dialogue smoke。
+
+`gameagent_probe_npc` 仍受距离和交互状态限制。执行前需要走到目标 NPC 附近，满足曼哈顿距离 <= 2，并等待上一轮交互结束。
+
+`present_dialogue` 合法支持不提供回复入口并结束对话。遇到这种结果时，记录“玩家回复路径尚未覆盖”，继续完成指定场景；它不能直接判为 Adapter 故障，也不能算作玩家回复闭环通过。
 
 通过标准：
 
@@ -401,9 +413,8 @@ Runtime trace:
 
 Game UI:
     present_dialogue 时 NPC 台词先出现在 Stardew 原生对话框
-    继续后出现 reply options 或 free text row
-    玩家选择 option 后产生 player_said_to_npc
-    玩家 free text 提交后产生 player_said_to_npc
+    至少一次 dialogue 出现 reply options 或 free text row
+    玩家选择 option 或提交 free text 后产生 player_said_to_npc
     交互结束后不出现重复 waiting menu 或卡死输入
 ```
 
@@ -578,6 +589,9 @@ missing definition fallback 不伪造 Definition
 Final TurnToolView 中四个 Stardew-shaped tools 进入 model.Request.Tools
 Scheduler 只能执行同一份 Final TurnToolView 中存在的 tool
 ContextBuildReport summary 出现在 trace，不进入 prompt
+trace summary 分别暴露 Game Definition fallback 与 Agent Definition fallback
+trace summary 暴露 Report.Sections 的 section estimated token summary
+同一 turn multi-step 的 ToolCall / ToolResult 成对进入下一次 Request
 ```
 
 ## 6.4 Adapter 自动化测试
@@ -595,10 +609,10 @@ powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-context-st
 
 ```powershell
 $gamePath = "D:\SteamLibrary\steamapps\common\Stardew Valley"
-dotnet build adapters/stardew/GameAgent.Stardew.csproj `
-  --configuration Debug `
-  -p:GamePath="$gamePath"
+powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 -GamePath "$gamePath"
 ```
+
+安装脚本必须把 `GamePath` 传给内部 `dotnet build`。
 
 ## 6.5 真实 Stardew Smoke
 
@@ -609,14 +623,23 @@ dotnet build adapters/stardew/GameAgent.Stardew.csproj `
 2. 编译并安装 Stardew Adapter。
 3. 通过 SMAPI 启动 Stardew Valley。
 4. 进入可交互存档。
-5. 运行 gameagent_probe_npc Abigail。
-6. 观察 SMAPI log、Runtime trace 和游戏 UI。
-7. 对 Abigail dialogue 选择一个 generated option。
-8. 再次触发 Abigail，观察上一轮玩家回复或 visible outcome 可进入上下文。
-9. 运行 gameagent_probe_npc Linus。
-10. 确认 Linus 对话没有出现 Abigail 的 Memory 或 Agent Definition。
-11. 对 Linus 提交 free text。
-12. 确认 player_said_to_npc 事件、ContextFact、Observation、ActionResult 和 TurnCompletion 都收敛。
+5. 走到 Abigail 或 Linus 附近，满足曼哈顿距离 <= 2，并等待上一轮交互结束。
+6. 运行 gameagent_probe_npc Abigail 或 gameagent_probe_npc Linus。
+7. 观察 SMAPI log、Runtime trace 和游戏 UI。
+8. 确认至少一轮真实 NPC dialogue 出现 ActionRequest、ActionResult 和 TurnCompletion。
+9. 如果本轮 dialogue 提供 reply option 或 free text，完成一次玩家回复并确认产生 player_said_to_npc。
+10. 如果 present_dialogue 合法结束且没有提供回复入口，记录“玩家回复路径尚未覆盖”，继续触发可覆盖回复路径的场景。
+11. 确认交互结束后没有 runtime panic、stream crash、stuck waiting menu 或 unresolved Turn。
+```
+
+推荐扩展场景：
+
+```text
+1. 分别触发 Abigail 和 Linus。
+2. 确认 Linus 对话没有出现 Abigail 的 Memory 或 Agent Definition。
+3. 至少覆盖一次 generated option。
+4. 至少覆盖一次 free text。
+5. 确认 player_said_to_npc 事件、ContextFact、Observation、ActionResult 和 TurnCompletion 都收敛。
 ```
 
 通过记录：
@@ -651,14 +674,14 @@ Phase7.5 完成后必须满足：
 5. Recording Provider 能捕获包含正确 Game Definition、Agent Definition、Agent Descriptor、Event、ContextFacts、Observation、Recent Memory、Transcript、Instruction 和 Tools 的 model.Request。
 6. Adapter 不提供完整 prompt；Runtime 负责 model.Request 构造。
 7. Observation.state.stardew 作为 Current Observation generic JSON 可见，Runtime Core 不解析 Stardew-specific 字段生成 Definition / Instruction / ContextFact。
-8. player_said_to_npc 的玩家回复通过 ContextFact 进入当前 turn context。
+8. player_said_to_npc 的玩家回复通过 ContextFact 进入对应 turn context。
 9. Recent Memory 可以承载上一轮 visible outcome，并在同一 AgentSession 后续 turn 可见。
 10. 不同 NPC 的 Memory 不串线。
 11. 多实体共享 definition_id 时，Descriptor 和 Memory 仍按各自 AgentSessionKey 隔离。
 12. missing Agent Definition fallback 不伪造角色定义，也不阻止合法 Turn。
 13. Final TurnToolView 中模型可见 tools 与 Scheduler 可执行 tools 一致。
 14. 两个 EnvironmentSession 的 Tool View 不串线。
-15. ContextBuildReport summary 可在 trace 中看到，且不进入模型 prompt。
+15. ContextBuildReport summary 可在 trace 中看到，包含 definition fallback、section estimated token summary 和 final request estimated token summary，且不进入模型 prompt。
 16. 预算失败路径不调用 Provider、不提交 Action。
 17. Phase5 multi-step 回归通过。
 18. Phase6 async move_to 回归通过。
@@ -754,6 +777,7 @@ Recording Provider prompt capture
 Abigail / Linus context comparison
 Adapter-not-prompt-builder assertions
 ContextBuildReport trace assertions
+loop.go contextBuildTraceFields 字段映射
 ```
 
 验收点：
@@ -763,6 +787,11 @@ ContextBuildReport trace assertions
 两个 NPC 的 Definition 不串
 Adapter payload / Observation 不替代 Runtime Definition / Instruction
 report summary 可见但不进入 prompt
+trace summary 区分 Game Definition fallback 与 Agent Definition fallback
+trace summary 包含 Report.Sections 的 section estimated token summary
+trace summary 包含 final request estimated token summary
+同一 turn multi-step 的 ToolCall / ToolResult 成对进入下一次 Request
+present_dialogue 的跨 turn 玩家回复不用于证明 Current Turn Transcript
 ```
 
 建议提交：
@@ -805,6 +834,7 @@ test: close Phase7 context regressions
 Stardew Adapter dotnet tests
 Adapter context static check
 Adapter Debug build
+install-stardew-adapter.ps1 透传 GamePath
 必要的最小 Adapter bugfix
 ```
 
@@ -815,6 +845,7 @@ ProtocolMapper 保持 ContextFact / Observation / CapabilityList 语义
 present_dialogue / face_player / emote / move_to 能继续映射
 Adapter 仍不暴露 production speak capability
 Adapter 不生成完整 prompt
+自定义 GamePath 能完成安装脚本 build / install
 ```
 
 建议提交：
@@ -843,6 +874,8 @@ Abigail 或 Linus 至少完成一轮真实 NPC dialogue
 玩家 option 或 free text 至少完成一轮 player_said_to_npc
 Runtime trace 与 SMAPI log 能对应同一 event / turn
 无 runtime panic、stream crash、stuck waiting menu 或 unresolved Turn
+双 NPC、Definition / Memory 隔离和两种输入路径由自动化测试覆盖；真实双 NPC smoke 是推荐扩展，不是 hard gate
+present_dialogue 无回复入口并正常结束时记录限制，不直接判 Adapter 故障，也不算回复闭环通过
 Phase7.5 状态准确反映验收结果
 Phase7 总体状态可进入 Accepted 或 Accepted with Known Limitations
 ```
