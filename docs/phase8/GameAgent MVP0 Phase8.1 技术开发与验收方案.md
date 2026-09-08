@@ -1,13 +1,16 @@
 # GameAgent MVP0 Phase8.1 技术开发与验收方案
 
-> **Status:** Implementation Plan Accepted
+> **Status:** Accepted
 > **Date:** 2026-09-07
+> **Acceptance Date:** 2026-09-08
 > **Phase:** Phase8.1 Persistent Recent Memory
 > **Parent Plan:** [GameAgent MVP0 Phase8 技术开发与验收方案](./GameAgent%20MVP0%20Phase8%20技术开发与验收方案.md)
-> **Memory Architecture Baseline:** [Memory架构设计](../summary/Memory/Memory架构设计.md) v0.1
-> **Review Result:** Accepted for Phase8.1 code development
+> **Acceptance Architecture Baseline:** Memory v0.1；[当前 Memory 架构](../summary/Memory/Memory架构设计.md)
+> **Review Result:** Phase8.1 accepted by project owner
 > **Review Required Before Coding:** Completed
-> **Code Baseline:** `main` @ `fda66db`
+> **Pre-implementation Baseline:** `main` @ `fda66db`
+> **Implementation Baseline:** `main @ fe0c2d6` 与 2026-09-08 工作区中的 Phase8.1 修订；工作区修订不代表已提交
+> **Next Stage:** [Phase8.2 History & Compaction](./GameAgent%20MVP0%20Phase8.2%20技术开发与验收方案.md)，Implementation Plan Draft
 
 ---
 
@@ -62,7 +65,9 @@ Current Turn Transcript 继续留在内存。JSONL Trace 只做诊断，不是 M
 
 ---
 
-# 3. 当前代码事实
+# 3. 开发起点
+
+本节描述 `fda66db` 开发前基线；实现后的投影身份、SQLite 行为与验收结论以本文对应章节为准。
 
 当前 `runtime/internal/memory/store.go` 的 Store 接口是：
 
@@ -168,13 +173,16 @@ world_id
 
 ```text
 新库:
-    写入 game_id / world_id 绑定信息。
+    在同一初始化事务中创建 schema，并写入 schema version 和身份绑定 metadata。
+    并发初始化取得写锁后重新检查数据库状态。
 
 已有库:
-    读取绑定信息。
-    若绑定信息与请求的 game_id / world_id 不一致，
-    首次打开该库失败，该 world 的 Memory 读写返回明确错误。
+    只读校验 schema、必填 metadata 和 game_id / world_id 绑定信息。
+    表或必填 metadata 缺失、schema 不兼容、绑定身份不一致时，
+    该 world 的 Memory 读写返回明确错误，保持已有库内容不变。
 ```
+
+空文件且没有应用 schema 可以初始化；已有 Memory 表的数据库必须通过完整校验。`Recent` 在已有库上只执行校验与查询。
 
 库内查询继续按 `entity_id` 隔离。物理分库不等同于 `WorldMemoryScope`，它只是存储部署边界。
 
@@ -292,6 +300,10 @@ prior_successful_actions
 - no-op 保留已有 `memory_id` 和 `created_at`。
 - 同一 `ProjectionBatchKey` 但业务内容不等价时，返回 `duplicate_conflict`，不得覆盖旧记录。
 
+当前 Projector 的 `projection_version = 2`。`game_time` 保存可选的 `PresentFields` 位掩码，依次以 1、2、4、8、16、32 表示 year、season、day、hour、minute、tick 字段是否由来源提供；数值 0 与字段缺失有不同含义。所有字段均缺失的 GameTime 投影为 `null`。
+
+版本 1 的记录和凭据继续可读、可等价重试。没有 `PresentFields` 的版本 1 JSON 按原样保存和计算指纹；其非零快照沿用完整字段解释，全零快照作为未知时间。版本 1 没有保留字段存在性，无法恢复其原始可选字段状态。SQLite schema version 保持 `phase8_1_recent_v1`，既有投影凭据不重算。
+
 等价比较使用确定性业务字段：
 
 ```text
@@ -323,8 +335,8 @@ AgentTurn terminal state
     -> collect confirmed recent sources
     -> project memory.Record
     -> SQLiteMemoryStore.Append
-    -> begin SQLite transaction
-    -> validate database binding
+    -> open database and validate schema / binding
+    -> begin immediate SQLite transaction
     -> check ProjectionBatchKey
     -> write recent_records
     -> write recent_projection_batches
@@ -355,6 +367,8 @@ AgentTurn terminal state
 
 Memory 写入失败不回滚已完成 Action 或 TurnCompletion。
 
+Append 打开数据库时校验 schema 和绑定身份，并在读取幂等凭据之前取得写锁，锁等待受 `busy_timeout_ms` 限制。
+
 ---
 
 # 9. 读取语义
@@ -371,14 +385,14 @@ Memory 写入失败不回滚已完成 Action 或 TurnCompletion。
 读取:
     打开 game_id + world_id 对应数据库
     校验数据库绑定身份
-    按 entity_id 查询候选
-    最终交付数量不超过 limit 的可见 Recent
-    返回顺序从旧到新，供 Context 使用
+    按 entity_id 查询，按 created_at、memory_id 从新到旧取至多 limit 条候选
+    Store 不接收当前 GameTime，不执行时间可见性过滤
+    将候选按上述持久顺序反转为旧到新，供 Context 使用
 ```
 
 Phase8.1 的 Runtime recall 不应直接用 `recent_memory_limit` 作为数据库候选数量。
 
-读取当前 Context 时：
+Context 负责后续 GameTime 过滤、时间排序与最终 `recent_memory_limit` 选择。读取当前 Context 时：
 
 ```text
 candidate_limit = memory_store.max_records_per_entity
@@ -401,17 +415,23 @@ candidate_limit = memory_store.max_records_per_entity
 稳定时间顺序：
 
 ```text
-如果两条记录都有可比较、非空 GameTime:
-    先比较 GameTime。
-    当 GameTime 相等且两条记录的 source_event_sequence 都非 0 时，
-    再比较 source_event_sequence。
+过滤 future GameTime 后，为整批候选选择统一的时间比较依据:
+    全部记录具备 year / season / day / hour / minute 时，按这些日历字段排序。
+    若整批还都具备 tick，则在日历字段相同时比较 tick。
+    全部记录只提供 tick 时，按 tick 排序。
+    存在缺失时间、部分日历字段或混合日历与 tick-only 表达时，
+    整批按 created_at、memory_id 排序。
 
-如果 GameTime 缺失、不可比较，或无法用 sequence 判断同一时间内顺序:
-    使用 created_at。
-    若仍相同，使用 memory_id 保持稳定。
+使用 GameTime 排序时:
+    按选定的时间比较依据划分相同时间组。
+    只有组内全部 source_event_sequence 都非 0 时，才按 sequence 排序。
+    sequence 缺失的组按 created_at、memory_id 排序。
+    sequence 相同时也按 created_at、memory_id 排序。
 ```
 
-`source_event_sequence` 只用于同一非空可比较 GameTime 内的稳定排序，不作为跨 GameTime 或 unknown GameTime 的全局主排序字段。
+过滤、排序和时间标签共享 GameTime 字段存在性与可比较性判断。未来时间过滤按记录与当前时间的共同有效依据进行，未知时间保留可见。当前时间优先使用可比较的 Event GameTime，否则使用 Observation GameTime。
+
+`source_event_sequence` 只用于同一非空可比较 GameTime 组，不作为跨 GameTime 或 unknown GameTime 的全局主排序字段。
 
 读取失败：
 
@@ -456,13 +476,16 @@ memory_store.max_projection_batches_per_entity:
 默认：
 
 ```text
-memory_store.max_records_per_entity = max(recent_memory_limit, memory.DefaultMaxRecordsPerSession)
+memory_store.max_records_per_entity = max(recent_memory_limit, memory.DefaultSQLiteMaxRecordsPerEntity)
 memory_store.max_projection_batches_per_entity = max(100, memory_store.max_records_per_entity * 4)
 ```
+
+`memory.DefaultSQLiteMaxRecordsPerEntity = 100`，因此当前 SQLite 默认保留 100 条 Recent 和 400 条幂等凭据。Context 仍最多纳入 5 条、4096 estimated tokens；InMemory 测试实现的 20 条默认容量与 SQLite 独立。上述条数是 Recent 记录或投影批次，不等同于完整对话数量。
 
 规则：
 
 - `max_records_per_entity` 不得小于 `recent_memory_limit`。
+- `max_projection_batches_per_entity` 不得小于 `max_records_per_entity`；显式冲突的配置返回错误。
 - Recent 超限清理发生在 Append 的同一事务中。
 - 幂等凭据超限清理也在 Append 的同一事务中按保留窗口执行。
 - 清理顺序固定为：先清 `recent_records`，再清 `recent_projection_batches`。
@@ -471,6 +494,7 @@ memory_store.max_projection_batches_per_entity = max(100, memory_store.max_recor
 - 清理 Recent 记录不等于清理幂等凭据。
 - 幂等凭据按每 Entity 批次数保留。
 - 幂等凭据数量上限由 `max_projection_batches_per_entity` 控制。
+- 超限时按当前 Entity 的凭据总数计算应删除数量，再按 `last_seen_at`、`projection_batch_key` 从旧到新删除未被 Recent 引用的凭据，直到总数回到上限。
 - 幂等凭据不得早于对应 Recent 记录被清理。
 - Recent 记录已清理但幂等凭据仍保留时，等价重试返回 no-op，不重新插入旧 Recent。
 - 幂等凭据窗口外不承诺去重。
@@ -498,8 +522,8 @@ memory_store.max_projection_batches_per_entity = max(100, memory_store.max_recor
     "kind": "sqlite",
     "root": "runtime/.local/memory",
     "busy_timeout_ms": 5000,
-    "max_records_per_entity": 20,
-    "max_projection_batches_per_entity": 100
+    "max_records_per_entity": 100,
+    "max_projection_batches_per_entity": 400
   }
 }
 ```
@@ -511,7 +535,7 @@ memory_enabled = true
 memory_store.kind = sqlite
 memory_store.root = runtime/.local/memory
 memory_store.busy_timeout_ms = 5000
-memory_store.max_records_per_entity = max(recent_memory_limit, memory.DefaultMaxRecordsPerSession)
+memory_store.max_records_per_entity = max(recent_memory_limit, memory.DefaultSQLiteMaxRecordsPerEntity)
 memory_store.max_projection_batches_per_entity = max(100, memory_store.max_records_per_entity * 4)
 ```
 
@@ -584,8 +608,9 @@ go test ./runtime/internal/memory -count=1
 重点测试：
 
 ```text
-新库写入 metadata
-已有库校验 game_id / world_id
+新库原子发布 schema 和 metadata，并发首次打开结果一致
+已有库只读校验 schema 和 game_id / world_id，缺失或不兼容时保持原库不变
+同 world 写事务持锁时，已有 WAL 库的 Recent 可以读取已提交记录
 绑定不一致时首次打开该库失败，不表示整个 Runtime 进程必须退出
 game_id = con / nul / game. 时路径使用 hash 而不是原始目录名
 同一世界不同 Entity 不串线
@@ -598,6 +623,7 @@ ProjectionBatchKey conflict rejected
 事务失败不只提交 Recent 或只提交幂等凭据
 recent_records 清理先于 recent_projection_batches
 仍被 recent_records 引用的 projection batch 不会被清理
+缩容和已清理记录的等价重试后，幂等凭据总数仍满足上限
 可控慢事务中途 cancel 后，事务结果为 commit、rollback 或明确失败
 cancel-mid-transaction 不会产生 Lane 释放后的后台提交
 ```
@@ -620,6 +646,7 @@ runtime/cmd/server
 默认 root = runtime/.local/memory。
 Composition Root 创建共享 SQLiteMemoryStore。
 保留 WithMemoryStore 测试注入能力。
+补齐默认值后校验 max_projection_batches_per_entity >= max_records_per_entity。
 ```
 
 测试：
@@ -649,6 +676,9 @@ Turn 终态后同步完成 Memory 写入尝试。
 Runtime 重启后同一 AgentSessionKey 可读取 Recent。
 future GameTime 仍不进入 Context。
 读取 Recent 时先取 max_records_per_entity 候选，再过滤 future GameTime，最后截取 recent_memory_limit。
+混合未知时间和缺失 sequence 的候选集保持确定性排序。
+空 GameTime、合法零值与部分字段保持各自的存在性语义。
+SQLite 重开后保持时间字段存在性，版本 1 的既有指纹支持等价重试。
 ```
 
 测试：
@@ -690,6 +720,8 @@ Runtime 重启后，同一 AgentSessionKey 可以读取此前 Recent Memory。
 数据库按 game_id + world_id 物理分库。
 数据库路径使用 game_id_hash / world_id_hash。
 数据库内 game_id / world_id 绑定校验生效。
+新库 schema 和 metadata 原子初始化；已有库校验失败时保持原库不变。
+已有 WAL 库的 Recent 读取不获取写锁。
 绑定不一致时首次打开该库失败，该 world 的 Memory 读写报错，不要求 Runtime 进程退出。
 同一世界数据库内不同 Entity 不串线。
 同 world 多 Entity 并发写入通过 busy_timeout_ms 排队，超时后写入失败并记录诊断。
@@ -702,6 +734,7 @@ Recent 记录与幂等凭据同事务提交。
 事务失败不会暴露半条业务状态。
 取消 / 超时后没有 Lane 释放后的后台提交。
 Recent 磁盘保留上限生效。
+幂等凭据按包含已引用凭据的总数执行实体容量上限。
 Recent 记录清理先于幂等凭据清理。
 仍被 Recent 记录引用的幂等凭据不得清理。
 Recent 清理不导致幂等凭据提前丢失。
@@ -710,10 +743,29 @@ Recent 记录已清理但幂等凭据仍在时，等价重试 no-op，不重新�
 读取时先取实体保留上限内候选，再过滤 future GameTime，最后返回最近 N 条可见记录。
 选出最近 N 条和按旧到新返回是两个独立步骤。
 future GameTime 记忆不进入当前 Context。
+整批候选使用统一时间排序依据，同时间组统一决定是否使用 sequence。
+时间字段存在性在持久化后保留，版本 1 JSON 和幂等指纹保持兼容。
 读取失败 fail-open。
 写入失败不回滚 Action / TurnCompletion。
 Trace 写入失败不影响 Memory 读写。
 ```
+
+## 验收结论
+
+Phase8.1 于 2026-09-08 经用户评审确认验收通过。
+
+验证依据：
+
+- Memory、Agent、Context、Gateway 包测试、全量 `go test ./... -count=1` 和 `git diff --check` 通过。
+- 时间与 Context、SQLite 与配置的独立复审未发现可证实的剩余行为缺陷。
+- 实际游戏对话已确认 3 条 Recent Memory 和对应 3 条幂等凭据落库，后续 Turn 成功读取历史记录并保留进入模型上下文。
+
+验证限制与阶段边界：
+
+- 持久化恢复已通过 Store / Loop 实例重建测试；真实 Runtime 进程重启恢复和旧版 Store 建库后由新版重开的端到端路径尚未现场验证。
+- 等待写锁期间取消，以及跨游戏重启后同一游戏分钟内的 Tick 比较，尚未专项实测。
+- `go test -race` 被本机 C 工具链不支持 64 位编译的问题阻断，未取得 race 检测结果。
+- SQLite Memory 独立于游戏存档保存。回档时按可比较 GameTime 过滤未来记录，时间追上后旧记录可能重新可见；完整存档分支隔离不属于 Phase8.1。
 
 ---
 

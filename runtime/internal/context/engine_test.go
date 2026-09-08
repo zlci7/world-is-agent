@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	agentcontext "gameagent/runtime/internal/context"
@@ -625,7 +626,8 @@ func TestEngineBuildAppliesRecentMemorySoftLimit(t *testing.T) {
 	input := validEngineInput(t)
 	input.RecentMemories = []memory.Record{
 		{
-			MemoryID: "old",
+			MemoryID:  "old",
+			CreatedAt: time.Unix(100, 0),
 			SourceContextFacts: []memory.SourceContextFact{{
 				Kind:          "utterance",
 				ActorEntityID: "player:local",
@@ -633,7 +635,8 @@ func TestEngineBuildAppliesRecentMemorySoftLimit(t *testing.T) {
 			}},
 		},
 		{
-			MemoryID: "new",
+			MemoryID:  "new",
+			CreatedAt: time.Unix(200, 0),
 			SourceContextFacts: []memory.SourceContextFact{{
 				Kind:          "utterance",
 				ActorEntityID: "player:local",
@@ -774,7 +777,8 @@ func TestEngineBuildReportsMemoryBudgetWithoutDroppingRequiredProjection(t *test
 	input := validEngineInput(t)
 	input.RecentMemories = []memory.Record{
 		{
-			MemoryID: "old",
+			MemoryID:  "old",
+			CreatedAt: time.Unix(100, 0),
 			SourceContextFacts: []memory.SourceContextFact{{
 				Kind:          "utterance",
 				ActorEntityID: "player:local",
@@ -782,7 +786,8 @@ func TestEngineBuildReportsMemoryBudgetWithoutDroppingRequiredProjection(t *test
 			}},
 		},
 		{
-			MemoryID: "new",
+			MemoryID:  "new",
+			CreatedAt: time.Unix(200, 0),
 			SourceContextFacts: []memory.SourceContextFact{{
 				Kind:          "utterance",
 				ActorEntityID: "player:local",

@@ -2,12 +2,12 @@
 
 > **Public Documentation Note (2026-09-01):** 根目录 [ROADMAP.md](../../ROADMAP.md) 和 [docs/STATUS.md](../STATUS.md) 是当前公开 Roadmap 与能力状态入口。本文保留为阶段规划、阶段验收和内部开发节奏资料。
 >
-> **Version:** v1.9
+> **Version:** v1.10
 > **Status:** Roadmap Baseline
-> **Date:** 2026-09-06
+> **Date:** 2026-09-08
 > **Architecture Baseline:** GameAgent Runtime Architecture v0.7
-> **Current Baseline:** Phase1 Accepted + Phase2 Accepted + Phase3 Accepted + Phase4 Accepted + Phase5 Accepted + Phase5.5 Accepted + Phase5.6 Accepted + Phase6 Accepted + Phase6.5 Accepted + Phase7.0 Accepted + Phase7.1 Accepted + Phase7.2 Accepted + Phase7.3 Accepted + Phase7.4 Accepted
-> **Revision Source:** [评审意见](./评审意见.md)（Roadmap Review，2026-08-18）；[Phase3 评估](../phase3/评估.md)（Protocol v1alpha2 Decision，2026-08-20）；[多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[Stardew Adapter 方案对比](../adapter/Stardew Adapter 方案对比.md)（2026-08-27）；[Phase6 Async Action Protocol Strategy ADR](../phase6/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[Phase6.5 Stardew Dialogue Interaction Convergence](../phase6.5/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）；[GameAgent 阶段规划 v1.1 评审意见](./GameAgent_阶段规划_v1.1_评审意见.md)（2026-09-02）；Phase7 Context Subsystem Replan（2026-09-02）；Phase7 Contract Review（2026-09-02）；Phase7 Baseline Candidate Review（2026-09-02）；Phase7 Roadmap Baseline Freeze（2026-09-02）；Phase7.0 Contract Revision（2026-09-02）；Phase7.0 Gate Scope Correction（2026-09-02）；Phase7.0 Minor Review Correction（2026-09-02）；Phase7.0 Over-scope Guard Correction（2026-09-02）；Phase7.3 Implementation Acceptance（2026-09-04）；Phase7.4 Code Acceptance（2026-09-06，`main` @ `e50794c`）
+> **Current Baseline:** Phase1 Accepted + Phase2 Accepted + Phase3 Accepted + Phase4 Accepted + Phase5 Accepted + Phase5.5 Accepted + Phase5.6 Accepted + Phase6 Accepted + Phase6.5 Accepted + Phase7.0 Accepted + Phase7.1 Accepted + Phase7.2 Accepted + Phase7.3 Accepted + Phase7.4 Accepted + Phase8.1 Accepted
+> **Revision Source:** 评审意见（Roadmap Review，2026-08-18）；Phase3 评估（Protocol v1alpha2 Decision，2026-08-20）；[多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[Stardew Adapter 方案对比](../adapter/Stardew Adapter 方案对比.md)（2026-08-27）；[Phase6 Async Action Protocol Strategy ADR](../phase6/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[Phase6.5 Stardew Dialogue Interaction Convergence](../phase6.5/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）；GameAgent 阶段规划 v1.1 评审意见（2026-09-02）；Phase7 Context Subsystem Replan（2026-09-02）；Phase7 Contract Review（2026-09-02）；Phase7 Baseline Candidate Review（2026-09-02）；Phase7 Roadmap Baseline Freeze（2026-09-02）；Phase7.0 Contract Revision（2026-09-02）；Phase7.0 Gate Scope Correction（2026-09-02）；Phase7.0 Minor Review Correction（2026-09-02）；Phase7.0 Over-scope Guard Correction（2026-09-02）；Phase7.3 Implementation Acceptance（2026-09-04）；Phase7.4 Code Acceptance（2026-09-06，`main` @ `e50794c`）
 
 ---
 
@@ -101,7 +101,9 @@ Phase6.5：用 Stardew Tool View 收敛、present_dialogue 默认输入、source
 Phase7.1：用少量 Stardew NPC Definition 验证角色定义真正进入模型输入。
 Phase7.2：用当前 EnvironmentSession 的 Tool View snapshot 验证模型看到的工具与实际执行的工具一致。
 Phase7.5：用真实 Stardew 对话验收 Context 主链路。
-Phase8：用 Persistent Recent Memory 验证 Runtime 重启后的短期记忆恢复。
+Phase8.1：用 SQLite Recent Memory 验证持久身份、幂等与近期记忆读取。
+Phase8.2：用终态 History 与有界 Summary 验证跨 Turn、跨 Runtime 的历史连续性。
+Phase8.3：用历史原文检索与可选留存清理验证细节召回和删除后的能力边界。
 Phase9：用 reconnect、capability replacement 和 pending operation 收敛验证 Environment Recovery。
 ```
 
@@ -130,7 +132,10 @@ Phase7 及后续阶段属于当前可调整范围。上一阶段结束后，可�
 | Phase7.3 | Context Engine Core | 将 Event、ContextFacts、Observation、Memory、Transcript、Definition 和 Tool View 组合成结构化投影 |
 | Phase7.4 | Selection、Budget 与 Observability | 按优先级选择上下文，稳定裁剪，完成 Tool size admission、BuildReport 和综合诊断 |
 | Phase7.5 | Stardew Context Integration 与验收 | 用 Stardew Definition 内容校对、Fake / Recording Provider 和实机对话验收 Context 主链路 |
-| Phase8 | Persistent Recent Memory | Recent Memory 使用本地持久 Store，Runtime 重启后仍按 AgentSession 恢复 |
+| Phase8 | Persistent Memory, History & Context Compaction | 持久来源与模型输入分离，分 8.1/8.2/8.3 独立验收 |
+| Phase8.1 | SQLite Recent Memory | 有限 Recent 持久化、身份隔离、幂等与重启读取；Accepted |
+| Phase8.2 | Persistent Session History & Context Compaction | 完整约定终态历史、历史摘要与近期原文，恢复提交的检查点；方案 Draft |
+| Phase8.3 | History Retrieval & Retention | 中文字面检索、来源片段与默认关闭的原文清理；方案 Draft |
 | Phase9 | Environment Reconnect and Capability Recovery | Adapter reconnect、EnvironmentSession 重建、capability replacement 和 pending operation 收敛 |
 | Phase10 | Evaluation、Developer Experience 与产品化 | 系统可重复评估、定位、交付，并支持新 Adapter 接入 |
 
@@ -1228,60 +1233,54 @@ Adapter reconnect / Environment Recovery
 
 ---
 
-# 14. Phase8：Persistent Recent Memory
+# 14. Phase8：Persistent Memory, History & Context Compaction
 
 ## 阶段目标
 
-让现有 Recent Memory 可以按 `game_id + world_id + entity_id` 持久保存，并在 Runtime 重启后继续进入 Model Context。
+让同一 `game_id + world_id + entity_id` 的 Agent 持久积累交互来源，通过摘要和有界近期原文保持连续性，并按需检索仍保留的细节。
 
-本阶段核心原则：
-
-> **复用已经存在的 MemoryRecord 和 MemoryProjector，先补持久 Store、去重和重启恢复，不新建完整 Experience 系统。**
+持久原文容量与 Context 容量分别管理。Memory 归 Runtime，当前事实以 Observation 为准，ActionResult 的实际结果与角色陈述保持区别。
 
 ## 主要范围
 
-- 为现有 `memory.Store` 增加本地结构化持久 backend；
-- 复用现有 `memory.Record` 与 `MemoryProjector`；
-- 增加同一 source turn projection 的幂等写入；
-- 幂等写入使用稳定逻辑键，例如 `AgentSessionKey + SourceTurnID + ProjectionKind / ProjectionVersion`，不使用每次投影动态生成的 `MemoryID` 去重；
-- 保持 Memory 读取失败 fail-open；
-- 保持 Memory 写入失败不回滚已成功 Turn；
-- 保持 GameTime future-memory filtering；
-- 提供最小 schema version、兼容读取、迁移或显式 reset 策略；
-- 明确破坏性 reset 会丢失 Recent Memory，不得从 Trace JSONL 反向重建 Memory；
-- 验证 Runtime restart 后同一 Stardew NPC 可读取此前 Recent Memory。
+| 子阶段 | 主要范围 | 独立状态 |
+| --- | --- | --- |
+| 8.1 | SQLite 世界分库、entity 隔离、Recent 与凭据原子提交、时间过滤、有界保留 | Accepted，保留原验收限制 |
+| 8.2 | 终态来源整批保存、8.1 迁移、固定快照、同步摘要、近期原文和检查点恢复 | Implementation Plan Draft |
+| 8.3 | 中文字面检索、Context 片段与去重、按显式策略清理已覆盖的超期原文 | Implementation Plan Draft |
+
+8.2 不按重要性筛选保存来源，恢复保证以成功提交的终态批次为界；中途崩溃可能缺失该轮。压缩后近期原文有可配置 token 目标，后续交互允许继续增长。8.3 默认关闭清理，删除后原文不可精确检索或重建早期摘要。
+
+共同保持读取 fail-open、写入失败不回滚已发生动作、稳定逻辑键幂等与 GameTime 可见性。摘要必须检查累计来源时间，不能在回档后泄露可比较的未来来源。Trace 只作诊断。
+
+详细合同见 [Phase8 总方案](../phase8/GameAgent%20MVP0%20Phase8%20技术开发与验收方案.md)、[Phase8.1](../phase8/GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md)、[Phase8.2](../phase8/GameAgent%20MVP0%20Phase8.2%20技术开发与验收方案.md) 与 [Phase8.3](../phase8/GameAgent%20MVP0%20Phase8.3%20技术开发与验收方案.md)。
 
 ## 非目标
 
 ```text
-独立 Persistent Experience Store
-完整 Event Sourcing
+逐步骤 Experience Log 与完整 Event Sourcing
 Event replay / Action replay
 Durable async continuation
 Resume token
-长期 Semantic Memory
+Semantic 认知提取、Evidence Capsule 专门模型与 supersede/invalidate
 Vector DB / embedding retrieval
 Knowledge Graph
 通用 Migration Framework
 跨机器共享 Memory
+完整存档 timeline / branch 管理
 ```
 
 ## 完成条件
 
-- Runtime 重启后，同一 `game_id + world_id + entity_id` 可以读取此前 Recent Memory；
-- 不同 world、不同 entity 的 Memory 不串线；
-- 同一 source turn projection 重复写入不会产生重复 Memory；
-- 持久 Store 的去重逻辑不依赖动态生成的 `MemoryID`；
-- 现有失败 Turn / prior successful action projection 语义不退化；
-- 读取持久 Memory 失败时 AgentTurn 仍可继续执行并发出 trace；
-- 写入持久 Memory 失败时已成功 Action 和 TurnCompletion 语义不被回滚；
-- 回档或世界时间回退后，未来时间 Memory 不进入本次 Model Context；
-- 显式 reset 的行为和数据丢失边界清楚，不把 Trace JSONL 当作 Memory 恢复来源；
-- 持久化实现不要求 Adapter 保存 Agent Memory。
+- 8.1 的 Accepted 状态与已有验证限制保持独立；后续规划不补记未执行的验收。
+- 8.2 以 SQLite、摘要覆盖与最终模型请求证明完整约定来源、身份隔离、事务、预算和回档规则；真实模型忠实性与真实 Runtime 重启单独验收。
+- 8.3 证明近期尾部以外的中文原文可查询并进入 Context，清理资格、索引一致性和删除后能力均可验证。
+- 各阶段均保持读取失败继续 Turn、写入失败不改变 Action/TurnCompletion；不依赖 Adapter 保存 Memory。
+- 每个子阶段独立评审、开发和验收；方案通过只表示允许编码。
 
 ## 阶段结束 Review
 
-重点确认持久 Recent Memory 是否稳定支撑 Runtime restart，是否仍保持 AgentSession scope，以及是否具备进入 Environment Recovery 的条件。
+重点确认持久来源与模型输入职责、摘要忠实性、原文可用性、回档限制和交互延迟。Phase9 的 Memory 前置能力由 8.1 提供，8.2 的摘要与 8.3 的检索清理不额外阻塞 Environment Recovery。
 
 ---
 
@@ -1502,13 +1501,22 @@ Phase7.0–Phase7.5 可以共享一份 Phase7 Context Subsystem 总纲，但不�
     Phase7.4 必须 Accepted。
     Stardew Definition 内容与实机验收口径必须明确。
 
-进入 Phase8 implementation 前
-    Phase7.5 必须 Accepted。
+进入 Phase8.1 implementation 前
+    Phase7.5 已完成必要验收，或其 known limitations 不影响 Memory 持久化开发。
     Context 主链路必须稳定。
 
+进入 Phase8.2 implementation 前
+    Phase8.1 必须 Accepted，保留其已知限制。
+    History 来源、迁移、预算、摘要与时间合同完成技术评审。
+
+进入 Phase8.3 implementation 前
+    Phase8.2 必须 Accepted。
+    检索、中文样例、留存与删除后能力合同完成技术评审。
+
 进入 Phase9 implementation 前
-    Phase8 必须 Accepted 或 Accepted with Known Limitations。
+    Phase8.1 必须 Accepted 或 Accepted with Known Limitations。
     Persistent Recent Memory 必须可按 AgentSession scope 读取。
+    不要求 Phase8.2 或 Phase8.3 完成。
 
 进入 Phase10 implementation 前
     Phase9 必须 Accepted。
@@ -1530,7 +1538,7 @@ Vector retrieval
 Canonical dialogue retrieval
 World State Projection
 Agent Cognitive State
-Experience Retrieval
+超出个人历史字面检索的 Experience Retrieval
 Definition hot reload
 Definition 多后端 Resolver
 Skills
@@ -1600,7 +1608,16 @@ Phase7.5
 用 Stardew Definition 内容校对、Fake / Recording Provider 和真实 NPC 对话验收 Context 主链路
 
 Phase8
-让 Recent Memory 可以按 AgentSession 持久保存并在 Runtime 重启后恢复
+按 AgentSession 分阶段建立持久来源、有界历史上下文、原文检索与留存管理
+
+Phase8.1
+SQLite Recent Memory 持久化、隔离、幂等与恢复读取
+
+Phase8.2
+完整约定终态 History、同步摘要与近期原文，恢复已提交历史连续性
+
+Phase8.3
+中文历史原文检索与可选留存清理，明确删除后的能力边界
 
 Phase9
 让 Environment 可以重连、恢复，并让 pending operation 收敛到明确状态

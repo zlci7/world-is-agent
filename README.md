@@ -39,14 +39,16 @@ Implemented today:
 - Protocol v1alpha2.
 - Agent identity scoped by `game_id + world_id + entity_id`.
 - Bounded multi-step AgentTurn execution.
-- Short-term in-process memory and context projection.
+- SQLite-backed Recent Memory scoped by game, world, and entity, with bounded context projection.
 - Dynamic Capability to Tool registration.
 - Sync and async action lifecycle.
 - Provider-neutral model interface with Fake, DeepSeek, and OpenAI providers.
 - Stardew dialogue, player input, emote, face-player, and same-location `move_to` validation.
 - JSONL turn trace at `runtime/.local/traces.jsonl`.
 
-Current limits include in-process memory, manual adapter installation, one real adapter, alpha protocol contracts, and no validated process recovery path yet.
+Recent Memory defaults to 100 retained records per entity; model context includes at most 5 records within a 4096 estimated-token budget. Store/Loop reconstruction tests and real dialogue persistence are covered; live Runtime process-restart validation remains open. Full terminal history, summaries, history retrieval, and optional retention are planned in Phase8.2/8.3.
+
+Current limits include process-local active turns and async waits, manual adapter installation, one real adapter, alpha protocol contracts, and no validated automatic environment recovery path yet.
 
 Read [docs/STATUS.md](docs/STATUS.md) for the current capability matrix.
 

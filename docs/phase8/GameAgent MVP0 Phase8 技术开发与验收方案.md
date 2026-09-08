@@ -1,331 +1,131 @@
 # GameAgent MVP0 Phase8 技术开发与验收方案
 
 > **Status:** Implementation Plan Draft
-> **Date:** 2026-09-07
-> **Phase:** Phase8 Game-native Memory Persistence 与 Lightweight Long-term Memory
-> **Roadmap Baseline:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md) v1.9
-> **Memory Architecture Baseline:** [Memory架构设计](../summary/Memory/Memory架构设计.md) v0.1
-> **Previous Gate:** Phase7.5 integration evidence pending
-> **Review Required Before Coding:** Yes
-> **Code Baseline:** `main` @ `fda66db`
-> **Roadmap Sync:** Required after this draft is reviewed
-> **Phase8.1 Coding Gate:** Accepted, tracked in the independent Phase8.1 plan
-> **Phase8.2 Coding Gate:** Design Preview, requires a dedicated implementation review after Phase8.1
+> **Date:** 2026-09-08
+> **Phase:** Phase8 Persistent Memory, History & Context Compaction
+> **Roadmap:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md)
+> **Architecture:** [Memory 架构设计](../summary/Memory/Memory架构设计.md)
+> **Code Inspection Baseline:** `main @ fe0c2d6` 与 2026-09-08 工作区中的 Phase8.1 修订
+> **Phase8.1:** Accepted，验收结论与限制见独立方案
+> **Phase8.2 / Phase8.3:** Implementation Plan Draft，分别评审、开发和验收
 
----
+## 1. 阶段目标与分期
 
-# 1. 阶段目标
+同一世界中的具体 Agent 持续保存交互来源，通过有界历史摘要与近期原文维持连续性，并在需要时找回仍保留的旧原文。
 
-Phase8 将 GameAgent Runtime 的 Memory 从进程内短期列表升级为 game-native 的持久记忆能力。
+| 阶段 | 主题 | 独立交付 | 状态 |
+| --- | --- | --- | --- |
+| [8.1](./GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md) | SQLite Recent Memory | 现有 Recent 持久保存、隔离、幂等与重启读取 | Accepted |
+| [8.2](./GameAgent%20MVP0%20Phase8.2%20技术开发与验收方案.md) | Persistent Session History & Context Compaction | 完整约定终态来源、历史快照、同步摘要、检查点恢复 | Implementation Plan Draft |
+| [8.3](./GameAgent%20MVP0%20Phase8.3%20技术开发与验收方案.md) | History Retrieval & Retention | 中文字面检索、原文片段、可选留存清理 | Implementation Plan Draft |
 
-本阶段分两个增量：
+8.2 不以 8.3 为验收前置条件。Environment Recovery 的 Memory 前置能力是 8.1 的持久身份与按 AgentSession 读取，8.2/8.3 不额外阻塞 Phase9；恢复 pending action 和自动重连仍由 Phase9 定义。
 
-```text
-Phase8.1 Persistent Recent Memory
-    使用 SQLiteMemoryStore 持久化现有 Recent Memory，
-    让同一 game_id + world_id + entity_id 的 Agent 在 Runtime 重启后恢复最近经历。
+## 2. 数据职责
 
-Phase8.2 Lightweight Long-term Memory
-    在同一世界 SQLite 数据库上扩展轻量长期 Memory，
-    支持少量重要经历的保存、窗口外召回、更正和 Context 接入。
-```
-
-本文是 Phase8 总体方案。Phase8.1 的可开发合同由独立文档承接，Phase8.2 当前只保留边界预览。
-
----
-
-# 2. 数据职责
-
-Phase8 区分三类数据：
-
-| 数据 | 位置 | 职责 |
+| 数据 | 职责 | 持久性质 |
 | --- | --- | --- |
-| Current Turn Transcript | Runtime 内存 | 保存当前 AgentTurn 内的模型消息、ToolCall 和 ToolResult，供同一 Turn 后续 step 构建请求 |
-| JSONL Trace | 可选诊断文件 | 记录调用顺序、参数摘要、结果、耗时和失败原因 |
-| SQLite Memory Store | Runtime 本地 SQLite | 保存已确认 Recent Memory、后续长期 Memory 和必要 evidence |
+| Current Turn Transcript | 当前 Turn 内 earlier steps 的模型消息与工具因果链 | 执行时内存数据，不承担崩溃恢复 |
+| JSONL Trace | 调用顺序、耗时、结果与失败诊断 | 可选 observer，不是 Memory 真源 |
+| Recent Record | 8.1 已交付的有限近期来源投影 | SQLite 保留窗口，不是完整历史 |
+| Session History | 8.2 约定终态来源，含玩家原话、决策、已知动作结果和终态 | 权威原文，成功提交后可恢复 |
+| Context Summary | 8.2 有界生成摘要与精确覆盖、累计时间来源 | 有损读取投影，不替代游戏事实 |
+| Retrieved History | 8.3 从仍保留的原文取得的来源片段 | 索引派生的读取结果，不是独立认知表 |
 
-边界：
+当前 Observation 表达当前世界事实。过去的陈述、模型调用意图、游戏确认结果分别保留性质，不能将台词成功展示提升为台词描述的事实已发生。
 
-- Transcript 不落为 Phase8 权威持久状态。
-- Trace 不参与 Memory 提交一致性。
-- Trace 写入失败不影响模型所需 Transcript、Memory 写入、Memory 召回或 Turn 结果。
-- Memory 不从 Trace 反向重建，不从 Trace 自动重放工具。
-- 未完成 Turn 恢复、工具自动重放和完整 Experience Log 不属于 Phase8。
+Trace 失败不影响 Memory 的一致性；Memory 不从 Trace 重建，不归档每步重复包含旧历史的完整模型 Request，不自动重放工具。
 
----
+## 3. 共同存储与生命周期
 
-# 3. SQLite 持久化边界
+- Memory 归 Runtime，Adapter 只提供事件、观察和实际 ActionResult。
+- `AgentSessionKey = game_id + world_id + entity_id`；连接 ID、UI conversation ID、definition ID 不改变 Memory owner。
+- 使用 `modernc.org/sqlite`，按 game/world 分库，库内按 entity 隔离；物理世界库不是公共记忆池。
+- 默认路径为 `runtime/.local/memory/<sha256(game_id)>/<sha256(world_id)>/memory.db`，hash 为 lowercase hex。原始身份保存在 metadata，打开时必须核对绑定。
+- 稳定逻辑键承担幂等；记录 ID 和写入时间不承担幂等。同键等价 no-op，内容冲突拒绝。
+- 终态后的有界写入尝试在当前 entity lane task 结束前完成；实际事务已提交、回滚或明确失败才释放 lane。
+- 读失败继续 Turn 并诊断；写失败不改变已经发生的 Action 或 TurnCompletion。数据损坏或 schema 不匹配不自动 reset。
+- Context Build 是确定性选择与渲染，不读库、不调用模型。Agent 层在 Turn 开始准备固定历史候选，后续 step 复用。
+- 沿用已有 lane 的调度边界，不新增多 Runtime 共享数据库写入或跨连接 exactly-once 保证。
 
-Phase8 选择 SQLite 作为正式持久化后端。
+## 4. Phase8.1 已交付合同
 
-实现边界：
+`SQLiteSchemaVersion = phase8_1_recent_v1`，包含 metadata、`recent_records` 与 `recent_projection_batches`。Recent 与凭据同事务提交和清理，仍被 Recent 引用的凭据不得提前删除。
 
-```text
-SQLiteMemoryStore
-    -> implements memory.Store
-    -> uses modernc.org/sqlite
-    -> one database per game_id + world_id
-    -> records still scoped by game_id + world_id + entity_id
-```
+当前默认值：
 
-数据库物理路径按世界划分：
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| SQLite Recent 容量 | 100 条 / entity | 磁盘实际保留上限 |
+| SQLite 幂等凭据容量 | 400 批 / entity | 重试去重保留窗口 |
+| Recent Context 数量 | 最多 5 条 | 进入模型的条数限制 |
+| Recent Context token | 最多 4096 estimated tokens | 同时受最终请求预算限制 |
+| SQLite busy timeout | 5000 ms | 锁等待上限 |
 
-```text
-runtime/.local/memory/<game_id_hash>/<world_id_hash>/memory.db
-```
+读取实体容量范围内的候选，先过滤可比较的 future GameTime，再选择最多 5 条可见 Recent。InMemory 测试实现仍有独立的 20 条默认容量，不应混同于 SQLite 默认值。
 
-路径规则：
+Phase8.1 已由项目负责人验收。既有验证包括 Store/Loop 实例重建、自动化回归和真实对话落库；真实 Runtime 进程重启、指定跨版本端到端场景和 race 等未完成验证仍按 [8.1 验收结论](./GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md#验收结论) 记录，不因本方案更新而变成通过。
 
-- `game_id_hash` 使用 `sha256(game_id)` 的 lowercase hex。
-- `world_id_hash` 使用 `sha256(world_id)` 的 lowercase hex。
-- hash 只用于文件系统路径安全，避免 Windows 保留名、尾随点和特殊字符问题。
-- 数据库内必须保存原始 `game_id` 和 `world_id`。
-- 打开数据库时必须核对库内绑定身份与请求的 `game_id / world_id` 一致。
-- 只有绑定正确后，Runtime 才能按 `entity_id` 查询或写入个人记忆。
+## 5. Phase8.2 开发合同
 
-Scope 规则：
+终态 History 不按重要性筛选，以一次 Turn 的完整约定来源为提交单元。完整性只保证成功提交的终态批次；中途崩溃和写入失败可能缺失本轮，不承诺逐步骤恢复。
 
-- 数据库按 `game_id + world_id` 物理分库。
-- 物理数据库不等同于 `WorldMemoryScope`。
-- `WorldMemoryScope = game_id + world_id` 表示世界级记忆归属。
-- `EntityMemoryScope = game_id + world_id + entity_id` 表示个人记忆归属。
-- 同一个世界数据库可以同时保存世界级记忆和多个 Entity 的个人记忆。
-- `definition_id` 不进入数据库路径，也不进入 Memory Scope。
-
----
-
-# 4. Phase8.1 边界
-
-Phase8.1 只实现 SQLite Recent Memory。
-
-做：
+在原世界数据库中事务迁移至 `phase8_2_history_v1`，增加 History 与 Summary 数据。现存 Recent 按 legacy 来源导入；保留原 ID、键、时间和原有字段，不补造 action ID、output 等缺失证据。新 History 不继承 100 条磁盘淘汰和 5 条 Context 窗口。
 
 ```text
-SQLite schema version
-SQLiteMemoryStore
-Recent Memory 持久化
-Runtime 重启恢复
-Scope 隔离
-ProjectionBatchKey 幂等
-事务提交
-Recent 保留上限
-TimeVisibilityPolicy 现有语义
-读取失败 fail-open
-写入失败诊断
+Observe -> history snapshot -> valid summary + uncovered sources
+    -> optional synchronous compaction
+    -> Context: current facts + summary + recent original history + current transcript
+    -> model/tool/action loop
+    -> terminal History transaction
 ```
 
-不做：
+压缩在 Observe 后、首次决策前同步执行，每 Turn 最多一次有界尝试。`keep_recent_tokens = 20000` 是压缩后尾部目标，低预算时允许更小，两次压缩间允许历史增长。摘要有独立上限，当前 Turn 有预留空间，最终请求受现有硬预算限制。
 
-```text
-长期 Semantic Memory
-Relevant recall
-Evidence Capsule 完整模型
-MemoryItemKey
-supersede / invalidate
-未完成 Turn 恢复
-工具自动重放
-Adapter / proto 修改
-早期草案持久格式迁移器
-```
+Provider 需要最小文本生成能力，复用现有配置与凭据；生成在 SQLite 事务外进行，成功校验后原子发布精确覆盖的摘要检查点。失败保留旧检查点和未覆盖历史，按预算降级并限制重试；摘要成功不删除原文。
 
-Phase8.1 独立文档已作为 SQLite Recent Memory 的开发合同。Phase8.2 仍需后续独立 review。
+8.2 里程碑：来源与迁移、历史投影、摘要生成、主链路与实机验收。具体接口、默认值、失败与测试合同以独立方案为准。
 
----
+## 6. Phase8.3 开发合同
 
-# 5. Phase8.1 主链路
+Runtime 每 Turn 从当前通用 ContextFact 文本生成一次有界字面查询，对同 owner、同快照的可用原文检索。中文短词、标点、数字和实体名是硬验收；索引是可重建派生数据，不要求语义或同义词理解。
 
-```text
-AgentTurn terminal state
-    -> MemoryProjector projects existing memory.Record
-    -> ProjectionBatchKey
-    -> SQLiteMemoryStore.Append
-    -> SQLite transaction commits recent record + idempotency credential
-    -> trace memory commit result
-    -> release entity ExecutionLane
-    -> next AgentTurn
-    -> turn-scoped Recent recall
-    -> Context Engine
-    -> Renderer
-    -> model.Request
-```
+Context 以来源片段与近期原文去重，限制单独检索预算。摘要覆盖的来源仍可返回被摘要省略的原文细节。诊断区分命中、未纳入、部分扫描和已知来源已清理。
 
-写入生命周期：
+`retention_days = 0` 默认关闭清理。启用后按原始现实写入时间计算年龄，仅清理超期、已被保留摘要完整覆盖、且不在近期或在用保护范围内的完整原文单元。原文、legacy 副本和索引清理保持事务一致，保留指纹、时间与必要覆盖信息。
 
-- Memory Write 发生在 AgentTurn 终态后。
-- 同一 Entity 的必要写入尝试必须在释放该 Entity 的 ExecutionLane 前结束。
-- 取消或超时后，实际 SQLite 事务必须已经提交、回滚或明确失败。
-- 不允许释放 Lane 后留下后台事务继续提交。
-- Memory 写入失败不回滚已经完成的 Action 或 TurnCompletion。
-- Memory 读取失败时 AgentTurn 继续执行，本轮 Context 不包含读取失败的 Memory。
+清理不触发模型，不删除未摘要来源，不在交互热路径自动 VACUUM。原文删除后不能精确检索或重新生成相应早期摘要；原文保留期不等同于数据库总大小上限。
 
----
+8.3 里程碑：检索与中文样例、Context 接入、留存维护、重启与回档验收。
 
-# 6. Phase8.1 存储合同
+## 7. 游戏时间与恢复边界
 
-Phase8.1 至少需要以下 SQLite 数据职责：
+- GameTime 控制 Context 可见性，现实时间控制写入年龄；数据库序号控制分页和覆盖，三者职责分开。
+- 可比较的未来来源隐藏，相等仍可见；缺失或不可比沿用 unknown 语义并诊断。
+- 摘要可见性检查全部累计来源，包括前序检查点；不能只看摘要创建时间、最后来源时间或最大序号。
+- 回档后摘要包含未来来源时隐藏整个摘要，选择更早有效检查点或可见原文。原文已清理时仍保持时间检查，只能使用剩余可用内容。
+- SQLite 独立于游戏存档，时间追上后已放弃分支的经历可能重新出现。完整存档分支恢复、未完成 Turn resume 与工具重放不属于 Phase8。
 
-| 数据 | 职责 |
-| --- | --- |
-| schema metadata | 记录 schema version、绑定的 `game_id / world_id` 和数据库初始化状态 |
-| recent records | 保存现有 `memory.Record` 及最小投影身份 |
-| projection credentials | 保存 `ProjectionBatchKey`、投影版本和内容指纹，用于幂等 |
+## 8. 验收与评审
 
-`recent_records` 保存现有 Recent 所需字段：
+| 阶段 | 自动化证据 | 实机证据 |
+| --- | --- | --- |
+| 8.1 | 按已 Accepted 方案保留结果与限制 | 已有对话落库与后续使用；未完成项明确记录 |
+| 8.2 | 原子写入、迁移、精确覆盖、固定快照、时间与最终请求预算 | 真实摘要忠实性、压缩延迟、Runtime 进程重启与回档 |
+| 8.3 | 中文命中、去重、索引重建、留存保护和事务回滚 | 原文细节进入最终请求、清理后能力边界与性能 |
 
-```text
-memory_id
-projection_kind
-projection_version
-projection_batch_key
-game_id
-world_id
-entity_id
-source_turn_id
-source_event_id
-source_event_sequence
-event_type
-game_time
-source_context_facts
-outcomes
-created_at
-```
+自动化以 SQLite 内容、提交结果、覆盖元数据、ContextBuildReport 和 RecordingProvider 捕获的最终 `model.Request` 为准。候选存在不等于进入模型；NPC 表示记得不代替来源链路证据。
 
-幂等规则：
-
-- `ProjectionBatchKey` 必须使用无歧义结构化编码或等价组合唯一约束。
-- `MemoryID` 是记录 ID，不参与幂等判断。
-- `CreatedAt` 和本次保存时间不参与等价判断。
-- 同一 `ProjectionBatchKey` 且业务内容等价时 no-op。
-- no-op 保留原始 `memory_id` 和 `created_at`。
-- 同一 `ProjectionBatchKey` 但业务内容不同，应 reject 为冲突，不能覆盖旧记录。
-- Phase8.1 的幂等主要保证同一次 Turn 投影重试；同一游戏事件重新生成 Turn 的去重仍由 Gateway 入口语义负责。
-
-事务规则：
-
-- Recent Record 和对应幂等凭据必须在同一 SQLite transaction 中提交。
-- 任一步失败时不能暴露半条业务状态。
-- 事务失败测试必须同时检查 Recent 记录和幂等凭据。
-- 已提交结果不因随后收到 context cancel 而改报未提交。
-- 提交结果未知时，记录诊断，并通过稳定 `ProjectionBatchKey` 核对。
-
-保留策略：
-
-- `recent_memory_limit` 控制进入 Context 的 Recent 条数。
-- `memory_store.max_records_per_entity` 控制每个 Entity 的磁盘 Recent 保留上限。
-- `memory_store.max_projection_batches_per_entity` 控制每个 Entity 的 Recent 幂等凭据保留上限。
-- 读取 `limit` 不等于存储容量限制。
-- Recent 超限清理发生在 Append 的同一事务中。
-- 幂等凭据超限清理也在 Append 的同一事务中按保留窗口执行。
-- Recent 记录清理不代表幂等凭据立即清理。
-- 幂等凭据保留期限必须覆盖 Phase8.1 承诺支持的重试窗口。
-- Recent 记录已清理但幂等凭据仍保留时，等价重试返回 no-op，不重新插入旧 Recent。
-- 幂等凭据窗口外不承诺去重。
-
-Recent recall 必须先读取该 Entity 保留上限内的候选，再过滤 future GameTime，最后选出最近 `recent_memory_limit` 条可见记录并按旧到新返回给 Context。
-
----
-
-# 7. Phase8.2 设计预览
-
-Phase8.2 在 Phase8.1 验收后单独补齐详细方案并 review。
-
-方向：
-
-```text
-Default Game Memory Policy
-    -> MemoryCandidate
-    -> MemoryRecord + evidence capsule
-    -> MemoryItemKey
-    -> synchronous retrieval fields
-    -> Relevant recall
-    -> MemoryProjection candidates
-    -> Context Engine final inclusion
-```
-
-Phase8.2 继续使用同一个世界 SQLite 数据库，但引入独立数据模型：
-
-| 数据 | 职责 |
-| --- | --- |
-| long-term memory records | 保存 Episodic / Semantic 最小长期记忆 |
-| memory sources | 保存必要 evidence capsule |
-| memory relations | 保存 supersede / invalidate / evidence 关系 |
-| retrieval fields | 保存首版规则检索需要的 topic、participant、event kind、claim type 等字段 |
-
-Phase8.1 的 `source_context_facts_json` / `outcomes_json` 只保存 Recent 原始结构，不作为 Phase8.2 Relevant recall 的直接查询面。Phase8.2 必须定义 FTS5、规范化索引表或等价同步检索字段，不能依赖在 JSON TEXT 上做临时 `WHERE` 匹配。
-
-Phase8.2 进入开发前必须重新确认：
-
-- 一份 source 形成多条 MemoryRecord 的批次写入。
-- `MemoryItemKey = ProjectionBatchKey + stable_candidate_key`。
-- 新记录、证据、索引字段和旧状态更新的原子提交。
-- 8.1 数据库升级到 8.2 后 Recent 数据仍可读。
-- 默认查询闭环：来源输入 -> 候选 -> 后续输入生成 query -> 召回 -> Context inclusion。
-- 普通自然语言否定不直接触发 supersede；结构化 `memory_correction` 才能更正。
-
----
-
-# 8. 测试计划
-
-Phase8.1 文档必须覆盖：
-
-```text
-SQLite 初始化和 schema version
-modernc.org/sqlite 依赖与平台验证
-按 game_id + world_id 分库
-game_id_hash 路径生成
-world_id_hash 路径生成
-Windows 保留名和尾随点不会进入路径目录名
-库内 game_id / world_id 绑定校验
-同一世界数据库内不同 Entity 不串线
-不同 world_id 打开不同数据库
-读取实体保留上限内候选后再过滤 future GameTime
-选出最近 N 条和按旧到新返回分开处理
-同一 ProjectionBatchKey 等价重试 no-op
-同一 ProjectionBatchKey 业务冲突 reject
-事务失败不会只提交 Recent 或只提交幂等凭据
-取消 / 超时后没有 Lane 释放后的后台提交
-Recent 清理不等于幂等凭据立即清理
-Recent 清理后凭据窗口内等价重试仍 no-op
-Runtime 重启后已提交 Recent 可读
-future GameTime 记忆不进入当前 Context
-读取失败 fail-open
-写入失败不回滚已完成 Action
-Trace 失败不影响 Memory 读写
-```
-
-建议回归命令：
+代码开发后，从仓库根目录运行：
 
 ```powershell
 go test ./runtime/internal/memory -count=1
 go test ./runtime/internal/agent ./runtime/internal/context ./runtime/internal/gateway -count=1
 go test ./... -count=1
+powershell -ExecutionPolicy Bypass -File scripts/check-architecture.ps1
 git diff --check
 ```
 
-若本地工具链支持，增加：
+8.2 另测 `runtime/internal/model/...` 与 `runtime/internal/llm/...`；race 按工具链能力执行，受阻时报告限制。仅更新文档时检查内容、链接与 `git diff --check`，不把文档校验当作上述能力已通过。
 
-```powershell
-go test -race ./runtime/internal/memory -count=1
-```
-
----
-
-# 9. Review Gate
-
-进入 Phase8.1 代码开发前必须确认：
-
-```text
-Phase7.5 已完成必要验收，或 known limitations 不影响 Phase8.1 Memory 持久化开发。
-Memory 架构文档已作为 Phase8 baseline。
-Phase8.1 独立技术方案已 Review 通过并标记 Accepted。
-SQLiteMemoryStore 路线、路径规则、绑定校验、事务语义和保留策略被确认。
-Phase8.1 与 Phase8.2 不混在同一个代码提交里开发。
-```
-
-Phase8.1 验收后，再编写或升级 Phase8.2 独立技术方案。Phase8.2 进入开发前必须重新 review 长期记忆形成、批次多条写入、格式升级、默认查询闭环和 Context handoff。
-
----
-
-# 10. 一句话总结
-
-Phase8 先用 SQLite 让同一游戏世界里的具体 Agent 恢复 Recent Memory，再在同一世界数据库上扩展轻量长期记忆；当前 Turn Transcript 仍在内存，Trace 只做诊断，Memory Store 才是持久记忆真源。
+每个子阶段在自己的技术评审、代码复审、自动化与实机证据完成后交项目负责人确认。方案允许编码与阶段实现 Accepted 是两个不同结论。

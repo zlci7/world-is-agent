@@ -15,6 +15,8 @@ Focus:
 - Make context selection, budget limits, and build diagnostics deterministic and testable.
 - Validate the full path with real Stardew NPC dialogue.
 
+Phase8.1 SQLite Recent Memory is implemented and accepted with documented limits. It preserves bounded per-agent records; full Runtime process-restart validation remains open. See the [acceptance record](docs/phase8/GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md).
+
 Exit signals:
 
 - A model request clearly shows the right game definition, agent definition, event facts, observation, memory, transcript, and tool view.
@@ -25,12 +27,15 @@ Exit signals:
 
 ## Next
 
-Add Persistent Recent Memory, then environment recovery.
+Develop Phase8.2 persistent terminal history and context compaction, then independently deliver Phase8.3 history retrieval and optional retention. Environment recovery uses the Phase8.1 persistent identity/read contract and does not require Phase8.2/8.3 completion.
 
 Focus:
 
-- Schema version, compatible reads, migration, and explicit reset behavior for recent memory.
-- Bounded retention and idempotent writes for per-AgentSession memory.
+- Transactional migration from Recent records to complete agreed terminal-turn sources, with idempotent writes per AgentSession.
+- A persisted summary plus recent original history, targeting about 20,000 recent tokens after compaction within the request budget.
+- Synchronous, bounded compaction before a turn's first decision, with explicit failure and game-time visibility behavior.
+- Bounded literal retrieval of retained history, including short Chinese queries, and source-aware context inclusion.
+- Optional retention, disabled by default, limited to old summary-covered original history outside recent and in-use protection.
 - Adapter reconnect and EnvironmentSession recovery.
 - Heartbeat and liveness semantics.
 - Capability registry scoping across reconnects.
@@ -39,7 +44,8 @@ Focus:
 
 Exit signals:
 
-- Agent memory can survive process restart for a selected backend.
+- Committed terminal history and summary checkpoints survive a real Runtime process restart and enter the final model request.
+- Retained old details are retrievable; deleted original content is not presented as recoverable evidence.
 - Runtime restart and adapter reconnect behavior are specified and tested.
 - Async action outcomes have clear recovery semantics.
 
@@ -64,3 +70,5 @@ Exit signals:
 ## Detailed Plans
 
 Detailed phase plans, ADRs, and acceptance records are kept under [docs/](docs/README.md).
+
+Memory phase contracts: [Phase8 overview](docs/phase8/GameAgent%20MVP0%20Phase8%20技术开发与验收方案.md), [Phase8.2](docs/phase8/GameAgent%20MVP0%20Phase8.2%20技术开发与验收方案.md), and [Phase8.3](docs/phase8/GameAgent%20MVP0%20Phase8.3%20技术开发与验收方案.md). Phase8.2/8.3 are implementation-plan drafts, not implemented capabilities.

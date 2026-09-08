@@ -13,7 +13,9 @@
   "memory_store": {
     "kind": "sqlite",
     "root": "runtime/.local/memory",
-    "busy_timeout_ms": 5000
+    "busy_timeout_ms": 5000,
+    "max_records_per_entity": 100,
+    "max_projection_batches_per_entity": 400
   },
   "max_tool_result_output_tokens": 8192,
   "max_tool_result_output_depth": 4,

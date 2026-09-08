@@ -55,10 +55,10 @@ func TestProjectorBuildsRecordFromSuccessfulTurn(t *testing.T) {
 	if record.ProjectionKind != memory.ProjectionKindSettledTurn {
 		t.Fatalf("ProjectionKind = %q, want %q", record.ProjectionKind, memory.ProjectionKindSettledTurn)
 	}
-	if record.ProjectionVersion != memory.ProjectionVersionRecentV1 {
-		t.Fatalf("ProjectionVersion = %d, want %d", record.ProjectionVersion, memory.ProjectionVersionRecentV1)
+	if record.ProjectionVersion != memory.ProjectionVersionRecentV2 {
+		t.Fatalf("ProjectionVersion = %d, want %d", record.ProjectionVersion, memory.ProjectionVersionRecentV2)
 	}
-	if record.ProjectionBatchKey != `["stardew-valley","world-a","npc:Abigail","turn-1","event-1","settled_turn",1]` {
+	if record.ProjectionBatchKey != `["stardew-valley","world-a","npc:Abigail","turn-1","event-1","settled_turn",2]` {
 		t.Fatalf("ProjectionBatchKey = %q", record.ProjectionBatchKey)
 	}
 	if record.SessionKey != key {
@@ -79,7 +79,7 @@ func TestProjectorBuildsRecordFromSuccessfulTurn(t *testing.T) {
 	if record.GameTime == nil {
 		t.Fatal("GameTime is nil")
 	}
-	if *record.GameTime != (memory.GameTimeSnapshot{Year: 1, Season: 2, Day: 3, Hour: 6, Minute: 20, Tick: 9001}) {
+	if *record.GameTime != (memory.GameTimeSnapshot{Year: 1, Season: 2, Day: 3, Hour: 6, Minute: 20, Tick: 9001, PresentFields: 63}) {
 		t.Fatalf("GameTime = %+v", *record.GameTime)
 	}
 	if got := len(record.Outcomes); got != 1 {
@@ -132,7 +132,7 @@ func TestProjectorBuildsDifferentProjectionBatchKeysForProjectionKinds(t *testin
 	if settled.ProjectionBatchKey == priorActions.ProjectionBatchKey {
 		t.Fatalf("ProjectionBatchKey should differ by projection kind: %q", settled.ProjectionBatchKey)
 	}
-	if priorActions.ProjectionBatchKey != `["fake-game","world-a","agent-1","turn-1","event-1","prior_successful_actions",1]` {
+	if priorActions.ProjectionBatchKey != `["fake-game","world-a","agent-1","turn-1","event-1","prior_successful_actions",2]` {
 		t.Fatalf("prior actions ProjectionBatchKey = %q", priorActions.ProjectionBatchKey)
 	}
 }

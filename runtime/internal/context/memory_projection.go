@@ -51,16 +51,45 @@ func projectRecentMemory(record memory.Record, currentTime *memory.GameTimeSnaps
 
 func selectTimelineMemories(records []memory.Record, currentTime *memory.GameTimeSnapshot) []memory.Record {
 	selected := make([]memory.Record, 0, len(records))
+	times := make([]*memory.GameTimeSnapshot, 0, len(records))
 	for _, record := range records {
 		if isFutureMemory(record.GameTime, currentTime) {
 			continue
 		}
 		selected = append(selected, record)
+		times = append(times, record.GameTime)
 	}
 
+	basis := memory.SharedGameTimeBasis(times...)
 	sort.SliceStable(selected, func(i, j int) bool {
-		return memoryRecordBefore(selected[i], selected[j])
+		if order := basis.Compare(selected[i].GameTime, selected[j].GameTime); order != 0 {
+			return order < 0
+		}
+		return memoryCreatedBefore(selected[i], selected[j])
 	})
+	if basis == memory.GameTimeUnknown {
+		return selected
+	}
+
+	// A group uses sequence only when every member supplies it.
+	for start := 0; start < len(selected); {
+		end := start + 1
+		completeSequence := selected[start].SourceEventSequence != 0
+		for end < len(selected) && basis.Compare(selected[start].GameTime, selected[end].GameTime) == 0 {
+			completeSequence = completeSequence && selected[end].SourceEventSequence != 0
+			end++
+		}
+		if completeSequence {
+			group := selected[start:end]
+			sort.SliceStable(group, func(i, j int) bool {
+				if group[i].SourceEventSequence != group[j].SourceEventSequence {
+					return group[i].SourceEventSequence < group[j].SourceEventSequence
+				}
+				return memoryCreatedBefore(group[i], group[j])
+			})
+		}
+		start = end
+	}
 	return selected
 }
 
@@ -78,22 +107,11 @@ func trimRecentMemoryRecords(records []memory.Record, limit int) []memory.Record
 	return out
 }
 
-func memoryRecordBefore(left, right memory.Record) bool {
-	if left.GameTime != nil && right.GameTime != nil {
-		if cmp := compareGameTime(left.GameTime, right.GameTime); cmp != 0 {
-			return cmp < 0
-		}
-		if left.SourceEventSequence != 0 && right.SourceEventSequence != 0 && left.SourceEventSequence != right.SourceEventSequence {
-			return left.SourceEventSequence < right.SourceEventSequence
-		}
-	}
-	if !left.CreatedAt.IsZero() && !right.CreatedAt.IsZero() && !left.CreatedAt.Equal(right.CreatedAt) {
+func memoryCreatedBefore(left, right memory.Record) bool {
+	if !left.CreatedAt.Equal(right.CreatedAt) {
 		return left.CreatedAt.Before(right.CreatedAt)
 	}
-	if !left.CreatedAt.IsZero() && !right.CreatedAt.IsZero() {
-		return left.MemoryID < right.MemoryID
-	}
-	return false
+	return left.MemoryID < right.MemoryID
 }
 
 func trimMemoryProjections(projections []MemoryProjection, limit int) []MemoryProjection {
@@ -189,32 +207,19 @@ func visibleActionSummary(outcome memory.TurnOutcome, bounds projectionBounds) s
 
 func currentGameTimeFromEventObservation(event *protocolv1alpha2.GameEvent, observation *protocolv1alpha2.Observation) *memory.GameTimeSnapshot {
 	if event != nil {
-		if snapshot := gameTimeSnapshot(event.GetGameTime()); snapshot != nil {
+		if snapshot := memory.SnapshotGameTime(event.GetGameTime()); memory.SharedGameTimeBasis(snapshot) != memory.GameTimeUnknown {
 			return snapshot
 		}
 	}
 	if observation == nil {
 		return nil
 	}
-	return gameTimeSnapshot(observation.GetGameTime())
-}
-
-func gameTimeSnapshot(gameTime *protocolv1alpha2.GameTime) *memory.GameTimeSnapshot {
-	if gameTime == nil {
-		return nil
-	}
-	return &memory.GameTimeSnapshot{
-		Year:   gameTime.GetYear(),
-		Season: gameTime.GetSeason(),
-		Day:    gameTime.GetDay(),
-		Hour:   gameTime.GetHour(),
-		Minute: gameTime.GetMinute(),
-		Tick:   gameTime.GetTick(),
-	}
+	return memory.SnapshotGameTime(observation.GetGameTime())
 }
 
 func gameTimeRelation(memoryTime, currentTime *memory.GameTimeSnapshot) string {
-	if memoryTime == nil || currentTime == nil {
+	basis := memory.SharedGameTimeBasis(memoryTime, currentTime)
+	if basis != memory.GameTimeCalendar && basis != memory.GameTimeCalendarWithTick {
 		return "previous interaction"
 	}
 	if sameGameDay(memoryTime, currentTime) {
@@ -229,64 +234,8 @@ func sameGameDay(left, right *memory.GameTimeSnapshot) bool {
 		left.Day == right.Day
 }
 
-func sameGameInstant(left, right *memory.GameTimeSnapshot) bool {
-	if left == nil || right == nil {
-		return false
-	}
-	return left.Year == right.Year &&
-		left.Season == right.Season &&
-		left.Day == right.Day &&
-		left.Hour == right.Hour &&
-		left.Minute == right.Minute &&
-		left.Tick == right.Tick
-}
-
 func isFutureMemory(memoryTime, currentTime *memory.GameTimeSnapshot) bool {
-	if memoryTime == nil || currentTime == nil {
-		return false
-	}
-	return compareGameTime(memoryTime, currentTime) > 0
-}
-
-func compareGameTime(left, right *memory.GameTimeSnapshot) int {
-	if left.Year != right.Year {
-		return compareInt32(left.Year, right.Year)
-	}
-	if left.Season != right.Season {
-		return compareInt32(left.Season, right.Season)
-	}
-	if left.Day != right.Day {
-		return compareInt32(left.Day, right.Day)
-	}
-	if left.Hour != right.Hour {
-		return compareInt32(left.Hour, right.Hour)
-	}
-	if left.Minute != right.Minute {
-		return compareInt32(left.Minute, right.Minute)
-	}
-	return compareInt64(left.Tick, right.Tick)
-}
-
-func compareInt32(left, right int32) int {
-	switch {
-	case left < right:
-		return -1
-	case left > right:
-		return 1
-	default:
-		return 0
-	}
-}
-
-func compareInt64(left, right int64) int {
-	switch {
-	case left < right:
-		return -1
-	case left > right:
-		return 1
-	default:
-		return 0
-	}
+	return memory.SharedGameTimeBasis(memoryTime, currentTime).Compare(memoryTime, currentTime) > 0
 }
 
 func formatGameTime(gameTime *memory.GameTimeSnapshot) string {

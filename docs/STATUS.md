@@ -4,7 +4,7 @@ World Is Agent is in experimental MVP0 development.
 
 This document is the public source of truth for current repository capabilities, validation scope, and known limits.
 
-Last updated: 2026-09-06.
+Last updated: 2026-09-08.
 
 ## Validation Scope
 
@@ -34,13 +34,15 @@ Stardew Valley is the first real adapter and validation environment.
 | Tool policy | Capability metadata for exclusive-per-step and settle-after-success behavior. |
 | Actions | Sync action result handling and async action status/result handling. |
 | Turn completion | Runtime can send best-effort `TurnCompletion` to the adapter. |
-| Memory | Process-local short-term memory scoped by AgentSession. |
+| Memory | SQLite-backed Recent Memory, physically separated by game/world and scoped by entity, with metadata validation, idempotent transactions, and game-time filtering. Defaults: 100 retained records and 400 projection credentials per entity; context takes at most 5 records within 4096 estimated tokens. |
 | Definitions | Optional static Runtime catalog for Game Definitions and Agent Definitions scoped by `game_id + definition_id`. |
 | Context | Runtime Context Engine builds stable Context Projection from event, ContextFacts, observation, recent memory, current-turn transcript, definitions, Agent Instance Descriptor, runtime policy, and Turn Tool View snapshot. |
 | Context budget | Deterministic provider-neutral estimated-token budget selection, section cropping, tool size admission, and final request hard gates. |
 | Context diagnostics | `ContextBuildReport` and bounded `ToolAdmissionReport` summaries record fallback, cropping, dropped content, tool admission, and final request estimated-token size. |
 | Providers | Provider-neutral model interface with Fake, DeepSeek, and OpenAI implementations. |
 | Trace | JSONL turn trace written under `runtime/.local/traces.jsonl`, including bounded context request summaries. |
+
+Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and real dialogue persistence/readback are covered. Real Runtime process-restart recovery, the specified cross-version end-to-end path, and race validation remain open; see the [acceptance record](phase8/GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md#验收结论). SQLite is independent of the game save: future comparable GameTime is filtered, but abandoned-branch history may become visible when game time catches up.
 
 ## Experimental
 
@@ -58,8 +60,9 @@ Stardew Valley is the first real adapter and validation environment.
 
 | Area | Current limit |
 | --- | --- |
-| Durable agent state | Memory is in-process and lost on runtime restart. |
-| Long-term semantic memory | No vector store, embedding index, or durable episodic memory backend. |
+| Full terminal history and compaction | Phase8.2 is a design draft for complete agreed terminal-turn sources, synchronous summaries, and a bounded recent-history tail; current Recent records are not a full conversation archive. |
+| History retrieval and retention | Phase8.3 is a design draft for literal source retrieval and optional cleanup, disabled by default. |
+| Long-term semantic memory | No Semantic extraction/correction pipeline, vector store, or embedding index. |
 | Provider-specific token sizing | Context budget uses deterministic estimated tokens, not exact provider tokenizer or automatic model window detection. |
 | Automatic reconnect | Adapter reconnect and environment recovery are future work. |
 | Durable async continuation | Async action waiting is process-local. |

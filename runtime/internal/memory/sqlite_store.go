@@ -8,20 +8,24 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gameagent/runtime/internal/session"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 const (
-	SQLiteSchemaVersion       = "phase8_1_recent_v1"
-	DefaultSQLiteMemoryRoot   = "runtime/.local/memory"
-	DefaultSQLiteBusyTimeout  = 5 * time.Second
-	defaultProjectionBatchCap = 100
+	SQLiteSchemaVersion                        = "phase8_1_recent_v1"
+	DefaultSQLiteMemoryRoot                    = "runtime/.local/memory"
+	DefaultSQLiteBusyTimeout                   = 5 * time.Second
+	DefaultSQLiteMaxRecordsPerEntity           = 100
+	DefaultSQLiteMaxProjectionBatchesPerEntity = DefaultSQLiteMaxRecordsPerEntity * 4
+	defaultProjectionBatchCap                  = 100
 )
 
 var (
@@ -40,11 +44,18 @@ type SQLiteStoreOptions struct {
 }
 
 type SQLiteMemoryStore struct {
-	options SQLiteStoreOptions
+	options       SQLiteStoreOptions
+	validationErr error
 }
 
 func NewSQLiteMemoryStore(options SQLiteStoreOptions) *SQLiteMemoryStore {
-	return &SQLiteMemoryStore{options: options.withDefaults()}
+	options = options.withDefaults()
+	var validationErr error
+	if options.MaxProjectionBatchesPerEntity < options.MaxRecordsPerEntity {
+		validationErr = fmt.Errorf("invalid sqlite memory options: max_projection_batches_per_entity (%d) must be at least max_records_per_entity (%d)",
+			options.MaxProjectionBatchesPerEntity, options.MaxRecordsPerEntity)
+	}
+	return &SQLiteMemoryStore{options: options, validationErr: validationErr}
 }
 
 func (o SQLiteStoreOptions) withDefaults() SQLiteStoreOptions {
@@ -55,7 +66,7 @@ func (o SQLiteStoreOptions) withDefaults() SQLiteStoreOptions {
 		o.BusyTimeout = DefaultSQLiteBusyTimeout
 	}
 	if o.MaxRecordsPerEntity <= 0 {
-		o.MaxRecordsPerEntity = DefaultMaxRecordsPerSession
+		o.MaxRecordsPerEntity = DefaultSQLiteMaxRecordsPerEntity
 	}
 	if o.MaxProjectionBatchesPerEntity <= 0 {
 		o.MaxProjectionBatchesPerEntity = max(defaultProjectionBatchCap, o.MaxRecordsPerEntity*4)
@@ -77,6 +88,9 @@ func SQLiteDatabasePath(root string, gameID string, worldID string) (string, err
 }
 
 func (s *SQLiteMemoryStore) Append(ctx context.Context, record Record) error {
+	if s.validationErr != nil {
+		return s.validationErr
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -96,20 +110,11 @@ func (s *SQLiteMemoryStore) Append(ctx context.Context, record Record) error {
 	}
 	now := s.options.Now().UTC().UnixNano()
 
-	tx, err := conn.BeginTx(ctx, nil)
+	tx, err := beginSQLiteWriteTransaction(ctx, conn)
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	if err := ensureSQLiteMetadata(ctx, tx, record.SessionKey, s.options.Now); err != nil {
-		return err
-	}
+	defer tx.Rollback()
 
 	existingFingerprint, found, err := projectionBatchFingerprint(ctx, tx, record.ProjectionBatchKey)
 	if err != nil {
@@ -128,11 +133,7 @@ WHERE projection_batch_key = ?`, now, record.ProjectionBatchKey); err != nil {
 		if err := s.enforceRetention(ctx, tx, record.SessionKey); err != nil {
 			return err
 		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		committed = true
-		return nil
+		return commitSQLiteTransaction(ctx, tx)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -200,14 +201,13 @@ INSERT INTO recent_projection_batches (
 	if err := s.enforceRetention(ctx, tx, record.SessionKey); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+	return commitSQLiteTransaction(ctx, tx)
 }
 
 func (s *SQLiteMemoryStore) Recent(ctx context.Context, key session.AgentSessionKey, limit int) ([]Record, error) {
+	if s.validationErr != nil {
+		return nil, s.validationErr
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -223,10 +223,6 @@ func (s *SQLiteMemoryStore) Recent(ctx context.Context, key session.AgentSession
 		return nil, err
 	}
 	defer closeConn()
-
-	if err := ensureSQLiteMetadata(ctx, conn, key, s.options.Now); err != nil {
-		return nil, err
-	}
 
 	rows, err := conn.QueryContext(ctx, `
 SELECT
@@ -292,7 +288,16 @@ func (s *SQLiteMemoryStore) openConn(ctx context.Context, key session.AgentSessi
 		return nil, nil, fmt.Errorf("create memory database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	absolutePath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve memory database path: %w", err)
+	}
+	uriPath := filepath.ToSlash(absolutePath)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	dsn := url.URL{Scheme: "file", Path: uriPath, RawQuery: url.Values{"_txlock": {"immediate"}}.Encode()}
+	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, nil, fmt.Errorf("open memory database: %w", err)
 	}
@@ -313,7 +318,7 @@ func (s *SQLiteMemoryStore) openConn(ctx context.Context, key session.AgentSessi
 		closeConn()
 		return nil, nil, err
 	}
-	if err := createSQLiteSchema(ctx, conn); err != nil {
+	if err := s.prepareSQLiteDatabase(ctx, conn, key); err != nil {
 		closeConn()
 		return nil, nil, err
 	}
@@ -325,7 +330,6 @@ func configureSQLiteConn(ctx context.Context, conn *sql.Conn, busyTimeout time.D
 	for _, statement := range []string{
 		fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeoutMS),
 		"PRAGMA foreign_keys = ON",
-		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = FULL",
 	} {
 		if _, err := conn.ExecContext(ctx, statement); err != nil {
@@ -335,13 +339,15 @@ func configureSQLiteConn(ctx context.Context, conn *sql.Conn, busyTimeout time.D
 	return nil
 }
 
-func createSQLiteSchema(ctx context.Context, conn *sql.Conn) error {
-	for _, statement := range []string{
-		`CREATE TABLE IF NOT EXISTS memory_schema_metadata (
+var sqliteSchema = []struct {
+	name      string
+	statement string
+}{
+	{"memory_schema_metadata", `CREATE TABLE memory_schema_metadata (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS recent_projection_batches (
+		)`},
+	{"recent_projection_batches", `CREATE TABLE recent_projection_batches (
 			projection_batch_key TEXT PRIMARY KEY,
 			projection_kind TEXT NOT NULL,
 			projection_version INTEGER NOT NULL,
@@ -351,8 +357,8 @@ func createSQLiteSchema(ctx context.Context, conn *sql.Conn) error {
 			content_fingerprint TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			last_seen_at INTEGER NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS recent_records (
+		)`},
+	{"recent_records", `CREATE TABLE recent_records (
 			memory_id TEXT PRIMARY KEY,
 			projection_kind TEXT NOT NULL,
 			projection_version INTEGER NOT NULL,
@@ -371,20 +377,119 @@ func createSQLiteSchema(ctx context.Context, conn *sql.Conn) error {
 			FOREIGN KEY (projection_batch_key)
 				REFERENCES recent_projection_batches(projection_batch_key)
 				DEFERRABLE INITIALLY DEFERRED
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_recent_records_scope_created
-			ON recent_records(game_id, world_id, entity_id, created_at, memory_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_recent_projection_batches_scope_seen
-			ON recent_projection_batches(game_id, world_id, entity_id, last_seen_at, projection_batch_key)`,
-	} {
-		if _, err := conn.ExecContext(ctx, statement); err != nil {
+		)`},
+	{"idx_recent_records_scope_created", `CREATE INDEX idx_recent_records_scope_created
+			ON recent_records(game_id, world_id, entity_id, created_at, memory_id)`},
+	{"idx_recent_projection_batches_scope_seen", `CREATE INDEX idx_recent_projection_batches_scope_seen
+			ON recent_projection_batches(game_id, world_id, entity_id, last_seen_at, projection_batch_key)`},
+}
+
+func (s *SQLiteMemoryStore) prepareSQLiteDatabase(ctx context.Context, conn *sql.Conn, key session.AgentSessionKey) error {
+	schema, err := readSQLiteSchema(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if len(schema) != 0 {
+		return validateSQLiteDatabase(ctx, conn, schema, key)
+	}
+
+	if err := configureSQLiteJournal(ctx, conn, s.options.BusyTimeout); err != nil {
+		return err
+	}
+	tx, err := beginSQLiteWriteTransaction(ctx, conn)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Another opener may have initialized this world while we waited for its writer.
+	schema, err = readSQLiteSchema(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if len(schema) != 0 {
+		return validateSQLiteDatabase(ctx, tx, schema, key)
+	}
+	for _, object := range sqliteSchema {
+		if _, err := tx.ExecContext(ctx, object.statement); err != nil {
 			return fmt.Errorf("create sqlite memory schema: %w", err)
 		}
 	}
-	return nil
+	if err := initializeSQLiteMetadata(ctx, tx, key, s.options.Now); err != nil {
+		return err
+	}
+	return commitSQLiteTransaction(ctx, tx)
 }
 
-func ensureSQLiteMetadata(ctx context.Context, db sqliteConnector, key session.AgentSessionKey, now func() time.Time) error {
+func configureSQLiteJournal(ctx context.Context, conn *sql.Conn, busyTimeout time.Duration) (err error) {
+	// Concurrent WAL transitions can return BUSY without invoking SQLite's busy
+	// handler. This loop owns the transition's wait budget; normal writes use it again.
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = 0"); err != nil {
+		return fmt.Errorf("configure sqlite journal timeout: %w", err)
+	}
+	defer func() {
+		_, restoreErr := conn.ExecContext(context.WithoutCancel(ctx), fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout/time.Millisecond))
+		err = errors.Join(err, restoreErr)
+	}()
+	deadline := time.Now().Add(busyTimeout)
+	for {
+		var mode string
+		err = conn.QueryRowContext(ctx, "PRAGMA journal_mode = WAL").Scan(&mode)
+		if err == nil {
+			if mode != "wal" {
+				return fmt.Errorf("configure sqlite journal: got %q, want wal", mode)
+			}
+			return nil
+		}
+		var sqliteErr *sqlite.Error
+		remaining := time.Until(deadline)
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 || remaining <= 0 {
+			return fmt.Errorf("configure sqlite journal: %w", err)
+		}
+		timer := time.NewTimer(min(10*time.Millisecond, remaining))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func beginSQLiteWriteTransaction(ctx context.Context, conn *sql.Conn) (*sql.Tx, error) {
+	// Statement contexts remain cancelable. The owner synchronously ends the
+	// transaction, including rollback, before releasing the connection.
+	return conn.BeginTx(context.WithoutCancel(ctx), nil)
+}
+
+func commitSQLiteTransaction(ctx context.Context, tx *sql.Tx) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func readSQLiteSchema(ctx context.Context, db sqliteConnector) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'`)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read sqlite schema: %w", ErrSchemaMismatch, err)
+	}
+	defer rows.Close()
+	schema := make(map[string]string)
+	for rows.Next() {
+		var name, statement string
+		if err := rows.Scan(&name, &statement); err != nil {
+			return nil, fmt.Errorf("%w: scan sqlite schema: %w", ErrSchemaMismatch, err)
+		}
+		schema[name] = statement
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read sqlite schema: %w", err)
+	}
+	return schema, nil
+}
+
+func initializeSQLiteMetadata(ctx context.Context, db sqliteConnector, key session.AgentSessionKey, now func() time.Time) error {
 	createdAt := now().UTC().Format(time.RFC3339Nano)
 	required := map[string]string{
 		"schema_version": SQLiteSchemaVersion,
@@ -394,12 +499,23 @@ func ensureSQLiteMetadata(ctx context.Context, db sqliteConnector, key session.A
 	}
 	for metadataKey, value := range required {
 		if _, err := db.ExecContext(ctx, `
-INSERT OR IGNORE INTO memory_schema_metadata (key, value)
+INSERT INTO memory_schema_metadata (key, value)
 VALUES (?, ?)`, metadataKey, value); err != nil {
 			return fmt.Errorf("initialize sqlite memory metadata: %w", err)
 		}
 	}
+	return nil
+}
 
+func validateSQLiteDatabase(ctx context.Context, db sqliteConnector, schema map[string]string, key session.AgentSessionKey) error {
+	// This schema version fixes columns, constraints and indexes as one contract.
+	for _, object := range sqliteSchema {
+		got := strings.Join(strings.Fields(schema[object.name]), " ")
+		want := strings.Join(strings.Fields(object.statement), " ")
+		if got != want {
+			return fmt.Errorf("%w: missing or incompatible %s", ErrSchemaMismatch, object.name)
+		}
+	}
 	metadata, err := readSQLiteMetadata(ctx, db)
 	if err != nil {
 		return err
@@ -417,7 +533,7 @@ VALUES (?, ?)`, metadataKey, value); err != nil {
 		)
 	}
 	if metadata["created_at"] == "" {
-		return fmt.Errorf("%w: created_at is required", ErrWorldBindingMismatch)
+		return fmt.Errorf("%w: created_at is required", ErrSchemaMismatch)
 	}
 	return nil
 }
@@ -479,22 +595,24 @@ WHERE game_id = ? AND world_id = ? AND entity_id = ?
 
 	if _, err := tx.ExecContext(ctx, `
 DELETE FROM recent_projection_batches
-WHERE game_id = ? AND world_id = ? AND entity_id = ?
-	AND NOT EXISTS (
-		SELECT 1
-		FROM recent_records
-		WHERE recent_records.projection_batch_key = recent_projection_batches.projection_batch_key
-	)
-	AND projection_batch_key NOT IN (
+WHERE projection_batch_key IN (
 		SELECT projection_batch_key
 		FROM recent_projection_batches
 		WHERE game_id = ? AND world_id = ? AND entity_id = ?
-		ORDER BY last_seen_at DESC, projection_batch_key DESC
-		LIMIT ?
+			AND NOT EXISTS (
+				SELECT 1 FROM recent_records
+				WHERE recent_records.projection_batch_key = recent_projection_batches.projection_batch_key
+			)
+		ORDER BY last_seen_at ASC, projection_batch_key ASC
+		LIMIT (
+			SELECT max(0, COUNT(*) - ?)
+			FROM recent_projection_batches
+			WHERE game_id = ? AND world_id = ? AND entity_id = ?
+		)
 	)`,
 		key.GameID, key.WorldID, key.EntityID,
-		key.GameID, key.WorldID, key.EntityID,
 		s.options.MaxProjectionBatchesPerEntity,
+		key.GameID, key.WorldID, key.EntityID,
 	); err != nil {
 		return fmt.Errorf("prune projection batches: %w", err)
 	}

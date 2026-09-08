@@ -153,8 +153,8 @@ func DefaultConfig() Config {
 			Kind:                          MemoryStoreKindSQLite,
 			Root:                          memory.DefaultSQLiteMemoryRoot,
 			BusyTimeout:                   memory.DefaultSQLiteBusyTimeout,
-			MaxRecordsPerEntity:           memory.DefaultMaxRecordsPerSession,
-			MaxProjectionBatchesPerEntity: 100,
+			MaxRecordsPerEntity:           memory.DefaultSQLiteMaxRecordsPerEntity,
+			MaxProjectionBatchesPerEntity: memory.DefaultSQLiteMaxProjectionBatchesPerEntity,
 		},
 		MaxSteps:                      3,
 		MaxToolCallsPerStep:           4,
@@ -324,7 +324,7 @@ func (c MemoryStoreConfig) WithDefaults(recentMemoryLimit int) MemoryStoreConfig
 		c.BusyTimeout = memory.DefaultSQLiteBusyTimeout
 	}
 
-	defaultMaxRecords := memory.DefaultMaxRecordsPerSession
+	defaultMaxRecords := memory.DefaultSQLiteMaxRecordsPerEntity
 	if recentMemoryLimit > defaultMaxRecords {
 		defaultMaxRecords = recentMemoryLimit
 	}
@@ -344,6 +344,10 @@ func (c MemoryStoreConfig) WithDefaults(recentMemoryLimit int) MemoryStoreConfig
 func (c MemoryStoreConfig) Validate() error {
 	if c.Kind != MemoryStoreKindSQLite {
 		return fmt.Errorf("unsupported memory_store.kind %q", c.Kind)
+	}
+	if c.MaxProjectionBatchesPerEntity < c.MaxRecordsPerEntity {
+		return fmt.Errorf("memory_store.max_projection_batches_per_entity (%d) must be at least memory_store.max_records_per_entity (%d)",
+			c.MaxProjectionBatchesPerEntity, c.MaxRecordsPerEntity)
 	}
 	return nil
 }

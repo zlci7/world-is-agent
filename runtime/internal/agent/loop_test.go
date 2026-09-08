@@ -317,6 +317,7 @@ func TestHandleEventReadsStoreCapacityBeforeFutureFilteringAndRecentLimit(t *tes
 		Season: ptrInt32(1),
 		Day:    ptrInt32(1),
 		Hour:   ptrInt32(12),
+		Minute: ptrInt32(0),
 	}
 	loop := agent.NewLoop(provider, trace.NoopRecorder{}, cfg, agent.WithMemoryStore(store))
 

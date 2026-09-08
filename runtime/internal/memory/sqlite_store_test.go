@@ -67,6 +67,31 @@ func TestSQLiteMemoryStorePersistsRecentAcrossStoreInstances(t *testing.T) {
 	assertSQLiteRecordRoundTrip(t, got[0], record)
 }
 
+func TestSQLiteMemoryStoreDefaultRetentionKeepsOneHundredRecordsPerEntity(t *testing.T) {
+	ctx := context.Background()
+	key := session.AgentSessionKey{GameID: "fake-game", WorldID: "world-a", EntityID: "agent-1"}
+	store := memory.NewSQLiteMemoryStore(memory.SQLiteStoreOptions{Root: t.TempDir()})
+
+	for i := 1; i <= 101; i++ {
+		id := fmt.Sprintf("mem-%03d", i)
+		record := sqliteTestRecord(t, key, id, "turn-"+id, "event-"+id, memory.ProjectionKindSettledTurn, time.Unix(int64(i), 0).UTC())
+		if err := store.Append(ctx, record); err != nil {
+			t.Fatalf("Append(%s) returned error: %v", id, err)
+		}
+	}
+
+	got, err := store.Recent(ctx, key, 101)
+	if err != nil {
+		t.Fatalf("Recent returned error: %v", err)
+	}
+	if len(got) != 100 {
+		t.Fatalf("len(got) = %d, want 100", len(got))
+	}
+	if got[0].MemoryID != "mem-002" || got[len(got)-1].MemoryID != "mem-101" {
+		t.Fatalf("retained range = %s..%s, want mem-002..mem-101", got[0].MemoryID, got[len(got)-1].MemoryID)
+	}
+}
+
 func TestSQLiteMemoryStoreRecentUsesChronologicalOrderWithinSameSecond(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

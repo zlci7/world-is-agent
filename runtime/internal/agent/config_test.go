@@ -199,11 +199,11 @@ func TestConfigWithDefaultsFillsSQLiteMemoryStoreConfig(t *testing.T) {
 	if cfg.MemoryStore.BusyTimeout != 5*time.Second {
 		t.Fatalf("default memory store busy timeout = %s, want 5s", cfg.MemoryStore.BusyTimeout)
 	}
-	if cfg.MemoryStore.MaxRecordsPerEntity != 30 {
-		t.Fatalf("default max records per entity = %d, want recent memory limit 30", cfg.MemoryStore.MaxRecordsPerEntity)
+	if cfg.MemoryStore.MaxRecordsPerEntity != 100 {
+		t.Fatalf("default max records per entity = %d, want persistent recent-memory default 100", cfg.MemoryStore.MaxRecordsPerEntity)
 	}
-	if cfg.MemoryStore.MaxProjectionBatchesPerEntity != 120 {
-		t.Fatalf("default max projection batches per entity = %d, want 120", cfg.MemoryStore.MaxProjectionBatchesPerEntity)
+	if cfg.MemoryStore.MaxProjectionBatchesPerEntity != 400 {
+		t.Fatalf("default max projection batches per entity = %d, want 400", cfg.MemoryStore.MaxProjectionBatchesPerEntity)
 	}
 }
 
@@ -224,6 +224,50 @@ func TestLoadConfigFileRejectsUnsupportedMemoryStoreKind(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `unsupported memory_store.kind "sqltie"`) {
 		t.Fatalf("LoadConfigFile error = %v, want unsupported memory_store.kind", err)
+	}
+}
+
+func TestConfigValidatesMemoryCapacityAfterDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		recent    int
+		records   int
+		batches   int
+		wantError bool
+	}{
+		{"explicit conflict", 1, 3, 2, true},
+		{"default records conflict", 1, 0, 2, true},
+		{"recent limit raises records", 4, 2, 3, true},
+		{"equal capacity", 2, 2, 2, false},
+		{"default batch capacity", 1, 30, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := (agent.Config{
+				RecentMemoryLimit: tc.recent,
+				MemoryStore: agent.MemoryStoreConfig{
+					MaxRecordsPerEntity:           tc.records,
+					MaxProjectionBatchesPerEntity: tc.batches,
+				},
+			}).WithDefaults()
+			err := cfg.Validate()
+			if (err != nil) != tc.wantError {
+				t.Fatalf("Validate() = %v, want error %t", err, tc.wantError)
+			}
+			if err != nil && (!strings.Contains(err.Error(), "max_projection_batches_per_entity") || !strings.Contains(err.Error(), "max_records_per_entity")) {
+				t.Fatalf("validation error lacks capacity fields: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigFileRejectsConflictingMemoryCapacity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.json")
+	data := []byte(`{"memory_store":{"max_records_per_entity":30,"max_projection_batches_per_entity":29}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agent.LoadConfigFile(path); err == nil {
+		t.Fatal("LoadConfigFile accepted conflicting memory capacities")
 	}
 }
 

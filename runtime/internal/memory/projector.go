@@ -65,7 +65,7 @@ func (p Projector) Project(input ProjectInput) (Record, error) {
 		return Record{}, err
 	}
 
-	projectionBatchKey, err := BuildProjectionBatchKey(input.SessionKey, input.TurnID, input.Event.GetEventId(), input.ProjectionKind, ProjectionVersionRecentV1)
+	projectionBatchKey, err := BuildProjectionBatchKey(input.SessionKey, input.TurnID, input.Event.GetEventId(), input.ProjectionKind, ProjectionVersionRecentV2)
 	if err != nil {
 		return Record{}, err
 	}
@@ -73,14 +73,14 @@ func (p Projector) Project(input ProjectInput) (Record, error) {
 	return Record{
 		MemoryID:            idgen.New("mem"),
 		ProjectionKind:      input.ProjectionKind,
-		ProjectionVersion:   ProjectionVersionRecentV1,
+		ProjectionVersion:   ProjectionVersionRecentV2,
 		ProjectionBatchKey:  projectionBatchKey,
 		SessionKey:          input.SessionKey,
 		SourceTurnID:        input.TurnID,
 		SourceEventID:       input.Event.GetEventId(),
 		SourceEventSequence: input.Event.GetSequence(),
 		EventType:           input.Event.GetEventType(),
-		GameTime:            gameTimeSnapshot(input.Event.GetGameTime()),
+		GameTime:            SnapshotGameTime(input.Event.GetGameTime()),
 		SourceContextFacts:  sourceContextFacts(input.Event.GetContextFacts()),
 		Outcomes:            outcomes,
 		CreatedAt:           p.now(),
@@ -179,20 +179,6 @@ func sourceContextFacts(facts []*protocolv1alpha2.ContextFact) []SourceContextFa
 		})
 	}
 	return out
-}
-
-func gameTimeSnapshot(gameTime *protocolv1alpha2.GameTime) *GameTimeSnapshot {
-	if gameTime == nil {
-		return nil
-	}
-	return &GameTimeSnapshot{
-		Year:   gameTime.GetYear(),
-		Season: gameTime.GetSeason(),
-		Day:    gameTime.GetDay(),
-		Hour:   gameTime.GetHour(),
-		Minute: gameTime.GetMinute(),
-		Tick:   gameTime.GetTick(),
-	}
 }
 
 // toolArguments 将模型返回的结构化参数复制成普通 map。
