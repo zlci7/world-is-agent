@@ -8,7 +8,7 @@ internal static class ProbeTestSaveLoader
     {
         if (config.EnablePhase9RouteProbe)
             add("gameagent_phase9_load_test_save",
-                "Load only Phase9TestSaveSlot from local config while no world is loaded. Accepts no arguments. Uses the game's current saves directory; prepare process-isolated APPDATA before launching SMAPI.", load);
+                "Load only Phase9TestSaveSlot from local config while no world is loaded. Accepts no arguments. Uses Stardew's global Saves directory. Before launching SMAPI, safely move the original Saves directory aside and place only the copied test slot in a temporary Saves directory at that location. After the test, close the game and restore the original Saves directory.", load);
     }
 
     public static string Load(AdapterConfig config, string[] args, bool worldReady, bool loading, Action<string> load)

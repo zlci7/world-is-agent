@@ -17,6 +17,20 @@ public sealed class ProbeTestSaveLoaderTests
         Assert.Equal(new[] { "gameagent_phase9_load_test_save" }, commands);
     }
 
+    [Fact]
+    public void SaveLoaderHelpRequiresGlobalSavesIsolationAndRestoration()
+    {
+        var helpByCommand = new Dictionary<string, string>();
+        ProbeTestSaveLoader.RegisterCommand(new AdapterConfig { EnablePhase9RouteProbe = true },
+            (name, help, _) => helpByCommand.Add(name, help), _ => { });
+        string help = helpByCommand["gameagent_phase9_load_test_save"];
+        Assert.DoesNotContain("APPDATA", help);
+        Assert.Contains("Uses Stardew's global Saves directory", help);
+        Assert.Contains("Before launching SMAPI, safely move the original Saves directory aside", help);
+        Assert.Contains("place only the copied test slot", help);
+        Assert.Contains("close the game and restore the original Saves directory", help);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData(" ")]
