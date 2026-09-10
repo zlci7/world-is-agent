@@ -8,7 +8,8 @@ internal enum ProbeControl { None, Owned, Foreign }
 internal record ProbePosition(string Location, int X, int Y, float PixelX = 0, float PixelY = 0);
 internal record ProbeRequest(string Npc, ProbePosition Target, int DwellSeconds, int ObservationSeconds);
 internal record ProbeSample(string World, string Date, int GameTime, ProbePosition Position,
-    ProbeControl Control, bool TargetValid = true, bool NativeMovement = false, bool NativeStationary = false);
+    ProbeControl Control, bool TargetValid = true, bool NativeMovement = false, bool NativeStationary = false,
+    bool TemporaryControl = false);
 internal record ProbePrepared(ProbeSample Sample, int RouteLength, string NativeState);
 internal record ProbeStatus(string? RunId = null, string? Npc = null, ProbePhase Phase = ProbePhase.Idle,
     string Code = "idle", ProbePosition? Start = null, ProbePosition? Target = null,
@@ -24,7 +25,6 @@ internal interface IRouteProbeDriver
     void Install();
     ProbeSample Sample();
     void Hold();
-    void RestoreFlags();
     string Release(bool rejoinSchedule);
 }
 
@@ -98,6 +98,8 @@ internal sealed class RouteProbe
             if (!driver.WorldReady || sample.World != initial!.World || sample.Date != initial.Date)
             { Finish(ProbePhase.Failed, "world_changed", false); return; }
             if (!driver.HasAuthority) { Finish(ProbePhase.Failed, "authority_lost", false); return; }
+            if (sample.TemporaryControl)
+            { Finish(ProbePhase.Failed, Status.Phase == ProbePhase.Restoring ? "native_control_lost" : "control_lost", false); return; }
             if (!sample.TargetValid) { Finish(ProbePhase.Failed, "target_invalid"); return; }
 
             if (Status.Phase != ProbePhase.Restoring)
@@ -144,7 +146,8 @@ internal sealed class RouteProbe
                     return;
                 }
             }
-            if (previous?.GameTime != sample.GameTime || previous?.Position.Location != sample.Position.Location || previous?.Control != sample.Control)
+            if (previous?.GameTime != sample.GameTime || previous?.Position.Location != sample.Position.Location ||
+                previous?.Control != sample.Control || previous?.TemporaryControl != sample.TemporaryControl)
                 emit(Status);
         }
         catch
@@ -184,12 +187,6 @@ internal sealed class RouteProbe
     {
         if (!installed || released) return;
         released = true;
-        if (Status.Final?.Control == ProbeControl.Foreign)
-        {
-            driver.RestoreFlags();
-            Status = Status with { Restoration = "foreign_control_preserved" };
-            return;
-        }
         Status = Status with { Release = Status.Final?.Position };
         try { Status = Status with { Restoration = driver.Release(rejoinSchedule) }; }
         catch

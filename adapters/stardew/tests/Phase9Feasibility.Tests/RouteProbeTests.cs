@@ -89,6 +89,81 @@ public sealed class RouteProbeTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TemporaryTakeoverDetachesOwnedMainAndCannotReviveAfterTemporaryEnds(bool dwelling)
+    {
+        var probe = Create(); probe.Start(Args);
+        if (dwelling) { driver.Arrive(); probe.Update(); }
+        int holds = driver.Holds;
+        driver.Current = driver.Current with { TemporaryControl = true };
+        probe.Update();
+        Assert.Equal("control_lost", probe.Status.Code);
+        Assert.Equal(ProbeControl.None, driver.Current.Control);
+        Assert.True(driver.Current.TemporaryControl);
+        Assert.Equal(1, driver.Releases);
+        Assert.Equal(0, driver.ReleaseHalts);
+        Assert.False(driver.LastRejoin);
+        driver.Current = driver.Current with { TemporaryControl = false };
+        probe.Update(); probe.Cancel();
+        Assert.Equal(ProbeControl.None, driver.Current.Control);
+        Assert.Equal(holds, driver.Holds);
+        Assert.Single(records, x => x.Phase == ProbePhase.Failed);
+    }
+
+    [Fact]
+    public void TemporaryMovementWithNativeMainRetainedCannotProveNativeMovement()
+    {
+        var probe = Create(); probe.Start(Args); driver.Arrive(); probe.Update();
+        now = 2000; probe.Update();
+        Assert.Equal(ProbePhase.Restoring, probe.Status.Phase);
+        driver.Current = driver.Current with
+        {
+            Control = ProbeControl.Foreign, NativeMovement = true, TemporaryControl = true,
+            Position = new("Town", 11, 11)
+        };
+        probe.Update();
+        Assert.Equal("native_control_lost", probe.Status.Code);
+        Assert.Equal(ProbePhase.Failed, probe.Status.Phase);
+        Assert.DoesNotContain(records, x => x.Code == "native_movement_observed");
+        Assert.Equal(ProbeControl.Foreign, driver.Current.Control);
+        Assert.True(driver.Current.TemporaryControl);
+    }
+
+    [Fact]
+    public void PostInstallSampleFailureReleasesOwnedDespiteStaleForeignSnapshot()
+    {
+        var probe = Create();
+        driver.Current = driver.Current with { Control = ProbeControl.Foreign };
+        driver.OnInstall = () => driver.ThrowNextSample = true;
+        Assert.Equal("sample_failed", probe.Start(Args));
+        Assert.Equal(ProbePhase.Failed, probe.Status.Phase);
+        Assert.Equal(ProbeControl.None, driver.Current.Control);
+        Assert.Equal(1, driver.Releases);
+        Assert.Equal(1, driver.ReleaseCalls);
+    }
+
+    [Fact]
+    public void LiveOwnershipPolicyDetachesOwnedWhilePreservingTemporaryWithoutHalting()
+    {
+        object owned = new(), temporary = new(); object? main = owned; int halts = 0;
+        bool foreign = ProbeControllerOwnership.Release(main, owned, temporary, () => main = null, () => halts++);
+        Assert.True(foreign);
+        Assert.Null(main);
+        Assert.Equal(0, halts);
+    }
+
+    [Fact]
+    public void LiveOwnershipPolicyPreservesForeignMain()
+    {
+        object owned = new(), foreignMain = new(); object? main = foreignMain; int halts = 0;
+        bool foreign = ProbeControllerOwnership.Release(main, owned, null, () => main = null, () => halts++);
+        Assert.True(foreign);
+        Assert.Same(foreignMain, main);
+        Assert.Equal(0, halts);
+    }
+
+    [Theory]
     [InlineData("other-save", "spring-1")]
     [InlineData("save", "spring-2")]
     public void WorldOrDayChangeTerminatesOnceWithoutRejoining(string world, string date)
@@ -244,10 +319,11 @@ public sealed class RouteProbeTests
         public bool WorldReady { get; set; } = true;
         public bool HasAuthority { get; set; } = true;
         public ProbeSample Current = new("save", "spring-1", 900, new("Mountain", 2, 3), ProbeControl.None);
-        public int Prepares, Installs, Reads, Releases, Holds;
+        public int Prepares, Installs, Reads, Releases, Holds, ReleaseCalls, ReleaseHalts;
         public bool LastRejoin;
         public string? PrepareError;
-        public bool ReleaseError;
+        public bool ReleaseError, ThrowNextSample;
+        private readonly object ownedController = new(), foreignController = new(), temporaryController = new();
         public Action? OnPrepare, OnInstall;
         public ProbePrepared Prepare(ProbeRequest request)
         {
@@ -256,13 +332,21 @@ public sealed class RouteProbeTests
             return new(Current, 100, "native_schedule");
         }
         public void Install() { Installs++; Current = Current with { Control = ProbeControl.Owned }; OnInstall?.Invoke(); }
-        public ProbeSample Sample() { Reads++; return Current; }
+        public ProbeSample Sample()
+        {
+            Reads++;
+            if (ThrowNextSample) { ThrowNextSample = false; throw new InvalidOperationException("sample_failed"); }
+            return Current;
+        }
         public void Hold() { Holds++; }
-        public void RestoreFlags() { }
         public string Release(bool rejoinSchedule)
         {
-            if (Current.Control == ProbeControl.Foreign) throw new Exception("foreign controller released");
-            Releases++; LastRejoin = rejoinSchedule; Current = Current with { Control = ProbeControl.None };
+            ReleaseCalls++;
+            object? main = Current.Control == ProbeControl.Owned ? ownedController : Current.Control == ProbeControl.Foreign ? foreignController : null;
+            bool foreign = ProbeControllerOwnership.Release(main, ownedController, Current.TemporaryControl ? temporaryController : null,
+                () => { Current = Current with { Control = ProbeControl.None }; Releases++; }, () => ReleaseHalts++);
+            LastRejoin = rejoinSchedule && !foreign;
+            if (foreign) return "foreign_control_preserved";
             if (ReleaseError) throw new InvalidOperationException("native_route_unreachable");
             return rejoinSchedule ? "native_rejoined" : "released";
         }

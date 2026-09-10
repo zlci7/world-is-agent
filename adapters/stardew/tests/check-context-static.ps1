@@ -269,6 +269,8 @@ if (Test-Path -LiteralPath $playerInteractProbePath) {
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'pathfindToNextScheduleLocation' 'Phase9 diagnostic routes must use the local native NPC schedule pathfinder.'
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'checkSchedule\(Game1.timeOfDay\)' 'Phase9 diagnostic restoration must rejoin the current native schedule.'
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'isPositionImpassableForNPCSchedule' 'Phase9 diagnostic endpoints must validate native schedule passability as well as route existence.'
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'ProbeControllerOwnership.Release\(npc.controller, owned, npc.temporaryController' 'Phase9 cleanup must use the tested live main/temporary controller ownership policy.'
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'bool nativeMovement = .*npc.temporaryController == null' 'Phase9 native movement evidence must exclude temporary controller execution.'
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'ProbeTestSaveLoader.RegisterCommand' 'The live test-save entry must use the tested opt-in registration gate.'
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'ProbeTestSaveLoader.Load' 'The live test-save entry must use the tested configured-basename gate.'
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'SaveGame.Load\(slot\)' 'The test-save loader must use the public local game loader.'

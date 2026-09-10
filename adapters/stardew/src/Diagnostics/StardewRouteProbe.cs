@@ -118,10 +118,9 @@ internal sealed class StardewRouteProbe : IRouteProbeDriver, IDisposable
     public ProbeSample Sample()
     {
         if (npc == null) throw new InvalidOperationException("npc_missing");
-        var control = npc.temporaryController != null ? ProbeControl.Foreign :
-            npc.controller == null ? ProbeControl.None : ReferenceEquals(npc.controller, owned) ? ProbeControl.Owned : ProbeControl.Foreign;
+        var control = npc.controller == null ? ProbeControl.None : ReferenceEquals(npc.controller, owned) ? ProbeControl.Owned : ProbeControl.Foreign;
         bool sameWorld = WorldReady && World == world && Date == date && ReferenceEquals(Game1.getCharacterFromName(npc.Name), npc);
-        bool nativeMovement = sameWorld && !changedFlags && npc.controller != null &&
+        bool nativeMovement = sameWorld && !changedFlags && npc.temporaryController == null && npc.controller != null &&
             (ReferenceEquals(npc.controller, native) ||
              (npc.controller.NPCSchedule && npc.DirectionsToNewLocation?.route == npc.controller.pathToEndPoint));
         var currentSchedule = sameWorld ? CurrentSchedule() : null;
@@ -129,7 +128,7 @@ internal sealed class StardewRouteProbe : IRouteProbeDriver, IDisposable
             currentSchedule != null && npc.currentLocation?.NameOrUniqueName == currentSchedule.targetLocationName &&
             npc.TilePoint == currentSchedule.targetTile && !npc.ignoreScheduleToday && npc.followSchedule;
         return new(sameWorld ? World : "world_unavailable", Date, Game1.timeOfDay, Position(npc), control,
-            sameWorld && TargetValid(), nativeMovement, stationary);
+            sameWorld && TargetValid(), nativeMovement, stationary, TemporaryControl: npc.temporaryController != null);
     }
 
     public void Hold()
@@ -138,7 +137,7 @@ internal sealed class StardewRouteProbe : IRouteProbeDriver, IDisposable
             npc.Halt();
     }
 
-    public void RestoreFlags()
+    private void RestoreFlags()
     {
         if (!changedFlags || npc == null) return;
         changedFlags = false;
@@ -149,14 +148,10 @@ internal sealed class StardewRouteProbe : IRouteProbeDriver, IDisposable
     public string Release(bool rejoinSchedule)
     {
         if (npc == null) return "released";
-        bool foreign = npc.temporaryController != null || (npc.controller != null && !ReferenceEquals(npc.controller, owned));
         RestoreFlags();
+        bool foreign = ProbeControllerOwnership.Release(npc.controller, owned, npc.temporaryController,
+            () => npc.controller = null, npc.Halt);
         if (foreign) return "foreign_control_preserved";
-        if (ReferenceEquals(npc.controller, owned))
-        {
-            npc.controller = null;
-            npc.Halt();
-        }
         if (!rejoinSchedule || !WorldReady || !HasAuthority || World != world || Date != date)
             return "released_world_unavailable";
         SchedulePathDescription current = CurrentSchedule() ?? throw new InvalidOperationException("native_schedule_missing");

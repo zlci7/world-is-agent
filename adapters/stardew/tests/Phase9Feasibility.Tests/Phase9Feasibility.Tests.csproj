@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../src/Diagnostics/RouteProbe.cs" Link="RouteProbe.cs" />
+    <Compile Include="../../src/Diagnostics/ProbeControllerOwnership.cs" Link="ProbeControllerOwnership.cs" />
     <Compile Include="../../src/Diagnostics/ProbeTestSaveLoader.cs" Link="ProbeTestSaveLoader.cs" />
     <Compile Include="../../src/Runtime/AdapterConfig.cs" Link="AdapterConfig.cs" />
   </ItemGroup>
