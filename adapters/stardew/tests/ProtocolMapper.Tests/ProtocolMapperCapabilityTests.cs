@@ -19,8 +19,10 @@ public sealed class ProtocolMapperCapabilityTests
         Assert.DoesNotContain(capabilities.Capabilities, capability => capability.Name == "speak");
         Assert.Contains("emote bubble", emote.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("reply options", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("up to three reply options", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("exactly three distinct player-authored reply options", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("up to four reply options", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("continuing", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ending", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("wait for player_said_to_npc", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("only tool call", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("allow_free_text=false", presentDialogue.Description, StringComparison.OrdinalIgnoreCase);
@@ -39,7 +41,8 @@ public sealed class ProtocolMapperCapabilityTests
         Assert.Contains("\"x\":{\"type\":\"integer\"}", moveTo.InputSchemaJson, StringComparison.Ordinal);
         Assert.Contains("\"y\":{\"type\":\"integer\"}", moveTo.InputSchemaJson, StringComparison.Ordinal);
         Assert.Contains("\"maxItems\":3", presentDialogue.InputSchemaJson, StringComparison.Ordinal);
-        Assert.Contains("\"allow_free_text\":{\"type\":\"boolean\",\"default\":true}", presentDialogue.InputSchemaJson, StringComparison.Ordinal);
+        Assert.Contains("\"required\":[\"text\",\"reply_options\"]", presentDialogue.InputSchemaJson, StringComparison.Ordinal);
+        Assert.Contains("\"allow_free_text\":{\"type\":\"boolean\",\"default\":true", presentDialogue.InputSchemaJson, StringComparison.Ordinal);
 
         Struct gameAgentExtensions = TestSupport.RequireStruct(presentDialogue.Extensions, "gameagent");
         Struct toolPolicy = TestSupport.RequireStruct(gameAgentExtensions, "tool_policy");

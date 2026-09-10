@@ -49,6 +49,12 @@ type Config struct {
 	MemoryEnabled                 *bool
 	RecentMemoryLimit             int
 	MemoryStore                   MemoryStoreConfig
+	History                       memory.HistoryLimits
+	Compaction                    CompactionConfig
+	Retrieval                     RetrievalConfig
+	HistoryIndex                  memory.HistoryIndexLimits
+	HistoryMaintenance            memory.HistoryMaintenanceLimits
+	RetentionDays                 int
 	MaxSteps                      int
 	MaxToolCallsPerStep           int
 	MaxToolCallsPerTurn           int
@@ -85,6 +91,7 @@ type fileConfig struct {
 	MemoryEnabled                 *bool                 `json:"memory_enabled"`
 	RecentMemoryLimit             int                   `json:"recent_memory_limit"`
 	MemoryStore                   memoryStoreFileConfig `json:"memory_store"`
+	History                       memory.HistoryLimits  `json:"history"`
 	MaxSteps                      int                   `json:"max_steps"`
 	MaxToolCallsPerStep           int                   `json:"max_tool_calls_per_step"`
 	MaxToolCallsPerTurn           int                   `json:"max_tool_calls_per_turn"`
@@ -109,6 +116,11 @@ type fileConfig struct {
 	MaxToolResultOutputArrayItems int                   `json:"max_tool_result_output_array_items"`
 	DefinitionCatalogRoot         string                `json:"definition_catalog_root"`
 	Prompt                        PromptConfig          `json:"prompt"`
+	CompactionConfig
+	RetrievalConfig
+	HistoryIndex       memory.HistoryIndexLimits       `json:"history_index"`
+	HistoryMaintenance memory.HistoryMaintenanceLimits `json:"history_maintenance"`
+	RetentionDays      int                             `json:"retention_days"`
 }
 
 type PromptConfig struct {
@@ -149,6 +161,11 @@ func DefaultConfig() Config {
 		AsyncActionTimeout: 45 * time.Second,
 		MemoryEnabled:      boolPtr(defaultMemoryEnabled),
 		RecentMemoryLimit:  5,
+		History:            memory.DefaultHistoryLimits(),
+		Compaction:         DefaultCompactionConfig(),
+		Retrieval:          DefaultRetrievalConfig(),
+		HistoryIndex:       memory.DefaultHistoryIndexLimits(),
+		HistoryMaintenance: memory.DefaultHistoryMaintenanceLimits(),
 		MemoryStore: MemoryStoreConfig{
 			Kind:                          MemoryStoreKindSQLite,
 			Root:                          memory.DefaultSQLiteMemoryRoot,
@@ -227,6 +244,12 @@ func LoadConfigFile(path string) (Config, error) {
 		AsyncActionTimeout:            durationMS(raw.AsyncActionTimeoutMS),
 		RecentMemoryLimit:             raw.RecentMemoryLimit,
 		MemoryStore:                   raw.MemoryStore.toConfig(),
+		History:                       raw.History,
+		Compaction:                    raw.CompactionConfig,
+		Retrieval:                     raw.RetrievalConfig,
+		HistoryIndex:                  raw.HistoryIndex,
+		HistoryMaintenance:            raw.HistoryMaintenance,
+		RetentionDays:                 raw.RetentionDays,
 		MaxSteps:                      raw.MaxSteps,
 		MaxToolCallsPerStep:           raw.MaxToolCallsPerStep,
 		MaxToolCallsPerTurn:           raw.MaxToolCallsPerTurn,
@@ -353,7 +376,7 @@ func (c MemoryStoreConfig) Validate() error {
 }
 
 func (c Config) Validate() error {
-	return c.MemoryStore.Validate()
+	return errors.Join(c.MemoryStore.Validate(), c.History.Validate(), c.Compaction.Validate(), c.Retrieval.Validate(), c.validateHistoryRuntimeBounds())
 }
 
 // WithDefaults 为 Agent Config 补齐缺省字段。
@@ -386,6 +409,11 @@ func (c Config) WithDefaults() Config {
 		c.RecentMemoryLimit = defaults.RecentMemoryLimit
 	}
 	c.MemoryStore = c.MemoryStore.WithDefaults(c.RecentMemoryLimit)
+	c.History = c.History.WithDefaults()
+	c.Compaction = c.Compaction.WithDefaults()
+	c.Retrieval = c.Retrieval.WithDefaults()
+	c.HistoryIndex = c.HistoryIndex.WithDefaults()
+	c.HistoryMaintenance = c.HistoryMaintenance.WithDefaults()
 	if c.MaxSteps <= 0 {
 		c.MaxSteps = defaults.MaxSteps
 	}

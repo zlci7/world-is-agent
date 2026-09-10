@@ -29,11 +29,15 @@ type ExecutionLane struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	queue chan Task
-	done  chan struct{}
+	queueSize int
+	queue     chan Task
+	ready     chan struct{}
+	done      chan struct{}
 
-	mu     sync.Mutex
-	closed bool
+	mu                sync.Mutex
+	closed            bool
+	maintenance       *Task
+	activeMaintenance bool
 }
 
 func NewExecutionLane(parent context.Context, queueSize int) (*ExecutionLane, error) {
@@ -46,10 +50,12 @@ func NewExecutionLane(parent context.Context, queueSize int) (*ExecutionLane, er
 
 	ctx, cancel := context.WithCancel(parent)
 	lane := &ExecutionLane{
-		ctx:    ctx,
-		cancel: cancel,
-		queue:  make(chan Task, queueSize),
-		done:   make(chan struct{}),
+		ctx:       ctx,
+		cancel:    cancel,
+		queueSize: queueSize,
+		queue:     make(chan Task, queueSize+1),
+		ready:     make(chan struct{}, 1),
+		done:      make(chan struct{}),
 	}
 
 	go lane.run()
@@ -61,16 +67,44 @@ func (l *ExecutionLane) Enqueue(task Task) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.closed {
+	if l.closed || l.ctx.Err() != nil {
 		return ErrLaneClosed
 	}
 
-	select {
-	case l.queue <- task:
-		return nil
-	default:
+	limit := l.queueSize
+	if l.activeMaintenance {
+		// Maintenance preserves the active-player slot until a player is selected.
+		limit++
+	}
+	if len(l.queue) >= limit {
 		return ErrLaneFull
 	}
+	l.queue <- task
+	select {
+	case l.ready <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+// EnqueueMaintenance keeps one pending maintenance task outside player capacity.
+// The latest task replaces the pending task, silently discarding its Run and
+// Abort callbacks. A selected task keeps its admission wait and is never replaced.
+// Pending tasks aborted on lane cancellation receive AbortReasonConnectionClosed.
+func (l *ExecutionLane) EnqueueMaintenance(task Task) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.closed || l.ctx.Err() != nil {
+		return ErrLaneClosed
+	}
+
+	l.maintenance = &task
+	select {
+	case l.ready <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 func (l *ExecutionLane) Close() {
@@ -80,9 +114,8 @@ func (l *ExecutionLane) Close() {
 		return
 	}
 	l.closed = true
-	l.mu.Unlock()
-
 	l.cancel()
+	l.mu.Unlock()
 }
 
 func (l *ExecutionLane) Done() <-chan struct{} {
@@ -97,25 +130,45 @@ func (l *ExecutionLane) run() {
 	}()
 
 	for {
-		select {
-		case <-l.ctx.Done():
+		if l.ctx.Err() != nil {
 			return
-		case task := <-l.queue:
-			if l.ctx.Err() != nil {
-				task.abort(AbortReasonConnectionClosed)
-				return
-			}
-			if !l.waitAdmitted(task) {
-				task.abort(AbortReasonConnectionClosed)
-				return
-			}
-			if l.ctx.Err() != nil {
-				task.abort(AbortReasonConnectionClosed)
-				return
-			}
-			task.run(l.ctx)
 		}
+		task, ok := l.dequeue()
+		if !ok {
+			// Wakeups carry no tasks; selection always happens under the admission lock.
+			select {
+			case <-l.ctx.Done():
+				return
+			case <-l.ready:
+			}
+			continue
+		}
+		if !l.waitAdmitted(task) || l.ctx.Err() != nil {
+			task.abort(AbortReasonConnectionClosed)
+			return
+		}
+		task.run(l.ctx)
 	}
+}
+
+func (l *ExecutionLane) dequeue() (Task, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Player admission and selection share mu, so queued players win atomically.
+	l.activeMaintenance = false
+	select {
+	case task := <-l.queue:
+		return task, true
+	default:
+	}
+	if l.maintenance != nil {
+		task := *l.maintenance
+		l.maintenance = nil
+		l.activeMaintenance = true
+		return task, true
+	}
+	return Task{}, false
 }
 
 func (l *ExecutionLane) waitAdmitted(task Task) bool {
@@ -133,12 +186,11 @@ func (l *ExecutionLane) waitAdmitted(task Task) bool {
 
 func (l *ExecutionLane) drainQueued(reason AbortReason) {
 	for {
-		select {
-		case task := <-l.queue:
-			task.abort(reason)
-		default:
+		task, ok := l.dequeue()
+		if !ok {
 			return
 		}
+		task.abort(reason)
 	}
 }
 
@@ -221,5 +273,19 @@ func (s *LaneStore) Close() {
 
 	for _, lane := range lanes {
 		lane.Close()
+	}
+}
+
+// CloseAndWait waits for active task cleanup and queued aborts after cancellation.
+func (s *LaneStore) CloseAndWait() {
+	s.Close()
+	s.mu.Lock()
+	lanes := make([]*ExecutionLane, 0, len(s.lanes))
+	for _, lane := range s.lanes {
+		lanes = append(lanes, lane)
+	}
+	s.mu.Unlock()
+	for _, lane := range lanes {
+		<-lane.Done()
 	}
 }

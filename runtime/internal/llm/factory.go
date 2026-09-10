@@ -18,6 +18,7 @@ const (
 )
 
 type Config struct {
+	model.WindowLimits
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
 	APIKey   string `json:"api_key"`
@@ -66,6 +67,9 @@ func NewProviderFromConfigFile(path string) (model.Provider, Config, error) {
 }
 
 func NewProvider(config Config) (model.Provider, error) {
+	if err := config.WindowLimits.Validate(); err != nil {
+		return nil, err
+	}
 	switch config.Provider {
 	case "", "fake":
 		return fake.NewProvider(), nil
@@ -81,7 +85,7 @@ func NewProvider(config Config) (model.Provider, error) {
 			modelName = "gpt-5-mini"
 		}
 
-		return openai.NewProvider(apiKey, modelName, openai.WithBaseURL(config.BaseURL)), nil
+		return openai.NewProvider(apiKey, modelName, openai.WithBaseURL(config.BaseURL), openai.WithModelWindow(config.WindowLimits)), nil
 
 	case "deepseek":
 		apiKey, err := resolveAPIKey(config)
@@ -94,7 +98,7 @@ func NewProvider(config Config) (model.Provider, error) {
 			modelName = "deepseek-v4-flash"
 		}
 
-		return deepseek.NewProvider(apiKey, modelName, deepseek.WithBaseURL(config.BaseURL)), nil
+		return deepseek.NewProvider(apiKey, modelName, deepseek.WithBaseURL(config.BaseURL), deepseek.WithModelWindow(config.WindowLimits)), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", config.Provider)

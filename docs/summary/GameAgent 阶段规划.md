@@ -2,9 +2,9 @@
 
 > **Public Documentation Note (2026-09-01):** 根目录 [ROADMAP.md](../../ROADMAP.md) 和 [docs/STATUS.md](../STATUS.md) 是当前公开 Roadmap 与能力状态入口。本文保留为阶段规划、阶段验收和内部开发节奏资料。
 >
-> **Version:** v1.10
+> **Version:** v1.12
 > **Status:** Roadmap Baseline
-> **Date:** 2026-09-08
+> **Date:** 2026-09-10
 > **Architecture Baseline:** GameAgent Runtime Architecture v0.7
 > **Current Baseline:** Phase1 Accepted + Phase2 Accepted + Phase3 Accepted + Phase4 Accepted + Phase5 Accepted + Phase5.5 Accepted + Phase5.6 Accepted + Phase6 Accepted + Phase6.5 Accepted + Phase7.0 Accepted + Phase7.1 Accepted + Phase7.2 Accepted + Phase7.3 Accepted + Phase7.4 Accepted + Phase8.1 Accepted
 > **Revision Source:** 评审意见（Roadmap Review，2026-08-18）；Phase3 评估（Protocol v1alpha2 Decision，2026-08-20）；[多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[Stardew Adapter 方案对比](../adapter/Stardew Adapter 方案对比.md)（2026-08-27）；[Phase6 Async Action Protocol Strategy ADR](../phase6/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[Phase6.5 Stardew Dialogue Interaction Convergence](../phase6.5/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）；GameAgent 阶段规划 v1.1 评审意见（2026-09-02）；Phase7 Context Subsystem Replan（2026-09-02）；Phase7 Contract Review（2026-09-02）；Phase7 Baseline Candidate Review（2026-09-02）；Phase7 Roadmap Baseline Freeze（2026-09-02）；Phase7.0 Contract Revision（2026-09-02）；Phase7.0 Gate Scope Correction（2026-09-02）；Phase7.0 Minor Review Correction（2026-09-02）；Phase7.0 Over-scope Guard Correction（2026-09-02）；Phase7.3 Implementation Acceptance（2026-09-04）；Phase7.4 Code Acceptance（2026-09-06，`main` @ `e50794c`）
@@ -104,7 +104,8 @@ Phase7.5：用真实 Stardew 对话验收 Context 主链路。
 Phase8.1：用 SQLite Recent Memory 验证持久身份、幂等与近期记忆读取。
 Phase8.2：用终态 History 与有界 Summary 验证跨 Turn、跨 Runtime 的历史连续性。
 Phase8.3：用历史原文检索与可选留存清理验证细节召回和删除后的能力边界。
-Phase9：用 reconnect、capability replacement 和 pending operation 收敛验证 Environment Recovery。
+Phase9：用预约、赴约、见面或超时离开，验证跨多个 Turn 的游戏行为最小闭环。
+Phase10：用 reconnect、capability replacement 和 pending operation 收敛验证 Environment Recovery。
 ```
 
 ## 3.3 每阶段结束后重新规划
@@ -136,8 +137,9 @@ Phase7 及后续阶段属于当前可调整范围。上一阶段结束后，可�
 | Phase8.1 | SQLite Recent Memory | 有限 Recent 持久化、身份隔离、幂等与重启读取；Accepted |
 | Phase8.2 | Persistent Session History & Context Compaction | 完整约定终态历史、历史摘要与近期原文，恢复提交的检查点；方案 Draft |
 | Phase8.3 | History Retrieval & Retention | 中文字面检索、来源片段与默认关闭的原文清理；方案 Draft |
-| Phase9 | Environment Reconnect and Capability Recovery | Adapter reconnect、EnvironmentSession 重建、capability replacement 和 pending operation 收敛 |
-| Phase10 | Evaluation、Developer Experience 与产品化 | 系统可重复评估、定位、交付，并支持新 Adapter 接入 |
+| Phase9 | Appointment Vertical Slice：游戏行为最小闭环 | 自然语言预约驱动 NPC 按游戏时间赴约、等待、见面或超时离开；事件、动作、活动状态与 Memory 可关联验证 |
+| Phase10 | Environment Reconnect and Capability Recovery | Adapter reconnect、EnvironmentSession 重建、capability replacement 和 pending operation 收敛 |
+| Phase11 | Evaluation、Developer Experience 与产品化 | 系统可重复评估、定位、交付，并支持新 Adapter 接入 |
 
 ---
 
@@ -226,7 +228,7 @@ P0 还必须包含 AgentSessionResolver 的最小实现或等价可测试解析�
 长期 Memory
 Multi-step ReAct
 复杂异步 movement
-自动 reconnect（保持 Phase9 的 Environment Recovery 范围）
+自动 reconnect（保持 Phase10 的 Environment Recovery 范围）
 Event replay
 复杂 Permission
 大量 Stardew 功能覆盖
@@ -268,7 +270,7 @@ Event replay
 - 为 context loaded / context updated 增加必要观测；
 - 将现有 fake adapter / fake Environment 收敛为可复用的确定性测试夹具，用于验证多 Entity、多 Turn、Memory 隔离和失败路径。
 
-第一版默认使用 In-Memory Store；如为开发调试使用简单本地文件实现，不承诺跨进程恢复、版本兼容或 Environment Recovery；正式 Persistent Recent Memory 属于 Phase8，Environment Recovery 属于 Phase9。
+第一版默认使用 In-Memory Store；如为开发调试使用简单本地文件实现，不承诺跨进程恢复、版本兼容或 Environment Recovery；正式 Persistent Recent Memory 属于 Phase8，Environment Recovery 属于 Phase10。
 
 ## 非目标
 
@@ -1280,11 +1282,55 @@ Knowledge Graph
 
 ## 阶段结束 Review
 
-重点确认持久来源与模型输入职责、摘要忠实性、原文可用性、回档限制和交互延迟。Phase9 的 Memory 前置能力由 8.1 提供，8.2 的摘要与 8.3 的检索清理不额外阻塞 Environment Recovery。
+重点确认持久来源与模型输入职责、摘要忠实性、原文可用性、回档限制和交互延迟。Phase9 最小闭环与 Phase10 Environment Recovery 的基础 Memory 前置能力由 8.1 提供；8.2 的摘要与 8.3 的检索清理不作为两阶段的额外硬前置条件。
 
 ---
 
-# 15. Phase9：Environment Reconnect and Capability Recovery
+# 15. Phase9：Appointment Vertical Slice——游戏行为最小闭环
+
+状态：`Implementation Plan Draft`。本阶段定位为可向他人展示的最小产品闭环，Accepted 以实现和验收证据为准。
+
+## 阶段目标
+
+玩家上午通过自然语言与 NPC 约定当天下午在沙滩见面；NPC 按游戏时间前往约定点位并等待；玩家按时到达时发生有上下文的互动，未到达时 NPC 在截止时间离开并恢复正常日程，后续对话能够引用实际结果。
+
+## 主要范围
+
+- Adapter 提供少量经验证的语义点位，复用已有玩家/NPC 位置与游戏时间 Observation，补充活动状态和节日约束；
+- 通过 `schedule_activity` 注册当天活动，立即返回注册结果；由 Adapter/Game 根据游戏时钟执行赴约和等待；
+- 提供 `approach_player` 接近玩家能力，由 Adapter 按动作开始时的玩家位置选择相邻空闲格，并以该固定格为终点执行一次异步移动；
+- 普通对话及赴约对话真正结束后，Adapter 释放本次交互控制权，让 NPC 自动恢复当前时刻的原生日程和自主行为；
+- 通过生命周期 GameEvent 驱动多个短 AgentTurn，使用稳定 `activity_id` 关联预约、执行、互动和记忆；
+- 验证跨地图赴约、真实到达、玩家接近、超时离开、原生日程恢复和动作控制权互斥；
+- 覆盖非法点位、重复请求、节日冲突、寻路失败、断线收尾与存档边界；
+- 提供成功赴约和爽约两条可复现演示路径，以及事件、ActionResult、Observation、Memory 与 Trace 证据。
+
+## 架构边界
+
+Agent 决定是否预约及约定内容；Runtime 管理每次事件触发的认知、工具调用、记忆与 Turn 生命周期；Adapter/Game 管理点位、游戏时钟、活动状态、路径和日程执行。
+
+预约注册是短时 Action，未来活动由游戏侧状态机推进。Runtime 通用 Durable Task/Goal、自动重连与跨连接恢复分别保留独立建设边界；Phase10 负责 Environment Recovery。
+
+## 完成条件
+
+- 两条演示路径在真实 Stardew 与真实模型中重复通过，不能仅凭台词判断预约或见面成功；
+- 上午 Turn 正常结束后，NPC 无需玩家再次点击即可赴约和等待，等待期间不持续占用 Runtime Turn；
+- 玩家到达和 NPC 超时离开都有真实世界状态与来源记录，下一次对话可利用对应上下文；
+- 接近玩家的选点、移动与结果反馈可验证；玩家途中移动时目标格保持不变，完成结果准确区分抵达固定终点与当前仍相邻；
+- 对话结束后 NPC 无需新的模型调用或玩家点击即可继续原生行动；在日程要求移动的验收场景中，NPC 能实际离开交互位置；
+- 已注册活动在 Runtime 断线后仍能按游戏时间安全收尾，游戏重新加载遵循存档中的活动状态；
+- Runtime Core 保持 game-agnostic，现有对话、异步动作和 Memory 回归通过；
+- 跨地图与日程恢复可行性验证、开发里程碑和验收记录齐全。
+
+详细合同见 [Phase9 技术开发与验收方案](../phase9/GameAgent%20MVP0%20Phase9%20技术开发与验收方案.md)。
+
+## 阶段结束 Review
+
+确认最小闭环可以稳定演示，世界活动状态与 Agent 记忆职责清楚，失败路径能够收敛，并以此作为 Phase10 连接恢复的真实场景输入。
+
+---
+
+# 16. Phase10：Environment Reconnect and Capability Recovery
 
 ## 阶段目标
 
@@ -1334,7 +1380,7 @@ Resume Token
 - capability 变化后，新 Turn 只看到新 EnvironmentSession 的 Tool View；
 - Stardew waiting UI、conversation state 和 interaction context 在断线后收敛；
 - reconnect 后 Agent identity 与 Persistent Recent Memory scope 不变；
-- reconnect 后的跨 Session / 跨 Runtime exactly-once 不属于 Phase9 保证；
+- reconnect 后的跨 Session / 跨 Runtime exactly-once 不属于 Phase10 保证；
 - Adapter 不自动 replay 已经 `ACCEPTED` 的旧 Event；
 - disconnected / late result / retry 的处理结果有明确 trace 与 Adapter log；
 - 完成一次真实 Stardew 断线重连 smoke test。
@@ -1345,7 +1391,7 @@ Resume Token
 
 ---
 
-# 16. Phase10：Evaluation、Developer Experience 与产品化
+# 17. Phase11：Evaluation、Developer Experience 与产品化
 
 ## 阶段目标
 
@@ -1391,7 +1437,7 @@ Multi-Agent 社会模拟平台
 
 ---
 
-# 17. 跨阶段不变量
+# 18. 跨阶段不变量
 
 无论处于哪个 Phase，都必须保持：
 
@@ -1425,7 +1471,7 @@ Runtime tool policy != hardcoded game-specific capability name
 
 ---
 
-# 18. 每阶段固定交付物
+# 19. 每阶段固定交付物
 
 从 Phase3 开始，每阶段至少应形成：
 
@@ -1516,22 +1562,30 @@ Phase7.0–Phase7.5 可以共享一份 Phase7 Context Subsystem 总纲，但不�
 进入 Phase9 implementation 前
     Phase8.1 必须 Accepted 或 Accepted with Known Limitations。
     Persistent Recent Memory 必须可按 AgentSession scope 读取。
+    预约注册、游戏时钟、活动事实与 Runtime Turn 的职责边界明确。
+    技术方案明确跨地图赴约与日程恢复的可行性验证、失败路径和验收口径。
     不要求 Phase8.2 或 Phase8.3 完成。
 
 进入 Phase10 implementation 前
-    Phase9 必须 Accepted。
+    Phase9 必须 Accepted 或 Accepted with Known Limitations。
+    Phase8.1 的持久身份与按 AgentSession scope 读取能力可用。
+    在线请求收尾与 Adapter 游戏活动状态的生命周期边界明确。
+    不要求 Phase8.2 或 Phase8.3 完成。
+
+进入 Phase11 implementation 前
+    Phase10 必须 Accepted。
     Evaluation / DX / 产品化目标必须基于已稳定的 Runtime、Adapter 和 Recovery 行为。
 ```
 
 ---
 
-# 19. 暂不绑定固定 Phase 的候选能力
+# 20. 暂不绑定固定 Phase 的候选能力
 
 以下能力保留为未来候选，等核心 Harness 出现真实需求后再进入阶段规划：
 
 ```text
 复杂 Goal Planner
-完整 Scheduled Goal / Scheduled Action
+Runtime 通用 Durable Task / Scheduled Goal / Scheduled Action
 Advanced Permission / Safety Policy
 Long-term semantic memory
 Vector retrieval
@@ -1554,7 +1608,7 @@ Cloud deployment
 
 ---
 
-# 20. 一句话 Roadmap
+# 21. 一句话 Roadmap
 
 ```text
 Phase1
@@ -1620,9 +1674,12 @@ Phase8.3
 中文历史原文检索与可选留存清理，明确删除后的能力边界
 
 Phase9
-让 Environment 可以重连、恢复，并让 pending operation 收敛到明确状态
+完成预约、赴约、见面或超时离开、结果记忆的可展示最小闭环
 
 Phase10
+让 Environment 可以重连、恢复，并让 pending operation 收敛到明确状态
+
+Phase11
 让系统可以被重复评估、可靠交付和持续扩展
 ```
 

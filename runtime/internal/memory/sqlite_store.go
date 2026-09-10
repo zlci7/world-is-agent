@@ -280,6 +280,18 @@ type sqliteConnector interface {
 }
 
 func (s *SQLiteMemoryStore) openConn(ctx context.Context, key session.AgentSessionKey) (*sql.Conn, func(), error) {
+	conn, closeConn, err := s.openRawConn(ctx, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.prepareSQLiteDatabase(ctx, conn, key); err != nil {
+		closeConn()
+		return nil, nil, err
+	}
+	return conn, closeConn, nil
+}
+
+func (s *SQLiteMemoryStore) openRawConn(ctx context.Context, key session.AgentSessionKey) (*sql.Conn, func(), error) {
 	dbPath, err := SQLiteDatabasePath(s.options.Root, key.GameID, key.WorldID)
 	if err != nil {
 		return nil, nil, err
@@ -315,10 +327,6 @@ func (s *SQLiteMemoryStore) openConn(ctx context.Context, key session.AgentSessi
 	}
 
 	if err := configureSQLiteConn(ctx, conn, s.options.BusyTimeout); err != nil {
-		closeConn()
-		return nil, nil, err
-	}
-	if err := s.prepareSQLiteDatabase(ctx, conn, key); err != nil {
 		closeConn()
 		return nil, nil, err
 	}
@@ -457,9 +465,38 @@ func configureSQLiteJournal(ctx context.Context, conn *sql.Conn, busyTimeout tim
 }
 
 func beginSQLiteWriteTransaction(ctx context.Context, conn *sql.Conn) (*sql.Tx, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		var busyMS int64
+		if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyMS); err != nil {
+			return nil, err
+		}
+		remaining := time.Until(deadline).Milliseconds()
+		if remaining <= 0 {
+			return nil, context.DeadlineExceeded
+		}
+		if remaining < busyMS {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", remaining)); err != nil {
+				return nil, err
+			}
+		}
+	}
 	// Statement contexts remain cancelable. The owner synchronously ends the
 	// transaction, including rollback, before releasing the connection.
-	return conn.BeginTx(context.WithoutCancel(ctx), nil)
+	tx, err := conn.BeginTx(context.WithoutCancel(ctx), nil)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
 }
 
 func commitSQLiteTransaction(ctx context.Context, tx *sql.Tx) error {
@@ -683,6 +720,10 @@ func sqliteRecordPayloadFromRecord(record Record) (sqliteRecordPayload, error) {
 }
 
 func scanSQLiteRecord(rows *sql.Rows) (Record, error) {
+	return scanSQLiteRecordWithDecoder(rows, json.Unmarshal)
+}
+
+func scanSQLiteRecordWithDecoder(rows *sql.Rows, decode func([]byte, any) error) (Record, error) {
 	var record Record
 	var projectionKind string
 	var gameTimeJSON string
@@ -713,13 +754,13 @@ func scanSQLiteRecord(rows *sql.Rows) (Record, error) {
 
 	record.ProjectionKind = ProjectionKind(projectionKind)
 	record.SourceEventSequence = uint64(sourceEventSequence)
-	if err := json.Unmarshal([]byte(gameTimeJSON), &record.GameTime); err != nil {
+	if err := decode([]byte(gameTimeJSON), &record.GameTime); err != nil {
 		return Record{}, fmt.Errorf("unmarshal game_time: %w", err)
 	}
-	if err := json.Unmarshal([]byte(sourceContextFactsJSON), &record.SourceContextFacts); err != nil {
+	if err := decode([]byte(sourceContextFactsJSON), &record.SourceContextFacts); err != nil {
 		return Record{}, fmt.Errorf("unmarshal source_context_facts: %w", err)
 	}
-	if err := json.Unmarshal([]byte(outcomesJSON), &record.Outcomes); err != nil {
+	if err := decode([]byte(outcomesJSON), &record.Outcomes); err != nil {
 		return Record{}, fmt.Errorf("unmarshal outcomes: %w", err)
 	}
 	record.CreatedAt = time.Unix(0, createdAt).UTC()

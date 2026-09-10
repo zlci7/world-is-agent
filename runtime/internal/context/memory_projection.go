@@ -206,15 +206,7 @@ func visibleActionSummary(outcome memory.TurnOutcome, bounds projectionBounds) s
 }
 
 func currentGameTimeFromEventObservation(event *protocolv1alpha2.GameEvent, observation *protocolv1alpha2.Observation) *memory.GameTimeSnapshot {
-	if event != nil {
-		if snapshot := memory.SnapshotGameTime(event.GetGameTime()); memory.SharedGameTimeBasis(snapshot) != memory.GameTimeUnknown {
-			return snapshot
-		}
-	}
-	if observation == nil {
-		return nil
-	}
-	return memory.SnapshotGameTime(observation.GetGameTime())
+	return memory.CurrentGameTime(event, observation)
 }
 
 func gameTimeRelation(memoryTime, currentTime *memory.GameTimeSnapshot) string {

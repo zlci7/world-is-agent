@@ -107,7 +107,7 @@ func (p *sameNameToolGatewayProvider) Generate(ctx context.Context, req model.Re
 	p.requests = append(p.requests, req)
 	p.mu.Unlock()
 
-	if requestMessagesContain(req.Messages, "action_succeeded") {
+	if requestToolResultCode(req.Messages, "action_succeeded") {
 		return model.Response{
 			Decision: model.ModelDecision{
 				Control: model.ControlDirective{Kind: model.ControlSettle},
@@ -206,7 +206,7 @@ func TestConnectRunsOneTurnWithFakeAdapter(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -487,7 +487,7 @@ func TestConnectForwardsDynamicEmoteToolCall(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1085,7 +1085,7 @@ func TestConnectRejectsGameEventWhenEventQueueIsFull(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1169,7 +1169,7 @@ func TestConnectRoutesDifferentNPCsToIndependentLanes(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1248,7 +1248,7 @@ func TestConnectAcceptsNonStardewTriggerWithRoutedEntity(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1324,7 +1324,7 @@ func TestConnectSerializesEventsForSameNPC(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1430,7 +1430,7 @@ func TestConnectQueuedSameNPCEventReadsPreviousTurnMemory(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1514,25 +1514,7 @@ func TestConnectQueuedSameNPCEventReadsPreviousTurnMemory(t *testing.T) {
 	if len(requests) != 2 {
 		t.Fatalf("provider request count = %d, want 2", len(requests))
 	}
-	secondPrompt := requests[1].Messages[0].Content
-	for _, want := range []string{
-		"[Recent Memory]",
-		"previous interaction",
-		`tool "speak" status "ACTION_STATUS_SUCCEEDED" arguments {"text":"gateway memory line"}`,
-		"gateway memory line",
-	} {
-		if !strings.Contains(secondPrompt, want) {
-			t.Fatalf("second prompt missing %q:\n%s", want, secondPrompt)
-		}
-	}
-	for _, unwanted := range []string{
-		"event_1",
-		"source_turn_id",
-	} {
-		if strings.Contains(secondPrompt, unwanted) {
-			t.Fatalf("second prompt should not expose storage field %q:\n%s", unwanted, secondPrompt)
-		}
-	}
+	assertGatewayHistory(t, requests[1], "event_1")
 
 	if err := stream.CloseSend(); err != nil {
 		t.Fatalf("close send: %v", err)
@@ -1555,7 +1537,7 @@ func TestConnectSameAgentSessionReadsMemoryAfterReconnect(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1600,17 +1582,7 @@ func TestConnectSameAgentSessionReadsMemoryAfterReconnect(t *testing.T) {
 	if len(requests) != 2 {
 		t.Fatalf("provider request count = %d, want 2", len(requests))
 	}
-	secondPrompt := requests[1].Messages[0].Content
-	for _, want := range []string{
-		"[Recent Memory]",
-		"previous interaction",
-		`tool "speak" status "ACTION_STATUS_SUCCEEDED" arguments {"text":"gateway memory line"}`,
-		"gateway memory line",
-	} {
-		if !strings.Contains(secondPrompt, want) {
-			t.Fatalf("reconnected prompt missing %q:\n%s", want, secondPrompt)
-		}
-	}
+	assertGatewayHistory(t, requests[1], "event_1")
 
 	if err := secondStream.CloseSend(); err != nil {
 		t.Fatalf("close second stream: %v", err)
@@ -1705,7 +1677,7 @@ func TestConnectDoesNotLeakMemoryAcrossNPCs(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1773,7 +1745,7 @@ func TestConnectDrainsQueuedEventOnDisconnect(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -1859,7 +1831,7 @@ func TestConnectReturnsDuplicateAckForRepeatedEventID(t *testing.T) {
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):
@@ -2094,7 +2066,7 @@ func startGatewayServer(t *testing.T, grpcServer *grpc.Server, listener *bufconn
 		serverErrCh <- grpcServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		grpcServer.Stop()
+		grpcServer.GracefulStop()
 		select {
 		case <-serverErrCh:
 		case <-time.After(time.Second):

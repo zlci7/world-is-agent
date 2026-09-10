@@ -1,0 +1,262 @@
+package memory
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"time"
+
+	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/internal/model"
+	"gameagent/runtime/internal/session"
+)
+
+const (
+	HistorySchemaVersion = "phase8_2_history_v1"
+	HistoryKindTerminal  = "terminal_turn"
+	HistoryKindLegacy    = "legacy_recent"
+	HistoryVersion       = 1
+	HistoryAvailable     = "available"
+	HistoryPruned        = "pruned"
+)
+
+var (
+	ErrInvalidHistory             = errors.New("invalid history")
+	ErrHistoryConflict            = errors.New("history batch conflict")
+	ErrHistoryNotFound            = errors.New("history source not found")
+	ErrHistoryCapacity            = errors.New("history capacity exceeded")
+	ErrHistoryMaintenanceNotReady = errors.New("history maintenance not_ready")
+	ErrSummaryConflict            = errors.New("summary publication conflict")
+)
+
+type HistoryEvent struct {
+	ID       string              `json:"id"`
+	Type     string              `json:"type"`
+	Sequence uint64              `json:"sequence"`
+	GameTime *GameTimeSnapshot   `json:"game_time"`
+	Facts    []SourceContextFact `json:"facts"`
+}
+
+type HistoryObservation struct {
+	Step     int               `json:"step"`
+	Revision uint64            `json:"revision"`
+	GameTime *GameTimeSnapshot `json:"game_time"`
+}
+
+type HistoryExecution struct {
+	Call          model.ToolCall         `json:"call"`
+	ActionID      string                 `json:"action_id"`
+	Started       bool                   `json:"started"`
+	ActionResult  *protocol.ActionResult `json:"action_result,omitempty"`
+	RuntimeResult *model.ToolResult      `json:"runtime_result,omitempty"`
+	RuntimeError  string                 `json:"runtime_error,omitempty"`
+}
+
+type HistoryStep struct {
+	Index      int                 `json:"index"`
+	Decision   model.ModelDecision `json:"decision"`
+	Executions []HistoryExecution  `json:"executions"`
+}
+
+type HistoryTerminal struct {
+	Status string `json:"status"`
+	Stage  string `json:"stage,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type HistoryBatch struct {
+	Owner        session.AgentSessionKey `json:"owner"`
+	Kind         string                  `json:"kind"`
+	Version      int                     `json:"version"`
+	TurnID       string                  `json:"turn_id"`
+	Event        HistoryEvent            `json:"event"`
+	Observations []HistoryObservation    `json:"observations"`
+	Steps        []HistoryStep           `json:"steps"`
+	Terminal     HistoryTerminal         `json:"terminal"`
+	Legacy       *Record                 `json:"legacy,omitempty"`
+}
+
+type HistoryTime struct {
+	Source string            `json:"source"`
+	Step   int               `json:"step"`
+	Value  *GameTimeSnapshot `json:"value"`
+}
+
+type HistorySource struct {
+	ID             string
+	Sequence       int64
+	Owner          session.AgentSessionKey
+	BatchKey       string
+	Fingerprint    string
+	CreatedAt      time.Time
+	Times          []HistoryTime
+	Batch          *HistoryBatch
+	Bytes          int
+	Availability   string
+	LegacyMemoryID string
+}
+
+type HistorySnapshot struct {
+	Owner           session.AgentSessionKey
+	Watermark       int64
+	SummaryRevision int64
+	LeaseID         string
+}
+
+type HistoryReadLimits struct {
+	Records int
+	Bytes   int
+}
+
+// Pages are newest first; Before is exclusive and zero starts at the snapshot watermark.
+type HistoryPage struct {
+	Sources     []HistorySource
+	NextBefore  int64
+	More        bool
+	Scanned     int
+	Bytes       int
+	Diagnostics []string
+}
+
+type HistoryStore interface {
+	AppendHistory(context.Context, HistoryBatch) (HistorySource, error)
+	BeginHistorySnapshot(context.Context, session.AgentSessionKey) (HistorySnapshot, error)
+	ReleaseHistorySnapshot(HistorySnapshot)
+	ReadHistorySnapshot(context.Context, HistorySnapshot, int64, HistoryReadLimits) (HistoryPage, error)
+	ReadHistorySource(context.Context, session.AgentSessionKey, string) (HistorySource, error)
+}
+
+type HistoryLimits struct {
+	MaxBatchBytes      int `json:"max_batch_bytes"`
+	PageRecords        int `json:"page_records"`
+	PageBytes          int `json:"page_bytes"`
+	ScanRecords        int `json:"scan_records"`
+	ScanBytes          int `json:"scan_bytes"`
+	ReadTimeoutMS      int `json:"read_timeout_ms"`
+	WriteTimeoutMS     int `json:"write_timeout_ms"`
+	SummarySources     int `json:"summary_sources"`
+	SummaryCheckpoints int `json:"summary_checkpoints"`
+}
+
+func DefaultHistoryLimits() HistoryLimits {
+	return HistoryLimits{MaxBatchBytes: 8 << 20, PageRecords: 64, PageBytes: 8 << 20, ScanRecords: 512, ScanBytes: 32 << 20, ReadTimeoutMS: 1000, WriteTimeoutMS: 5000, SummarySources: 16384, SummaryCheckpoints: 64}
+}
+
+func CanonicalHistoryBatch(batch HistoryBatch, maxBytes int) ([]byte, string, string, error) {
+	if _, err := session.Resolve(batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID); err != nil || batch.TurnID == "" || batch.Version != HistoryVersion {
+		return nil, "", "", ErrInvalidHistory
+	}
+	var keyParts []any
+	switch batch.Kind {
+	case HistoryKindTerminal:
+		if batch.Legacy != nil || (batch.Terminal.Status != "completed" && batch.Terminal.Status != "failed" && batch.Terminal.Status != "cancelled") {
+			return nil, "", "", ErrInvalidHistory
+		}
+		keyParts = []any{batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID, batch.TurnID, batch.Event.ID, batch.Kind, batch.Version}
+	case HistoryKindLegacy:
+		if batch.Legacy == nil || batch.Legacy.SessionKey != batch.Owner || validateSQLiteRecord(*batch.Legacy) != nil {
+			return nil, "", "", ErrInvalidHistory
+		}
+		keyParts = []any{batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID, batch.Legacy.ProjectionBatchKey, batch.Kind, batch.Version}
+	default:
+		return nil, "", "", ErrInvalidHistory
+	}
+	data, err := json.Marshal(batch)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("%w: %v", ErrInvalidHistory, err)
+	}
+	if maxBytes > 0 && len(data) > maxBytes {
+		return nil, "", "", fmt.Errorf("%w: batch bytes %d exceed %d", ErrHistoryCapacity, len(data), maxBytes)
+	}
+	key, err := json.Marshal(keyParts)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return data, string(key), sha256LowerHex(string(data)), nil
+}
+
+func (l HistoryLimits) WithDefaults() HistoryLimits {
+	d := DefaultHistoryLimits()
+	for _, p := range []struct {
+		value    *int
+		fallback int
+	}{{&l.MaxBatchBytes, d.MaxBatchBytes}, {&l.PageRecords, d.PageRecords}, {&l.PageBytes, d.PageBytes}, {&l.ScanRecords, d.ScanRecords}, {&l.ScanBytes, d.ScanBytes}, {&l.ReadTimeoutMS, d.ReadTimeoutMS}, {&l.WriteTimeoutMS, d.WriteTimeoutMS}, {&l.SummarySources, d.SummarySources}, {&l.SummaryCheckpoints, d.SummaryCheckpoints}} {
+		if *p.value == 0 {
+			*p.value = p.fallback
+		}
+	}
+	return l
+}
+
+func (l HistoryLimits) Validate() error {
+	for _, value := range []int{l.MaxBatchBytes, l.PageRecords, l.PageBytes, l.ScanRecords, l.ScanBytes, l.ReadTimeoutMS, l.WriteTimeoutMS, l.SummarySources, l.SummaryCheckpoints} {
+		if value <= 0 {
+			return fmt.Errorf("history limits must be positive")
+		}
+	}
+	if l.PageRecords > l.ScanRecords || l.PageBytes > l.ScanBytes {
+		return fmt.Errorf("history page exceeds total scan limits")
+	}
+	return nil
+}
+
+func HistoryTimes(batch HistoryBatch) []HistoryTime {
+	if batch.Legacy != nil {
+		return []HistoryTime{{Source: "legacy_event", Value: batch.Legacy.GameTime}}
+	}
+	times := []HistoryTime{{Source: "event", Value: batch.Event.GameTime}}
+	for _, obs := range batch.Observations {
+		times = append(times, HistoryTime{Source: "observation", Step: obs.Step, Value: obs.GameTime})
+	}
+	return times
+}
+
+// Visibility is checked per source pair; an unknown source cannot hide a known future source.
+func HistoryVisibility(times []HistoryTime, current *GameTimeSnapshot) (visible, unknown bool) {
+	visible = true
+	if len(times) == 0 {
+		return true, true
+	}
+	for _, source := range times {
+		basis := SharedGameTimeBasis(source.Value, current)
+		unknown = unknown || basis == GameTimeUnknown
+		if basis.Compare(source.Value, current) > 0 {
+			visible = false
+		}
+	}
+	return visible, unknown
+}
+
+func CloneHistoryBatch(batch HistoryBatch) (HistoryBatch, error) {
+	data, err := json.Marshal(batch)
+	if err != nil {
+		return HistoryBatch{}, err
+	}
+	return decodeHistoryBatch(data)
+}
+
+func decodeHistoryBatch(data []byte) (HistoryBatch, error) {
+	var batch HistoryBatch
+	err := decodeHistoryJSON(data, &batch)
+	return batch, err
+}
+
+func decodeHistoryJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: multiple JSON values", ErrInvalidHistory)
+	}
+	return nil
+}

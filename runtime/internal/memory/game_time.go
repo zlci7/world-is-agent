@@ -46,6 +46,13 @@ func SnapshotGameTime(value *protocolv1alpha2.GameTime) *GameTimeSnapshot {
 	}
 }
 
+func CurrentGameTime(event *protocolv1alpha2.GameEvent, observation *protocolv1alpha2.Observation) *GameTimeSnapshot {
+	if value := SnapshotGameTime(event.GetGameTime()); SharedGameTimeBasis(value) != GameTimeUnknown {
+		return value
+	}
+	return SnapshotGameTime(observation.GetGameTime())
+}
+
 func (s *GameTimeSnapshot) presentFields() uint8 {
 	if s == nil {
 		return 0

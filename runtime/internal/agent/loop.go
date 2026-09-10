@@ -40,11 +40,16 @@ type Loop struct {
 	recorder trace.Recorder
 	config   Config
 
-	memoryStore     memory.Store
-	memoryProjector memoryProjector
-	definitions     definition.Catalog
-	contextEngine   agentcontext.Engine
-	contextRenderer agentcontext.Renderer
+	memoryStore      memory.Store
+	memoryProjector  memoryProjector
+	historyStore     memory.HistoryStore
+	summaryStore     memory.SummaryStore
+	summaryGenerator model.TextGenerator
+	historyState     historyRuntimeState
+	maintenanceState historyMaintenanceState
+	definitions      definition.Catalog
+	contextEngine    agentcontext.Engine
+	contextRenderer  agentcontext.Renderer
 }
 
 type memoryProjector interface {
@@ -65,6 +70,8 @@ func WithMemoryStore(store memory.Store) LoopOption {
 			return
 		}
 		loop.memoryStore = store
+		loop.historyStore = nil
+		loop.summaryStore = nil
 	}
 }
 
@@ -78,6 +85,8 @@ func WithMemoryProjector(projector interface {
 			return
 		}
 		loop.memoryProjector = projector
+		loop.historyStore = nil
+		loop.summaryStore = nil
 	}
 }
 
@@ -87,19 +96,40 @@ func WithDefinitionCatalog(catalog definition.Catalog) LoopOption {
 	}
 }
 
+func WithHistoryStore(store memory.HistoryStore) LoopOption {
+	return func(loop *Loop) {
+		if store == nil {
+			return
+		}
+		loop.historyStore = store
+		loop.summaryStore, _ = store.(memory.SummaryStore)
+	}
+}
+
+func WithSummaryGenerator(generator model.TextGenerator) LoopOption {
+	return func(loop *Loop) { loop.summaryGenerator = generator }
+}
+
 type ConnectionContext struct {
 	GameID    string
 	SessionID string
 }
 
-// NewLoop 创建 Agent Loop。
-// Phase4 在 Loop 中接入 MemoryStore、MemoryProjector、ContextBuilder 和 Renderer，
-// 让一次 Agent Turn 可以读取历史 Memory 并在成功 Action 后更新 Memory。
+// NewLoop composes persistent terminal history with bounded, pure context projection.
 func NewLoop(modelProvider model.Provider, recorder trace.Recorder, config Config, options ...LoopOption) *Loop {
 	if recorder == nil {
 		recorder = trace.NoopRecorder{}
 	}
 	config = config.WithDefaults()
+	if provider, ok := modelProvider.(model.WindowProvider); ok {
+		window := provider.ModelWindow()
+		if err := window.Validate(); err != nil {
+			panic(err)
+		}
+		if window.ContextTokens > 0 {
+			config.MaxRequestTokens = min(config.MaxRequestTokens, window.InputTokens())
+		}
+	}
 	if err := config.Validate(); err != nil {
 		panic(err)
 	}
@@ -131,6 +161,16 @@ func NewLoop(modelProvider model.Provider, recorder trace.Recorder, config Confi
 			MaxToolResultOutputArrayItems: config.MaxToolResultOutputArrayItems,
 		}),
 		contextRenderer: agentcontext.NewRenderer(),
+	}
+	store := memory.NewSQLiteHistoryStore(memory.SQLiteStoreOptions{
+		Root: config.MemoryStore.Root, BusyTimeout: config.MemoryStore.BusyTimeout,
+		MaxRecordsPerEntity:           config.MemoryStore.MaxRecordsPerEntity,
+		MaxProjectionBatchesPerEntity: config.MemoryStore.MaxProjectionBatchesPerEntity,
+	}, config.History, memory.WithHistoryIndexLimits(config.HistoryIndex))
+	loop.historyStore, loop.summaryStore = store, store
+	loop.summaryGenerator, _ = modelProvider.(model.TextGenerator)
+	if provider, ok := modelProvider.(model.WindowProvider); ok && provider.ModelWindow().ContextTokens == 0 {
+		loop.summaryGenerator = nil
 	}
 	for _, option := range options {
 		if option != nil {
@@ -196,6 +236,7 @@ func (l *Loop) HandleEvent(
 	defer cancelTurn()
 
 	turnID := idgen.New("turn")
+	ctx = context.WithValue(ctx, turnHistoryContextKey{}, &terminalHistoryState{collector: newTurnHistoryCollector(key, turnID, event)})
 	// 为本次有效 GameEvent 创建 TurnTracer。
 	turnTracer := trace.NewTurnTracerWithID(l.recorder, trace.TurnContext{
 		GameID:    key.GameID,
@@ -228,11 +269,26 @@ func (l *Loop) HandleEvent(
 		l.failTurn(ctx, env, turnTracer, key, event, turnID, "observation", reason, err, trace.EventData{})
 		return err
 	}
+	turnHistoryFromContext(ctx).collector.Observe(0, obs)
 	turnTracer.Emit(trace.EventObservationReceived, trace.EventData{})
 
 	descriptor := definition.NewAgentInstanceDescriptor(key, target)
 	recentMemories := l.loadRecentMemories(ctx, turnTracer, key)
-	return l.runBoundedSteps(ctx, env, key, target, descriptor, event, obs, recentMemories, toolView, toolAdmission.Report, turnID, turnTracer)
+	var history *agentcontext.HistoryInput
+	var retrieval *agentcontext.RetrievedHistoryInput
+	if l.historyStore != nil && l.config.MemoryEnabledValue() {
+		history = &agentcontext.HistoryInput{}
+		_, report, buildErr := l.buildModelRequest(key, target, descriptor, event, obs, nil, toolView, toolAdmission.Report, nil, history)
+		if buildErr == nil {
+			available := max(0, min(l.config.MaxRequestTokens-report.FinalRequestSize.TotalEstimatedTokens-l.config.MaxTranscriptTokens,
+				l.config.MaxUserMessageTokens-report.FinalRequestSize.UserMessageEstimatedTokens))
+			prepared := l.prepareHistory(ctx, turnTracer, key, memory.CurrentGameTime(event, obs), available)
+			defer prepared.Release()
+			history = prepared.Input
+			retrieval = l.prepareRetrieval(ctx, turnTracer, prepared.Snapshot, memory.CurrentGameTime(event, obs), event)
+		}
+	}
+	return l.runBoundedSteps(ctx, env, key, target, descriptor, event, obs, recentMemories, toolView, toolAdmission.Report, turnID, turnTracer, history, retrieval)
 }
 
 func (l *Loop) runBoundedSteps(
@@ -248,6 +304,8 @@ func (l *Loop) runBoundedSteps(
 	toolAdmissionReport tool.ToolAdmissionReport,
 	turnID string,
 	turnTracer trace.TurnTracer,
+	history *agentcontext.HistoryInput,
+	retrieval *agentcontext.RetrievedHistoryInput,
 ) error {
 	transcript := make([]model.Message, 0)
 	successfulActions := make([]completedToolAction, 0)
@@ -260,7 +318,11 @@ func (l *Loop) runBoundedSteps(
 			Fields: trace.Fields{"step_index": stepIndex},
 		})
 
-		req, buildReport, err := l.buildModelRequest(key, target, descriptor, event, obs, recentMemories, toolView, toolAdmissionReport, transcript)
+		if err := ctx.Err(); err != nil {
+			l.failTurn(ctx, env, turnTracer, key, event, turnID, "turn", "turn_cancelled", err, trace.EventData{})
+			return err
+		}
+		req, buildReport, err := l.buildModelRequestWithRetrieval(key, target, descriptor, event, obs, recentMemories, toolView, toolAdmissionReport, transcript, history, retrieval)
 		if err != nil {
 			turnTracer.Emit(trace.EventContextRequestBuildFailed, trace.EventData{
 				Fields: contextBuildTraceFields(stepIndex, buildReport),
@@ -287,6 +349,10 @@ func (l *Loop) runBoundedSteps(
 				"request_total_estimated_tokens": buildReport.FinalRequestSize.TotalEstimatedTokens,
 			},
 		})
+		if err := ctx.Err(); err != nil {
+			l.failTurn(ctx, env, turnTracer, key, event, turnID, "turn", "turn_cancelled", err, trace.EventData{Fields: trace.Fields{"step_index": stepIndex}})
+			return err
+		}
 		modelCtx, cancelLLM := context.WithTimeout(ctx, l.config.LLMTimeout)
 		rep, err := l.model.Generate(modelCtx, req)
 		cancelLLM()
@@ -309,6 +375,7 @@ func (l *Loop) runBoundedSteps(
 		})
 
 		decision := rep.Decision
+		turnHistoryFromContext(ctx).collector.Decision(stepIndex, decision)
 		if err := validateControlDirective(decision.Control); err != nil {
 			turnTracer.Emit(trace.EventAgentStepFailed, trace.EventData{
 				Fields: trace.Fields{"step_index": stepIndex, "reason": "invalid_model_response"},
@@ -409,6 +476,12 @@ func (l *Loop) runBoundedSteps(
 			},
 		})
 		if hasPriorStepDuplicateID {
+			executions := make([]memory.HistoryExecution, len(calls))
+			for i, call := range calls {
+				result := idValidationResults[i]
+				executions[i] = memory.HistoryExecution{Call: call, RuntimeResult: &result}
+			}
+			turnHistoryFromContext(ctx).collector.Executions(stepIndex, executions)
 			transcript = append(transcript, model.Message{
 				Role:        model.RoleTool,
 				ToolResults: copyToolResultsForTranscript(idValidationResults),
@@ -427,6 +500,7 @@ func (l *Loop) runBoundedSteps(
 		}
 		scheduler := l.newToolBatchScheduler(turnTracer, stepIndex, event, turnID, toolView, asyncActionsStarted >= l.config.MaxAsyncActionsPerTurn)
 		outcome, err := scheduler.Run(ctx, env, key.WorldID, key.EntityID, calls)
+		turnHistoryFromContext(ctx).collector.Executions(stepIndex, outcome.Executions)
 		if err != nil {
 			successfulActions = append(successfulActions, outcome.SuccessfulActions...)
 			l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindPriorSuccessfulActions)
@@ -472,6 +546,7 @@ func (l *Loop) runBoundedSteps(
 				return err
 			}
 			obs = resumedObservation
+			turnHistoryFromContext(ctx).collector.Observe(stepIndex, obs)
 			turnTracer.Emit(trace.EventObservationReceived, trace.EventData{
 				Fields: trace.Fields{"step_index": stepIndex, "reason": "async_resume"},
 			})
@@ -535,6 +610,7 @@ func (l *Loop) completeTurn(
 	turnID string,
 	data trace.EventData,
 ) {
+	l.persistTerminalHistory(ctx, turnTracer, "completed", "", "", nil)
 	l.sendTurnCompletion(ctx, env, turnTracer, key, event, turnID, protocolv1alpha2.TurnCompletionStatus_TURN_COMPLETION_STATUS_COMPLETED, nil)
 	turnTracer.Complete(data)
 }
@@ -551,6 +627,11 @@ func (l *Loop) failTurn(
 	err error,
 	data trace.EventData,
 ) {
+	status := "failed"
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
+		status = "cancelled"
+	}
+	l.persistTerminalHistory(ctx, turnTracer, status, stage, reason, err)
 	l.sendTurnCompletion(ctx, env, turnTracer, key, event, turnID, protocolv1alpha2.TurnCompletionStatus_TURN_COMPLETION_STATUS_FAILED, turnCompletionError(reason, err))
 	turnTracer.Fail(stage, reason, err, data)
 }
@@ -612,6 +693,27 @@ func (l *Loop) buildModelRequest(
 	toolView tool.TurnToolView,
 	toolAdmissionReport tool.ToolAdmissionReport,
 	transcript []model.Message,
+	histories ...*agentcontext.HistoryInput,
+) (model.Request, agentcontext.ContextBuildReport, error) {
+	var history *agentcontext.HistoryInput
+	if len(histories) > 0 {
+		history = histories[0]
+	}
+	return l.buildModelRequestWithRetrieval(key, target, descriptor, event, obs, recentMemories, toolView, toolAdmissionReport, transcript, history, nil)
+}
+
+func (l *Loop) buildModelRequestWithRetrieval(
+	key session.AgentSessionKey,
+	target *protocolv1alpha2.EntityRef,
+	descriptor definition.AgentInstanceDescriptor,
+	event *protocolv1alpha2.GameEvent,
+	obs *protocolv1alpha2.Observation,
+	recentMemories []memory.Record,
+	toolView tool.TurnToolView,
+	toolAdmissionReport tool.ToolAdmissionReport,
+	transcript []model.Message,
+	history *agentcontext.HistoryInput,
+	retrieval *agentcontext.RetrievedHistoryInput,
 ) (model.Request, agentcontext.ContextBuildReport, error) {
 	gameDefinition, agentDefinition := l.resolveDefinitions(key, descriptor)
 	toolAdmissionSummary := agentcontext.ToolAdmissionSummaryFromReport(toolAdmissionReport)
@@ -625,6 +727,8 @@ func (l *Loop) buildModelRequest(
 		Event:           event,
 		Observation:     obs,
 		RecentMemories:  recentMemories,
+		History:         history,
+		Retrieval:       retrieval,
 		TurnToolView:    toolView,
 		Transcript:      transcript,
 	})
@@ -842,6 +946,16 @@ func contextBuildTraceFields(stepIndex int, report agentcontext.ContextBuildRepo
 		"reason_codes":                          append([]string(nil), report.ReasonCodes...),
 		"recent_memory_retained":                report.RecentMemory.RetainedCount,
 		"recent_memory_dropped":                 report.RecentMemory.DroppedCount,
+		"history_sources_retained":              report.History.RetainedSources,
+		"history_sources_dropped":               report.History.DroppedSources,
+		"history_summary_included":              report.History.SummaryIncluded,
+		"history_estimated_tokens":              report.History.EstimatedTokens,
+		"history_diagnostics":                   append([]string(nil), report.History.Diagnostics...),
+		"retrieved_history_retained_snippets":   report.RetrievedHistory.RetainedSnippets,
+		"retrieved_history_retained_matches":    report.RetrievedHistory.RetainedMatches,
+		"retrieved_history_dropped_matches":     report.RetrievedHistory.DroppedMatches,
+		"retrieved_history_estimated_tokens":    report.RetrievedHistory.EstimatedTokens,
+		"retrieved_history_diagnostics":         append([]string(nil), report.RetrievedHistory.Diagnostics...),
 		"transcript_retained":                   report.Transcript.RetainedCount,
 		"transcript_dropped":                    report.Transcript.DroppedCount,
 		"accepted_tool_count":                   report.ToolAdmission.AcceptedToolCount,
@@ -945,6 +1059,9 @@ func (l *Loop) loadRecentMemories(
 	turnTracer trace.TurnTracer,
 	key session.AgentSessionKey,
 ) []memory.Record {
+	if l.historyStore != nil && l.config.MemoryEnabledValue() {
+		return nil
+	}
 	if !l.config.MemoryEnabledValue() || l.memoryStore == nil {
 		turnTracer.Emit(trace.EventContextLoaded, trace.EventData{
 			Fields: trace.Fields{
@@ -989,7 +1106,7 @@ func (l *Loop) updateMemoryForCompletedTurn(
 	successfulActions []completedToolAction,
 	projectionKind memory.ProjectionKind,
 ) {
-	if !l.config.MemoryEnabledValue() || l.memoryStore == nil || l.memoryProjector == nil {
+	if l.historyStore != nil || !l.config.MemoryEnabledValue() || l.memoryStore == nil || l.memoryProjector == nil {
 		return
 	}
 

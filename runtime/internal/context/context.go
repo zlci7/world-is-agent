@@ -20,15 +20,17 @@ var (
 )
 
 const (
-	ReasonDefinitionFallback         = "definition_fallback"
-	ReasonMemoryBudgetExceeded       = "memory_budget_exceeded"
-	ReasonTranscriptBudgetExceeded   = "transcript_budget_exceeded"
-	ReasonEventBudgetExceeded        = "current_event_budget_exceeded"
-	ReasonObservationBudgetExceeded  = "current_observation_budget_exceeded"
-	ReasonContextFactsBudgetExceeded = "context_facts_budget_exceeded"
-	ReasonRequiredContextOverBudget  = "required_context_over_budget"
-	ReasonRequiredSectionOverBudget  = "required_section_over_budget"
-	ReasonDefinitionBudgetExceeded   = "definition_budget_exceeded"
+	ReasonDefinitionFallback             = "definition_fallback"
+	ReasonMemoryBudgetExceeded           = "memory_budget_exceeded"
+	ReasonTranscriptBudgetExceeded       = "transcript_budget_exceeded"
+	ReasonEventBudgetExceeded            = "current_event_budget_exceeded"
+	ReasonObservationBudgetExceeded      = "current_observation_budget_exceeded"
+	ReasonContextFactsBudgetExceeded     = "context_facts_budget_exceeded"
+	ReasonRequiredContextOverBudget      = "required_context_over_budget"
+	ReasonRequiredSectionOverBudget      = "required_section_over_budget"
+	ReasonDefinitionBudgetExceeded       = "definition_budget_exceeded"
+	ReasonHistoryBudgetExceeded          = "history_budget_exceeded"
+	ReasonRetrievedHistoryBudgetExceeded = "retrieval_budget_exceeded"
 )
 
 const truncatedMarker = "_truncated"
@@ -74,6 +76,8 @@ type ContextBuildReport struct {
 	GameDefinitionFallback  bool
 	AgentDefinitionFallback bool
 	RecentMemory            RetentionReport
+	History                 HistoryReport
+	RetrievedHistory        RetrievedHistoryReport
 	Transcript              RetentionReport
 	ToolAdmission           ToolAdmissionSummary
 	FinalRequestSize        RequestTokenSummary
@@ -192,7 +196,11 @@ type ContextProjection struct {
 	CurrentEventContextFacts []ContextFactProjection
 	CurrentObservation       ObservationProjection
 
-	RecentMemory []MemoryProjection
+	RecentMemory     []MemoryProjection
+	History          HistoryProjection
+	RetrievedHistory RetrievedHistoryProjection
+	historyEnabled   bool
+	retrievalEnabled bool
 
 	Tools []model.ToolDefinition
 
@@ -246,6 +254,8 @@ type BuildInput struct {
 	RuntimePolicy string
 
 	RecentMemories []memory.Record
+	History        *HistoryInput
+	Retrieval      *RetrievedHistoryInput
 
 	Event       *protocolv1alpha2.GameEvent
 	Observation *protocolv1alpha2.Observation
@@ -265,13 +275,16 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 	}
 
 	bounds := projectionBoundsFromEngineConfig(e.config)
-	recentMemory, recentMemoryReport := projectRecentMemories(
-		input.RecentMemories,
-		e.config.MaxRecentMemoryRecords,
-		e.config.MaxRecentMemoryTokens,
-		currentGameTimeFromEventObservation(input.Event, input.Observation),
-		bounds,
-	)
+	currentTime := currentGameTimeFromEventObservation(input.Event, input.Observation)
+	var recentMemory []MemoryProjection
+	var recentMemoryReport RetentionReport
+	var history HistoryProjection
+	var historyReport HistoryReport
+	if input.History == nil {
+		recentMemory, recentMemoryReport = projectRecentMemories(input.RecentMemories, e.config.MaxRecentMemoryRecords, e.config.MaxRecentMemoryTokens, currentTime, bounds)
+	} else {
+		history, historyReport = projectHistory(*input.History, input.SessionKey, currentTime)
+	}
 	transcript, transcriptReport, err := projectCurrentTurnTranscript(input.Transcript, bounds, e.config.MaxTranscriptTokens)
 	if err != nil {
 		report := ContextBuildReport{
@@ -296,17 +309,43 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 		CurrentEventContextFacts: projectCurrentEventContextFacts(input.Event.GetContextFacts()),
 		CurrentObservation:       projectCurrentObservation(input.Observation),
 		RecentMemory:             recentMemory,
+		History:                  history,
+		historyEnabled:           input.History != nil,
+		retrievalEnabled:         input.Retrieval != nil,
 		Tools:                    input.TurnToolView.Available(),
 		CurrentTurnTranscript:    transcript,
 	}
-	report := newContextBuildReport(projection, input, e.config, recentMemoryReport, transcriptReport)
-	projection, report, err = applyProjectionBudgets(projection, e.config, report)
-	if err != nil {
-		return BuildResult{
-			Projection: projection,
-			Report:     report,
-		}, err
+	if input.History != nil {
+		projection.Instruction = historyAuthorityInstruction
 	}
+	report := newContextBuildReport(projection, input, e.config, recentMemoryReport, transcriptReport)
+	report.History = historyReport
+	projection, report, err = applyProjectionBudgets(projection, e.config, report)
+	if input.Retrieval != nil {
+		// Select against the actual final history and spend only remaining request
+		// capacity, so retrieval cannot displace current context or causal groups.
+		if err == nil {
+			projection.RetrievedHistory, report.RetrievedHistory, err = projectRetrievedHistory(*input.Retrieval, input.SessionKey, currentTime, projection.History, func(retrieved RetrievedHistoryProjection) (bool, error) {
+				candidate := projection
+				candidate.RetrievedHistory = retrieved
+				return projectionFitsRequestBudget(candidate, e.config)
+			})
+		} else {
+			report.RetrievedHistory = RetrievedHistoryReport{DroppedMatches: len(input.Retrieval.Matches), Diagnostics: append([]string(nil), input.Retrieval.Diagnostics...)}
+			if errors.Is(err, ErrBudgetExceeded) {
+				report.RetrievedHistory.diagnose(ReasonRetrievedHistoryBudgetExceeded)
+			}
+		}
+		refreshRetrievedHistoryReport(projection, &report)
+	}
+	if err != nil {
+		return BuildResult{Projection: projection, Report: report}, err
+	}
+	size, err := measureProjectionRequest(projection)
+	if err != nil {
+		return BuildResult{Projection: projection, Report: report}, err
+	}
+	report = report.WithFinalRequestSize(size)
 	return BuildResult{
 		Projection: projection,
 		Report:     report,
@@ -335,9 +374,9 @@ func newContextBuildReport(projection ContextProjection, input BuildInput, budge
 }
 
 func sectionReportsForProjection(projection ContextProjection) SectionReports {
-	return SectionReports{
+	sections := SectionReports{
 		{Name: "runtime_policy", Included: projection.RuntimePolicy != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.RuntimePolicy)},
-		{Name: "instruction", Included: projection.Instruction != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.Instruction)},
+		{Name: "instruction", Included: renderAuthorityInstruction(projection) != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(renderAuthorityInstruction(projection))},
 		{Name: "agent_descriptor", Included: true, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.AgentDescriptor)},
 		{Name: "game_definition", Included: projection.GameDefinition != nil, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.GameDefinition)},
 		{Name: "agent_definition", Included: projection.AgentDefinition != nil, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.AgentDefinition)},
@@ -348,10 +387,23 @@ func sectionReportsForProjection(projection ContextProjection) SectionReports {
 		{Name: "tools", Included: len(projection.Tools) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.Tools)},
 		{Name: "current_turn_transcript", Included: len(projection.CurrentTurnTranscript) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.CurrentTurnTranscript)},
 	}
+	if projection.historyEnabled || projection.History.SummaryText != "" || len(projection.History.Sources) > 0 {
+		sections = append(sections, SectionReport{Name: "history", Included: projection.History.SummaryText != "" || len(projection.History.Sources) > 0, ProjectionEstimatedTokens: estimateHistoryProjection(projection.History)})
+	}
+	if projection.retrievalEnabled || len(projection.RetrievedHistory.Snippets) > 0 {
+		sections = append(sections, SectionReport{Name: "retrieved_history", Included: len(projection.RetrievedHistory.Snippets) > 0, ProjectionEstimatedTokens: estimateRetrievedHistoryProjection(projection.RetrievedHistory)})
+	}
+	return sections
 }
 
 func applyProjectionBudgets(projection ContextProjection, budget BudgetConfig, report ContextBuildReport) (ContextProjection, ContextBuildReport, error) {
 	sectionCropped := map[string]string{}
+	for _, diagnostic := range report.History.Diagnostics {
+		if diagnostic == ReasonHistoryBudgetExceeded {
+			report.addReason(ReasonHistoryBudgetExceeded)
+			sectionCropped["history"] = ReasonHistoryBudgetExceeded
+		}
+	}
 	if report.RecentMemory.DroppedCount > 0 {
 		sectionCropped["recent_memory"] = ReasonMemoryBudgetExceeded
 	}
@@ -465,6 +517,12 @@ func enforceGlobalRequestBudget(projection ContextProjection, budget BudgetConfi
 			return projection, report, nil
 		}
 		switch {
+		case dropRetrievedHistoryDisplay(&projection, &report):
+			report.addReason(ReasonRetrievedHistoryBudgetExceeded)
+			sectionCropped["retrieved_history"] = ReasonRetrievedHistoryBudgetExceeded
+		case dropOldestHistoryDisplay(&projection, &report):
+			report.addReason(ReasonHistoryBudgetExceeded)
+			sectionCropped["history"] = ReasonHistoryBudgetExceeded
 		case dropOldestTranscriptGroup(&projection, &report):
 			report.addReason(ReasonTranscriptBudgetExceeded)
 			sectionCropped["current_turn_transcript"] = ReasonTranscriptBudgetExceeded

@@ -11,6 +11,7 @@ import (
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/agent"
+	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/session"
 	"gameagent/runtime/internal/tool"
 )
@@ -19,10 +20,18 @@ import (
 type Server struct {
 	protocolv1alpha2.UnimplementedGameAgentGatewayServer
 
-	agentLoop *agent.Loop
+	agentLoop eventHandler
 }
 
-func NewServer(agentLoop *agent.Loop) *Server {
+type eventHandler interface {
+	HandleEvent(context.Context, agent.Environment, agent.ConnectionContext, session.AgentSessionKey, *protocolv1alpha2.EntityRef, *tool.EnvironmentToolCatalog, *protocolv1alpha2.GameEvent) error
+}
+
+type historyMaintainer interface {
+	MaintainHistory(context.Context, session.AgentSessionKey, *memory.GameTimeSnapshot)
+}
+
+func NewServer(agentLoop eventHandler) *Server {
 	return &Server{
 		agentLoop: agentLoop,
 	}
@@ -100,14 +109,16 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 	if err != nil {
 		return err
 	}
-	defer laneStore.Close()
+	defer func() {
+		env.close()
+		laneStore.CloseAndWait()
+	}()
 	seenEventIDs := make(map[string]struct{})
 
 	// recvLoop 只负责接收和分发 AdapterMessage，避免被单次 AgentRun 阻塞。
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
-			env.failAllPending(err)
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
@@ -236,8 +247,27 @@ func (s *Server) dispatchGameEvent(
 		ID:       event.EventId,
 		Admitted: admitted,
 		Run: func(taskCtx context.Context) {
-			if err := s.agentLoop.HandleEvent(taskCtx, env, conn, key, resolved.Target, catalog, event); err != nil {
+			maintenance, canMaintain := s.agentLoop.(historyMaintainer)
+			var turnEnv agent.Environment = env
+			timedEnv := &historyMaintenanceEnvironment{Environment: env, event: event, currentTime: memory.CurrentGameTime(event, nil)}
+			if canMaintain {
+				turnEnv = timedEnv
+			}
+			if err := s.agentLoop.HandleEvent(taskCtx, turnEnv, conn, key, resolved.Target, catalog, event); err != nil {
 				fmt.Printf("agent loop failed: %s\n", logSafeError(err))
+			}
+			if canMaintain {
+				// HandleEvent has completed terminal persistence and released its snapshot.
+				scheduledAt := time.Now()
+				if err := lane.EnqueueMaintenance(session.Task{
+					ID: "history-maintenance:" + event.EventId,
+					Run: func(maintenanceCtx context.Context) {
+						log.Printf("history maintenance owner=%s stage=queue wait_ms=%d", key.DiagnosticID(), time.Since(scheduledAt).Milliseconds())
+						maintenance.MaintainHistory(maintenanceCtx, key, timedEnv.currentTime)
+					},
+				}); err != nil && !errors.Is(err, session.ErrLaneClosed) {
+					log.Printf("schedule history maintenance owner=%s: %s", key.DiagnosticID(), logSafeError(err))
+				}
 			}
 		},
 		Abort: func(reason session.AbortReason) {
@@ -284,6 +314,22 @@ func (s *Server) dispatchGameEvent(
 	seenEventIDs[event.EventId] = struct{}{}
 	close(admitted)
 	return nil
+}
+
+type historyMaintenanceEnvironment struct {
+	agent.Environment
+	event       *protocolv1alpha2.GameEvent
+	currentTime *memory.GameTimeSnapshot
+	observed    bool
+}
+
+func (e *historyMaintenanceEnvironment) Observe(ctx context.Context, worldID, entityID string) (*protocolv1alpha2.Observation, error) {
+	observation, err := e.Environment.Observe(ctx, worldID, entityID)
+	if err == nil && !e.observed && observation.GetWorldId() == worldID && observation.GetEntityId() == entityID {
+		e.observed = true
+		e.currentTime = memory.CurrentGameTime(e.event, observation)
+	}
+	return observation, err
 }
 
 func logCapabilityBootstrapDiagnostics(sessionID string, diagnostics tool.BootstrapDiagnostics) {

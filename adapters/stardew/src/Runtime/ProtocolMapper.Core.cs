@@ -388,19 +388,17 @@ public static partial class ProtocolMapper
             throw new ArgumentException("missing required present_dialogue argument: text");
 
         string text = RequireBoundedText(textValue.StringValue, "present_dialogue text", MaxDialogueTextChars);
-        string[] replyOptions = Array.Empty<string>();
-        if (request.Arguments.Fields.TryGetValue("reply_options", out Value? optionsValue))
-        {
-            if (optionsValue.KindCase != Value.KindOneofCase.ListValue)
-                throw new ArgumentException("present_dialogue reply_options must be a list");
+        if (!request.Arguments.Fields.TryGetValue("reply_options", out Value? optionsValue))
+            throw new ArgumentException("missing required present_dialogue argument: reply_options");
+        if (optionsValue.KindCase != Value.KindOneofCase.ListValue)
+            throw new ArgumentException("present_dialogue reply_options must be a list");
 
-            if (optionsValue.ListValue.Values.Count > MaxReplyOptions)
-                throw new ArgumentException($"present_dialogue reply_options must include {MaxReplyOptions} options or fewer");
+        if (optionsValue.ListValue.Values.Count > MaxReplyOptions)
+            throw new ArgumentException($"present_dialogue reply_options must include {MaxReplyOptions} options or fewer");
 
-            replyOptions = optionsValue.ListValue.Values
-                .Select(option => RequireBoundedText(option.StringValue, "present_dialogue reply option", MaxReplyOptionChars))
-                .ToArray();
-        }
+        string[] replyOptions = optionsValue.ListValue.Values
+            .Select(option => RequireBoundedText(option.StringValue, "present_dialogue reply option", MaxReplyOptionChars))
+            .ToArray();
 
         bool allowFreeText = true;
         if (request.Arguments.Fields.TryGetValue("allow_free_text", out Value? allowFreeTextValue))
@@ -410,6 +408,10 @@ public static partial class ProtocolMapper
 
             allowFreeText = allowFreeTextValue.BoolValue;
         }
+        if (allowFreeText && replyOptions.Length != MaxReplyOptions)
+            throw new ArgumentException($"continuing present_dialogue must include exactly {MaxReplyOptions} reply options");
+        if (!allowFreeText && replyOptions.Length != 0)
+            throw new ArgumentException("ending dialogue must not include reply options");
 
         return new PresentDialogueInput(text, replyOptions, allowFreeText);
     }

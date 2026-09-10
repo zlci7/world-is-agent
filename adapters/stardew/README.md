@@ -20,9 +20,8 @@ The adapter is the first real validation adapter for WIA.
 `present_dialogue` follows Stardew's native conversation flow:
 
 - The NPC line is shown first through Stardew's native dialogue box.
-- Player reply choices appear in a bottom response menu after the player advances the NPC line.
-- The response menu shows up to four reply rows.
-- When `allow_free_text=true`, generated reply choices can appear above an inline free-text row.
+- Continuing dialogue shows exactly three generated player replies and an inline free-text row after the player advances the NPC line.
+- Ending dialogue uses `reply_options=[]` and `allow_free_text=false`, so no response menu follows the NPC line.
 - Selecting a generated option sends `player_said_to_npc` with `input_kind=option`.
 - Sending free text sends `player_said_to_npc` with `input_kind=free_text`.
 - Closing the input row exits without sending a player dialogue event.

@@ -204,7 +204,7 @@ func (f *fakeEnvironment) Observe(ctx context.Context, worldID string, entityID 
 	}, nil
 }
 
-func TestHandleEventLoadsRecentMemoryOnLaterTurn(t *testing.T) {
+func TestHandleEventLoadsHistoryOnLaterTurn(t *testing.T) {
 	registry := newSpeakRegistry()
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
@@ -236,27 +236,8 @@ func TestHandleEventLoadsRecentMemoryOnLaterTurn(t *testing.T) {
 	if len(provider.requests) != 2 {
 		t.Fatalf("provider request count = %d, want 2", len(provider.requests))
 	}
-	secondContent := provider.requests[1].Messages[0].Content
-	for _, want := range []string{
-		"[Recent Memory]",
-		"previous interaction",
-		`tool "speak" status "ACTION_STATUS_SUCCEEDED" arguments {"text":"remember this line"}`,
-		"remember this line",
-	} {
-		if !strings.Contains(secondContent, want) {
-			t.Fatalf("second request missing %q:\n%s", want, secondContent)
-		}
-	}
-	for _, unwanted := range []string{
-		"event_1",
-		"source_turn_id",
-	} {
-		if strings.Contains(secondContent, unwanted) {
-			t.Fatalf("second request should not expose storage field %q:\n%s", unwanted, secondContent)
-		}
-	}
-
-	assertTraceContains(t, recorder.events, trace.EventContextLoaded)
+	assertRequestHasCompletedHistory(t, provider.requests[1], "event_1", "remember this line")
+	assertTraceContains(t, recorder.events, "history_prepared")
 	assertTraceContains(t, recorder.events, trace.EventContextUpdated)
 }
 
@@ -283,10 +264,7 @@ func TestHandleEventDefaultSQLiteStorePersistsMemoryAcrossLoopInstances(t *testi
 	if len(secondProvider.requests) != 1 {
 		t.Fatalf("second provider request count = %d, want 1", len(secondProvider.requests))
 	}
-	secondContent := secondProvider.requests[0].Messages[0].Content
-	if !strings.Contains(secondContent, `tool "speak" status "ACTION_STATUS_SUCCEEDED" arguments {"text":"remember this line"}`) {
-		t.Fatalf("second loop request missing persisted recent memory:\n%s", secondContent)
-	}
+	assertRequestHasCompletedHistory(t, secondProvider.requests[0], "event_1", "remember this line")
 }
 
 func TestHandleEventReadsStoreCapacityBeforeFutureFilteringAndRecentLimit(t *testing.T) {
@@ -1031,7 +1009,7 @@ func TestHandleEventRendersDifferentBundledStardewDefinitions(t *testing.T) {
 	}
 }
 
-func TestHandleEventDefaultStoreRetainsAtLeastRecentMemoryLimit(t *testing.T) {
+func TestHandleEventDefaultHistoryRetainsAllSourcesWithinBudget(t *testing.T) {
 	registry := newSpeakRegistry()
 	env := &fakeEnvironment{}
 	recorder := &recordingTraceRecorder{}
@@ -1055,9 +1033,14 @@ func TestHandleEventDefaultStoreRetainsAtLeastRecentMemoryLimit(t *testing.T) {
 	if len(provider.requests) != 26 {
 		t.Fatalf("provider request count = %d, want 26", len(provider.requests))
 	}
-	lastContent := provider.requests[25].Messages[0].Content
-	if got := strings.Count(lastContent, "remember this line"); got != 25 {
-		t.Fatalf("default memory store should retain recent_memory_limit records; rendered memory count = %d, want 25:\n%s", got, lastContent)
+	sources := requestHistorySources(t, provider.requests[25])
+	if len(sources) != 25 {
+		t.Fatalf("rendered history source count = %d, want 25", len(sources))
+	}
+	for i, source := range sources {
+		if source.Event.ID != fmt.Sprintf("event_%02d", i+1) {
+			t.Fatalf("history order lost at %d: %s", i, source.Event.ID)
+		}
 	}
 }
 
@@ -1109,10 +1092,7 @@ func TestWithMemoryStoreNilDoesNotDisableDefaultMemoryStore(t *testing.T) {
 	if len(provider.requests) != 2 {
 		t.Fatalf("provider request count = %d, want 2", len(provider.requests))
 	}
-	secondContent := provider.requests[1].Messages[0].Content
-	if !strings.Contains(secondContent, `tool "speak" status "ACTION_STATUS_SUCCEEDED" arguments {"text":"remember this line"}`) {
-		t.Fatalf("nil memory store option should keep default store; second request:\n%s", secondContent)
-	}
+	assertRequestHasCompletedHistory(t, provider.requests[1], "event_1", "remember this line")
 }
 
 func TestNewLoopPanicsOnUnsupportedMemoryStoreKind(t *testing.T) {
@@ -1790,7 +1770,7 @@ func TestHandleEventRunsOneTurnNPCInteraction(t *testing.T) {
 		trace.EventTurnStarted,
 		trace.EventObservationRequested,
 		trace.EventObservationReceived,
-		trace.EventContextLoaded,
+		"history_prepared",
 		trace.EventModelRequestStarted,
 		trace.EventModelResponseReceived,
 		trace.EventToolCallSelected,

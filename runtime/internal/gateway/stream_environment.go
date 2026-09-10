@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
@@ -12,7 +13,9 @@ import (
 type streamEnvironment struct {
 	stream protocolv1alpha2.GameAgentGateway_ConnectServer
 
-	sendMu sync.Mutex
+	sendSlot  chan struct{}
+	closed    chan struct{}
+	closeOnce sync.Once
 
 	pendingMu           sync.Mutex
 	pendingObservations map[string]pendingObservation
@@ -48,6 +51,8 @@ type actionResult struct {
 func newStreamEnvironment(stream protocolv1alpha2.GameAgentGateway_ConnectServer) *streamEnvironment {
 	return &streamEnvironment{
 		stream:              stream,
+		sendSlot:            make(chan struct{}, 1),
+		closed:              make(chan struct{}),
 		pendingObservations: make(map[string]pendingObservation),
 		pendingActions:      make(map[string]*pendingAction),
 	}
@@ -291,10 +296,35 @@ func (e *streamEnvironment) sendActionRequest(req *protocolv1alpha2.ActionReques
 }
 
 func (e *streamEnvironment) send(msg *protocolv1alpha2.RuntimeMessage) error {
-	e.sendMu.Lock()
-	defer e.sendMu.Unlock()
+	select {
+	case <-e.closed:
+		return io.EOF
+	case e.sendSlot <- struct{}{}:
+	}
+	select {
+	case <-e.closed:
+		<-e.sendSlot
+		return io.EOF
+	default:
+	}
 
-	return e.stream.Send(msg)
+	// At most one transport send is active. Shutdown releases its caller so the
+	// handler can finish task persistence; returning the handler releases gRPC I/O.
+	result := make(chan error, 1)
+	go func() {
+		defer func() { <-e.sendSlot }()
+		result <- e.stream.Send(msg)
+	}()
+	select {
+	case <-e.closed:
+		return io.EOF
+	case err := <-result:
+		return err
+	}
+}
+
+func (e *streamEnvironment) close() {
+	e.closeOnce.Do(func() { close(e.closed) })
 }
 
 func (e *streamEnvironment) failAllPending(err error) {

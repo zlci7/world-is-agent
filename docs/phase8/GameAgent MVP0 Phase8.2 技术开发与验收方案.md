@@ -1,13 +1,13 @@
 # GameAgent MVP0 Phase8.2 技术开发与验收方案
 
-> **Status:** Implementation Plan Draft
+> **Status:** Accepted (2026-09-09，负责人授权自动验收；本阶段免游戏内实机验收)
 > **Date:** 2026-09-08
 > **Phase:** Phase8.2 Persistent Session History & Context Compaction
 > **Parent Plan:** [Phase8 总方案](./GameAgent%20MVP0%20Phase8%20技术开发与验收方案.md)
 > **Previous Stage:** [Phase8.1 SQLite Recent Memory](./GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md)，Accepted
 > **Next Stage:** [Phase8.3 History Retrieval & Retention](./GameAgent%20MVP0%20Phase8.3%20技术开发与验收方案.md)
 > **Architecture:** [Memory 架构](../summary/Memory/Memory架构设计.md)
-> **Code Inspection Baseline:** `main @ fe0c2d6` 与 2026-09-08 工作区中的 Phase8.1 修订
+> **Code Inspection Baseline:** `006bf845e334`
 > **Coding Gate:** 本方案完成技术评审，并记录进入开发时的代码基线
 
 ## 1. 目标与边界
@@ -16,7 +16,7 @@ Runtime 按 `game_id + world_id + entity_id` 保存完整的约定终态交互�
 
 本阶段交付终态 History 原子追加、8.1 数据迁移、固定历史快照、时间可见性、token 预算、同步摘要生成和检查点恢复。
 
-本阶段不包含原文自动清理、窗口外检索、Semantic 认知提取与更正、模型主动 Memory Tool、向量检索、Adapter/proto 修改、逐步骤落盘、未完成 Turn 恢复、动作重放和完整存档分支管理。8.3 独立开发和验收。
+本阶段不包含原文自动清理、窗口外检索、Semantic 认知提取与更正、模型主动 Memory Tool、向量检索、Adapter/proto 修改、逐步骤落盘、未完成 Turn 恢复、动作重放和完整存档分支管理。8.2 技术验收通过后进入 8.3，两个阶段最终由项目负责人分别确认 Accepted。
 
 ## 2. 当前代码事实
 
@@ -166,7 +166,7 @@ SQLite 与游戏存档独立保存。时间追上后，已放弃分支的经历�
 | `compaction_timeout_ms` | 10000 | 单次摘要 deadline，同时受 Turn 剩余时间限制 |
 | `compaction_retry_cooldown_turns` | 3 | 失败后至少经过三个后续 Turn 再重试 |
 
-历史读取、单批原文安全容量和生成输入都必须有独立有界限制。开发前以最大合法事件与动作结果 fixture 验证这些限制，并在配置与验收记录中固定；不得用 Recent 条数代替字节或 token 限制。
+新终态批次原文上限为 8 MiB，迁移完整保留已有原文。历史读取每页最多 64 条、8 MiB，每 Turn 最多扫描 512 条、32 MiB，读取截止 1000ms；终态写入截止 5000ms。摘要覆盖每 Turn 最多核对 16384 个来源、检查 64 个检查点，未完成校验的摘要不注入。完整摘要请求输入最多 32768 estimated tokens，响应体最多 1 MiB。各项均可配置，并以低于、等于和超过限制的 fixture 验证；不得用 Recent 条数代替字节或 token 限制。
 
 预算统一使用现有估算器。历史可用空间为现有请求及承载消息预算中，扣除当前必需上下文、工具、当前 Turn 预留后可分配的部分。摘要生成请求同样执行输入硬上限；模型实际窗口与输出预留由所选 Provider 配置验证，不从 `65536` 推断。
 
@@ -252,4 +252,4 @@ git diff --check
 
 进入编码前核对来源完整性、迁移、实际 Provider 文本能力、预算与失败边界，冻结测试 fixture 和代码基线。方案评审通过只表示允许编码。
 
-阶段标记 Accepted 需要四个里程碑完成、约定自动化通过、实现复审问题收敛、真实模型与真实进程重启证据齐全，并由项目负责人确认。本文当前为设计草稿，不构成实现验收记录。
+阶段技术验收需要四个里程碑完成、约定自动化通过、实现复审问题收敛、真实模型与真实进程重启证据齐全。技术验收通过后可进入 8.3；阶段 Accepted 由项目负责人最终确认。方案批准不构成实现验收记录。

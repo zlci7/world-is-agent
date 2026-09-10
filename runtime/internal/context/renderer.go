@@ -98,12 +98,14 @@ func renderToolResults(results []model.ToolResult) string {
 }
 
 // renderUserMessage 渲染本轮模型输入的 user message。
-// 它把 Recent Memory、Current Event 和 Current Observation 放进同一个可读上下文块。
+// 它把历史、Current Event 和 Current Observation 放进同一个可读上下文块。
 func (r Renderer) renderUserMessage(projection ContextProjection) string {
-	return fmt.Sprintf(`[Recent Memory]
-%s
-
-[Game Definition]
+	history := fmt.Sprintf("[Recent Memory]\n%s\n\n", renderRecentMemoryProjection(projection.RecentMemory))
+	if projection.historyEnabled || projection.History.SummaryText != "" || len(projection.History.Sources) > 0 {
+		history = RenderHistoryProjection(projection.History)
+	}
+	history += RenderRetrievedHistoryProjection(projection.RetrievedHistory)
+	return history + fmt.Sprintf(`[Game Definition]
 %s
 
 [Agent Definition]
@@ -124,15 +126,22 @@ func (r Renderer) renderUserMessage(projection ContextProjection) string {
 [Instruction]
 %s
 `,
-		renderRecentMemoryProjection(projection.RecentMemory),
 		renderGameDefinition(projection.GameDefinition),
 		renderAgentDefinition(projection.AgentDefinition),
 		renderAgentDescriptor(projection.AgentDescriptor),
 		renderCurrentEvent(projection.CurrentEvent),
 		renderCurrentEventContextFacts(projection.CurrentEventContextFacts),
 		renderCurrentObservation(projection.CurrentObservation),
-		projection.Instruction,
+		renderAuthorityInstruction(projection),
 	)
+}
+
+func renderAuthorityInstruction(projection ContextProjection) string {
+	instruction := projection.Instruction
+	if len(projection.RetrievedHistory.Snippets) > 0 {
+		instruction += "\n\n" + retrievedHistoryAuthorityInstruction
+	}
+	return instruction
 }
 
 func renderGameDefinition(game *definition.GameDefinition) string {

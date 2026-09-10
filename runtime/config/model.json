@@ -1,6 +1,8 @@
 {
   "provider": "deepseek",
   "model": "deepseek-v4-flash",
+  "context_window_tokens": 131072,
+  "max_output_tokens": 12800,
   "api_key": "env:DEEPSEEK_API_KEY",
   "base_url": "https://api.deepseek.com"
 }

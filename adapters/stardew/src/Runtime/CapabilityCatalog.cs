@@ -9,7 +9,7 @@ public static class CapabilityCatalog
         "{\"type\":\"object\",\"properties\":{\"emote\":{\"type\":\"string\",\"enum\":[\"happy\",\"sad\",\"surprised\",\"neutral\"]}},\"required\":[\"emote\"],\"additionalProperties\":false}";
 
     private const string PresentDialogueInputSchemaJson =
-        "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"maxLength\":240},\"reply_options\":{\"type\":\"array\",\"maxItems\":3,\"items\":{\"type\":\"string\",\"maxLength\":80}},\"allow_free_text\":{\"type\":\"boolean\",\"default\":true}},\"required\":[\"text\"],\"additionalProperties\":false}";
+        "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"maxLength\":240},\"reply_options\":{\"type\":\"array\",\"maxItems\":3,\"items\":{\"type\":\"string\",\"maxLength\":80},\"description\":\"Exactly three distinct player replies for continuing dialogue; empty only for ending dialogue.\"},\"allow_free_text\":{\"type\":\"boolean\",\"default\":true,\"description\":\"True or omitted for continuing dialogue; explicit false only for ending dialogue.\"}},\"required\":[\"text\",\"reply_options\"],\"additionalProperties\":false}";
 
     private const string FacePlayerInputSchemaJson =
         "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}";
@@ -37,7 +37,7 @@ public static class CapabilityCatalog
                 {
                     Name = "present_dialogue",
                     Version = "0.1.0",
-                    Description = "Displays NPC dialogue with optional reply options or free-text input for the player. Stardew shows up to three reply options; allow_free_text=true also shows the free-text input. It must be the only tool call in its model response. After it succeeds, the current turn ends; wait for player_said_to_npc before continuing that conversation. To end the conversation after the NPC line, pass allow_free_text=false and reply_options=[].",
+                    Description = "Displays NPC dialogue using exactly one of two forms. For continuing dialogue, provide exactly three distinct player-authored reply options and set allow_free_text=true or omit it because true is the default. For ending dialogue, provide reply_options=[] and allow_free_text=false. It must be the only tool call in its model response. After it succeeds, the current turn ends; wait for player_said_to_npc before continuing that conversation.",
                     InputSchemaJson = PresentDialogueInputSchemaJson,
                     ExecutionMode = ExecutionMode.Sync,
                     ConcurrencyMode = CapabilityConcurrencyMode.Sequential,

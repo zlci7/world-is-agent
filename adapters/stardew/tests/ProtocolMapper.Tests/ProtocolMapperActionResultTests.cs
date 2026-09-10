@@ -18,7 +18,7 @@ public sealed class ProtocolMapperActionResultTests
 
         Assert.Equal(ActionStatus.Succeeded, result.Status);
         Assert.Equal("conv_1", result.Output.Fields["conversation_id"].StringValue);
-        Assert.Equal(2, result.Output.Fields["reply_options_count"].NumberValue);
+        Assert.Equal(3, result.Output.Fields["reply_options_count"].NumberValue);
         Assert.True(result.Output.Fields["allow_free_text"].BoolValue);
         Assert.False(result.Output.Fields.ContainsKey("free_text_enabled"));
     }

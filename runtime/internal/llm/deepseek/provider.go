@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"gameagent/runtime/internal/model"
+	"gameagent/runtime/internal/tokenestimate"
 )
 
 const defaultEndpoint = "https://api.deepseek.com/chat/completions"
@@ -22,6 +23,12 @@ type Provider struct {
 	model    string
 	endpoint string
 	client   *http.Client
+	window   model.WindowLimits
+}
+
+func (p *Provider) ModelWindow() model.WindowLimits { return p.window }
+func WithModelWindow(window model.WindowLimits) Option {
+	return func(p *Provider) { p.window = window }
 }
 
 type Option func(*Provider)
@@ -59,6 +66,11 @@ func (p *Provider) Generate(ctx context.Context, req model.Request) (model.Respo
 	body, err := p.buildRequest(req)
 	if err != nil {
 		return model.Response{}, err
+	}
+	if p.window.ContextTokens > 0 {
+		if err := p.window.Check(tokenestimate.EstimateText(string(body)), p.window.OutputTokens); err != nil {
+			return model.Response{}, err
+		}
 	}
 
 	httpReq, err := http.NewRequestWithContext(
@@ -114,6 +126,9 @@ func (p *Provider) buildRequest(req model.Request) ([]byte, error) {
 		"model":    p.model,
 		"messages": buildMessages(req),
 		"stream":   false,
+	}
+	if p.window.OutputTokens > 0 {
+		payload["max_tokens"] = p.window.OutputTokens
 	}
 	if len(tools) > 0 {
 		payload["tools"] = tools

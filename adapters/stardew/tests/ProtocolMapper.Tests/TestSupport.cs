@@ -69,7 +69,11 @@ internal static class TestSupport
             Fields =
             {
                 ["text"] = Value.ForString("Want to explore the mines?"),
-                ["reply_options"] = ValueList(Value.ForString("Yes"), Value.ForString("Maybe later")),
+                ["reply_options"] = ValueList(
+                    Value.ForString("Yes"),
+                    Value.ForString("Maybe later"),
+                    Value.ForString("Tell me more")
+                ),
                 ["allow_free_text"] = Value.ForBool(true),
             },
         },

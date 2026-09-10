@@ -296,6 +296,55 @@ func TestLaneStoreCloseClosesExistingLanesAndStopsCreation(t *testing.T) {
 	}
 }
 
+func TestLaneStoreCloseAndWaitCancelsAllLanesBeforeWaiting(t *testing.T) {
+	store, err := NewLaneStore(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{}, 2)
+	cancelled := make(chan struct{}, 2)
+	release := make(chan struct{})
+	defer close(release)
+	for _, entity := range []string{"entity:a", "entity:b"} {
+		lane, err := store.GetOrCreate(mustResolve(t, "game", "world", entity))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustEnqueue(t, lane, Task{Run: func(ctx context.Context) {
+			started <- struct{}{}
+			<-ctx.Done()
+			cancelled <- struct{}{}
+			<-release
+		}})
+	}
+	for i := 0; i < 2; i++ {
+		<-started
+	}
+	done := make(chan struct{})
+	go func() { store.CloseAndWait(); close(done) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-cancelled:
+		case <-time.After(time.Second):
+			t.Fatal("shutdown did not cancel every lane")
+		}
+	}
+	select {
+	case <-done:
+		t.Fatal("shutdown returned before task cleanup")
+	default:
+	}
+	// Each task must complete its final work before shutdown returns.
+	release <- struct{}{}
+	release <- struct{}{}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish after task cleanup")
+	}
+	store.CloseAndWait()
+}
+
 func mustEnqueue(t *testing.T, lane *ExecutionLane, task Task) {
 	t.Helper()
 
