@@ -207,12 +207,43 @@ public sealed class RouteProbeTests
         Assert.Equal(1, driver.Releases);
     }
 
-    [Fact]
-    public void RoutingHasFiniteDeadline()
+    [Theory]
+    [InlineData(120001)]
+    [InlineData(179999)]
+    [InlineData(180000)]
+    public void RoutingRemainsActiveThroughMeasuredTravelBudget(long elapsed)
     {
-        var probe = Create(); probe.Start(Args); now = 120001; probe.Update();
+        var probe = Create(); probe.Start(Args); now = elapsed; probe.Update();
+        Assert.Equal(ProbePhase.Routing, probe.Status.Phase);
+        Assert.Equal(0, driver.Releases);
+    }
+
+    [Fact]
+    public void RoutingTimesOutOnceAfterMeasuredTravelBudget()
+    {
+        var probe = Create(); probe.Start(Args); now = 180001; probe.Update(); probe.Update();
         Assert.Equal("route_timeout", probe.Status.Code);
+        Assert.Equal(ProbePhase.Failed, probe.Status.Phase);
         Assert.Equal(1, driver.Releases);
+        Assert.Single(records, x => x.Phase == ProbePhase.Failed);
+    }
+
+    [Theory]
+    [InlineData(180000, ProbePhase.Dwelling)]
+    [InlineData(180001, ProbePhase.Failed)]
+    internal void ArrivalUsesTheSameTravelDeadlineBoundary(long elapsed, ProbePhase expected)
+    {
+        var probe = Create(); probe.Start(Args); driver.Arrive(); now = elapsed; probe.Update();
+        Assert.Equal(expected, probe.Status.Phase);
+    }
+
+    [Fact]
+    public void CommandHelpReportsMeasuredTravelBudget()
+    {
+        var helpByCommand = new Dictionary<string, string>();
+        RouteProbe.RegisterCommands(new AdapterConfig { EnablePhase9RouteProbe = true },
+            (name, help, _) => helpByCommand.Add(name, help), _ => { }, _ => { }, _ => { });
+        Assert.Contains("Travel deadline: 180 seconds", helpByCommand["gameagent_phase9_route_probe"]);
     }
 
     [Fact]

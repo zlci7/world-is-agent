@@ -30,6 +30,7 @@ internal interface IRouteProbeDriver
 
 internal sealed class RouteProbe
 {
+    private const long TravelDeadlineMs = 180000;
     private readonly AdapterConfig config;
     private readonly IRouteProbeDriver driver;
     private readonly Func<long> now;
@@ -108,7 +109,7 @@ internal sealed class RouteProbe
                 { Finish(ProbePhase.Failed, sample.Control == ProbeControl.Foreign ? "control_lost" : "controller_missing"); return; }
                 if (Status.Phase == ProbePhase.Routing)
                 {
-                    if (now() - startedAt > 120000) { Finish(ProbePhase.Failed, "route_timeout"); return; }
+                    if (now() - startedAt > TravelDeadlineMs) { Finish(ProbePhase.Failed, "route_timeout"); return; }
                     if (AtTarget(sample.Position, request!.Target))
                     {
                         arrivedAt = now();
@@ -227,7 +228,7 @@ internal sealed class RouteProbe
         Action<string[]> start, Action<string[]> status, Action<string[]> cancel)
     {
         if (!config.EnablePhase9RouteProbe) return;
-        add("gameagent_phase9_route_probe", "Console-only feasibility probe. Usage: gameagent_phase9_route_probe <configured-npc> <location> <tile-x> <tile-y> [dwell-seconds:1..60,default=2] [restore-observation-seconds:1..120,default=30]. Travel deadline: 120 seconds. Requires single player and a loaded save.", start);
+        add("gameagent_phase9_route_probe", $"Console-only feasibility probe. Usage: gameagent_phase9_route_probe <configured-npc> <location> <tile-x> <tile-y> [dwell-seconds:1..60,default=2] [restore-observation-seconds:1..120,default=30]. Travel deadline: {TravelDeadlineMs / 1000} seconds. Requires single player and a loaded save.", start);
         add("gameagent_phase9_route_status", "Print the last sampled phase9 route probe JSON status without changing state.", status);
         add("gameagent_phase9_route_cancel", "Cancel the active phase9 route probe, release its control, and rejoin the current native schedule.", cancel);
     }
