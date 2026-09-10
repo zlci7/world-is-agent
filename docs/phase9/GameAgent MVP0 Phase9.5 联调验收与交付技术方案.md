@@ -2,6 +2,7 @@
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-10
+> **Development Context:** 已检查代码基线：`daf4f98`；实现分支基点：`e482923`；开发分支：`codex/phase9-durable-task`
 > **执行方式:** 9.1–9.4 的每个独立审查单元均已完成增量本地提交与独立任务 CR 后，执行最终联调、整分支/系统 review、修复和复验；不省略开发过程中的测试或 CR。
 > **Goal:** 交付真实游戏/真实模型中可复现的预约最小闭环，以及可核验的代码与验收记录。
 > **Architecture:** Runtime Task、Environment Action、Interaction、Checkpoint 和 History 各自保持权威边界。
