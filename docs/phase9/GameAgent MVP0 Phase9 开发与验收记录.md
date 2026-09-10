@@ -16,7 +16,19 @@ Phase9.0 的路线与保存探针仅作为默认关闭、显式启用的 console
 
 ## 2. 自动化与构建验证
 
-最终探针源码在提交 `0d47bee49ef64343694191f15f19932c7003fef5` 上完成 fresh 验证：
+Phase9 代码改动前在实现基点 `e48292389bd2544c9a326ad20cdb65268fdfdbc5` 运行 Phase6/Phase8 全量基线：
+
+| 验证项 | 结果 |
+| --- | --- |
+| `go test ./... -count=1` | 全部 Go 测试包通过 |
+| `ProtocolMapper.Tests` | 53 passed，0 failed，0 skipped |
+| `PlayerInteractProbe.Tests` | 11 passed，0 failed，0 skipped |
+| `ActionCancellationRegistry.Tests` | 5 passed，0 failed，0 skipped |
+| Protocol static / architecture check | passed |
+| Stardew context static check | passed |
+| Stardew Debug build | succeeded，0 warnings，0 errors |
+
+最终探针源码在提交 `0d47bee49ef64343694191f15f19932c7003fef5` 上完成 fresh 验证；未被 Adapter 探针改动的 Go 全量测试与架构检查也再次通过：
 
 | 验证项 | 结果 |
 | --- | --- |
@@ -24,6 +36,8 @@ Phase9.0 的路线与保存探针仅作为默认关闭、显式启用的 console
 | `ProtocolMapper.Tests` | 53 passed，0 failed，0 skipped |
 | `PlayerInteractProbe.Tests` | 11 passed，0 failed，0 skipped |
 | `ActionCancellationRegistry.Tests` | 5 passed，0 failed，0 skipped |
+| `go test ./... -count=1` | 全部 Go 测试包通过 |
+| Protocol static / architecture check | passed |
 | Stardew context static check | passed |
 | Stardew Debug build | succeeded，0 warnings，0 errors |
 | `git diff --check` | passed |
@@ -34,17 +48,17 @@ Phase9.0 的路线与保存探针仅作为默认关闭、显式启用的 console
 
 统一命令为 `gameagent_phase9_route_probe Linus Beach 28 36 2 30`。玩家全程停留在 `FarmHouse`，NPC 通过原生 schedule path controller 独立完成 `Mountain → Town → Beach`，未使用瞬移、直接坐标赋值或玩家点击推动过图。目标、到达和释放位置均为 `Beach (28,36)`。
 
-| 轮次 | Run ID | 起点 | 路线长度 | 过图 | travel | dwell | restore | 探针终态 | 释放后 30 秒 |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| 1 | `a68d342f3fa84a24a227048f9a0e05da` | `Mountain (39,5)` | 270 | 2 | 145198 ms | 2000 ms | 18 ms | `Succeeded/native_movement_observed` | Linus 位于 `Town` |
-| 2 | `a35636867ed74e90848cc68abb935321` | `Mountain (35,5)` | 266 | 2 | 157915 ms | 2000 ms | 17 ms | `Succeeded/native_movement_observed` | Linus 位于 `Town` |
-| 3 | `d70cc34865504d53b851241a642099ba` | `Mountain (35,5)` | 266 | 2 | 143132 ms | 2000 ms | 17 ms | `Succeeded/native_movement_observed` | Linus 位于 `Town` |
+| 轮次 | Run ID | 起点 | 路线长度 | 过图 | 游戏时间 | travel | dwell | restore | 探针终态 | 释放至少 30 秒后 |
+| --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- |
+| 1 | `a68d342f3fa84a24a227048f9a0e05da` | `Mountain (39,5)` | 270 | 2 | `06:40 → 10:00`（200 分钟） | 145198 ms | 2000 ms | 18 ms | `Succeeded/native_movement_observed` | Linus 位于 `Town` |
+| 2 | `a35636867ed74e90848cc68abb935321` | `Mountain (35,5)` | 266 | 2 | `06:30 → 10:10`（220 分钟） | 157915 ms | 2000 ms | 17 ms | `Succeeded/native_movement_observed` | Linus 位于 `Town` |
+| 3 | `d70cc34865504d53b851241a642099ba` | `Mountain (35,5)` | 266 | 2 | `06:30 → 09:50`（200 分钟） | 143132 ms | 2000 ms | 17 ms | `Succeeded/native_movement_observed` | Linus 位于 `Town` |
 
-三轮均记录 `restoration=native_schedule_rejoined`，随后位置变化由原生日程控制器产生。实测完整行程为 143.132–157.915 秒，因此诊断行程上限采用单一有限值 180 秒；等于截止时刻仍允许依据真实到达进入 dwell，超过截止才报告 `route_timeout`。
+三轮均记录 `restoration=native_schedule_rejoined`，随后位置变化由原生日程控制器产生。实测完整行程为 143.132–157.915 秒、200–220 游戏分钟，因此诊断行程上限采用单一有限值 180 秒；等于截止时刻仍允许依据真实到达进入 dwell，超过截止才报告 `route_timeout`。`Mountain → Beach` 的正式 `departure_lead_minutes` 取 240 游戏分钟，在三轮最大实测值之上保留 20 游戏分钟余量。
 
 ## 4. Saving 有界交接
 
-四个场景均在 SMAPI 的真实 Saving/Saved 周期中运行。Saving 线程为 1，模拟 Runtime 回应在 worker 线程完成；无论准备结果如何，游戏保存均继续完成。每轮均复制实际落盘文件，并在重新启动、加载同一测试存档后观测到对应 `persisted_marker_observed`。
+前四个场景均在 SMAPI 的真实 Saving/Saved 周期中运行。Saving 线程为 1，模拟 Runtime 回应在 worker 线程完成；无论准备结果如何，游戏保存均继续完成。每轮均复制实际落盘文件，并在重新启动、加载同一测试存档后观测到对应 `persisted_marker_observed`。
 
 | 场景 | Request ID | Saving 决策 | 等待 | 回应线程 | Saved | 重载后 marker |
 | --- | --- | --- | ---: | --- | --- | --- |
@@ -52,8 +66,11 @@ Phase9.0 的路线与保存探针仅作为默认关闭、显式启用的 console
 | 故意延迟 | `862dc5f60b5e44cab41fa254770ad79a` | `unconfirmed/timeout` | 5002 ms | 截止后由线程 5 返回 `late_response` | 完成 | 已观测，保持超时快照 |
 | 断线 | `d0ea168da4ac4a6f940c0aed109c4975` | `unconfirmed/disconnected` | 103 ms | 14 | 完成 | 已观测 |
 | 准备失败 | `5aa35e8ee8e74ba891ef544ece77b038` | `unconfirmed/prepare_failed` | 102 ms | 3 | 完成 | 已观测 |
+| 游戏保存失败 | `88c2ad9240474a8287e6e7179dba4a50` | `prepared` | 104 ms | 5 | 未发生；`saveTask` 报 IOException | marker 缺失，原 4 个文件哈希未变 |
 
-结果证明 Saving 可进行有限等待，网络 worker 不依赖 SMAPI 主线程回调；超时、断线和准备失败具有明确的 `unconfirmed` 结果，并且不会阻止游戏保存。诊断 marker 使用 `gameagent-phase9-feasibility-save`，不能解释为生产 Task 快照、checkpoint durable ack 或恢复引用。
+第五个场景在隔离测试目录中以同名文件占据全局 `Saves` 路径，令 `Directory.CreateDirectory` 确定性失败。Saving 先取得 `prepared`，随后游戏记录 `saveTask failed` 且未触发 `Saved`；恢复目录后，旧存档四个文件哈希不变，重新加载得到 `persisted_marker_absent`。这验证了“快照提交成功、游戏保存失败”时新引用不会进入旧游戏存档。
+
+结果证明 Saving 可进行有限等待，网络 worker 不依赖 SMAPI 主线程回调；超时、断线和准备失败具有明确的 `unconfirmed` 结果，并且不会阻止游戏保存；游戏保存自身失败时，已准备的新引用不会被误认为已保存。诊断 marker 使用 `gameagent-phase9-feasibility-save`，不能解释为生产 Task 快照、checkpoint durable ack 或恢复引用。
 
 ## 5. 存档隔离与环境恢复
 
@@ -73,6 +90,6 @@ Phase9.0 前置可行性门通过：当前游戏版本支持玩家不跟随时�
 
 后续实现遵循以下已验证边界：
 
-- Phase9.3 使用原生 schedule path controller、显式控制权租约和 180 秒有限预算；正式点位与出发预留以实测路线为依据。
+- Phase9.3 使用原生 schedule path controller、显式控制权租约、180 秒有限预算和 `Mountain → Beach` 的 240 游戏分钟出发预留。
 - Phase9.4 必须实现真实 Runtime 快照、持久化确认与精确恢复协议；不得复用诊断 marker 充当生产证据。
 - 所有实机存档测试采用完整全局 `Saves` 目录交换，并在结束后执行文件级校验。
