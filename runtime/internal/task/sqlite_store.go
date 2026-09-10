@@ -55,20 +55,32 @@ type checkpointRow struct {
 }
 
 type taskRowColumns struct {
-	gameID            string
-	worldID           string
-	entityID          string
-	taskID            string
-	state             string
-	revision          int64
-	clockID           string
-	nextWakeAt        sql.NullInt64
-	createEventID     string
-	createTurnID      string
-	createCallID      string
-	createFingerprint string
-	equivalenceKey    string
-	recordJSON        []byte
+	gameID             string
+	worldID            string
+	entityID           string
+	taskID             string
+	state              string
+	revision           int64
+	clockID            string
+	nextWakeAt         sql.NullInt64
+	createEventID      string
+	createTurnID       string
+	createCallID       string
+	createFingerprint  string
+	equivalenceKey     string
+	recordJSON         []byte
+	createResponseJSON []byte
+	createResponseHash string
+}
+
+type preparedTaskCreate struct {
+	record             Record
+	wake               Wake
+	fingerprint        string
+	recordJSON         []byte
+	wakeJSON           []byte
+	createResponseJSON []byte
+	createResponseHash string
 }
 
 type rowScanner interface {
@@ -115,6 +127,8 @@ var taskSQLiteSchema = []struct {
 			create_fingerprint TEXT NOT NULL,
 			equivalence_key TEXT NOT NULL,
 			record_json BLOB NOT NULL,
+			create_response_json BLOB NOT NULL,
+			create_response_hash TEXT NOT NULL,
 			PRIMARY KEY (game_id, world_id, entity_id, task_id)
 		)`,
 	},
@@ -162,6 +176,16 @@ var taskSQLiteSchema = []struct {
 	{
 		name:      "idx_tasks_owner_state",
 		statement: `CREATE INDEX idx_tasks_owner_state ON tasks (game_id, world_id, entity_id, state, task_id)`,
+	},
+	{
+		name:      "idx_tasks_create_call",
+		statement: `CREATE UNIQUE INDEX idx_tasks_create_call ON tasks (game_id, world_id, entity_id, create_event_id, create_turn_id, create_call_id)`,
+	},
+	{
+		name: "idx_tasks_active_equivalence",
+		statement: `CREATE UNIQUE INDEX idx_tasks_active_equivalence
+			ON tasks (game_id, world_id, entity_id, equivalence_key)
+			WHERE equivalence_key <> '' AND state IN ('waiting', 'running', 'paused')`,
 	},
 	{
 		name:      "idx_task_wakeups_due",
@@ -284,60 +308,107 @@ func (s *SQLiteStore) initializeSchema(ctx context.Context) error {
 }
 
 func (s *SQLiteStore) insertTaskAndWake(ctx context.Context, record Record, wake Wake) error {
-	if err := validateTaskWakePair(record, wake); err != nil {
+	prepared, err := s.prepareTaskCreate(record, wake)
+	if err != nil {
 		return err
 	}
+	return s.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
+		return s.insertTaskAndWakeTx(ctx, tx, prepared)
+	})
+}
+
+func (s *SQLiteStore) prepareTaskCreate(record Record, wake Wake) (preparedTaskCreate, error) {
+	if s == nil || s.db == nil {
+		return preparedTaskCreate{}, ErrTaskConflict
+	}
+	if err := validateTaskWakePair(record, wake); err != nil {
+		return preparedTaskCreate{}, err
+	}
 	recordJSON, err := json.Marshal(record)
-	if err != nil || len(recordJSON) > s.options.MaxTaskBytes {
-		return ErrInvalidTaskSpec
+	if err != nil {
+		return preparedTaskCreate{}, ErrInvalidTaskSpec
 	}
 	wakeJSON, err := json.Marshal(wake)
 	if err != nil {
-		return ErrInvalidTaskSpec
+		return preparedTaskCreate{}, ErrInvalidTaskSpec
 	}
 	fingerprint, err := taskSpecFingerprint(record.Spec)
 	if err != nil {
-		return ErrInvalidTaskSpec
+		return preparedTaskCreate{}, ErrInvalidTaskSpec
 	}
+	responseJSON, err := json.Marshal(initialCreateResult(record))
+	if err != nil || len(recordJSON) > s.options.MaxTaskBytes || len(responseJSON) > s.options.MaxTaskBytes-len(recordJSON) {
+		return preparedTaskCreate{}, ErrInvalidTaskSpec
+	}
+	return preparedTaskCreate{
+		record:             record,
+		wake:               wake,
+		fingerprint:        fingerprint,
+		recordJSON:         recordJSON,
+		wakeJSON:           wakeJSON,
+		createResponseJSON: responseJSON,
+		createResponseHash: sha256Hex(responseJSON),
+	}, nil
+}
 
-	return s.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE game_id = ? AND world_id = ?`, record.Owner.GameID, record.Owner.WorldID).Scan(&count); err != nil {
-			return err
-		}
-		if count >= s.options.MaxTasksPerWorld {
-			return ErrTaskCapacityExceeded
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tasks (
-			game_id, world_id, entity_id, task_id, state, revision, clock_id, next_wake_at,
-			create_event_id, create_turn_id, create_call_id, create_fingerprint, equivalence_key, record_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			record.Owner.GameID, record.Owner.WorldID, record.Owner.EntityID, record.ID,
-			string(record.State), int64(record.Revision), record.Spec.ClockID, nullableTick(record.NextWakeAt),
-			record.Spec.Source.EventID, record.Spec.Source.TurnID, record.Spec.Source.CallID,
-			fingerprint, record.Spec.EquivalenceKey, recordJSON,
-		); err != nil {
-			return err
-		}
-		if s.testAfterTaskInsert != nil {
-			if err := s.testAfterTaskInsert(ctx); err != nil {
-				return err
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO task_wakeups (
-			wake_id, game_id, world_id, entity_id, task_id, clock_id, expected_revision,
-			due_tick, reason, status, claim_id, claimed_by, generation, attempt,
-			retry_after_unix_ms, wake_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			wake.ID, wake.Owner.GameID, wake.Owner.WorldID, wake.Owner.EntityID, wake.TaskID,
-			record.Spec.ClockID, int64(wake.ExpectedRevision), wake.DueTick, wake.Reason, wake.Status,
-			wake.ClaimID, wake.ClaimedBy, int64(wake.Generation), wake.Attempt, wake.RetryAfterUnixMS, wakeJSON,
-		)
+func initialCreateResult(record Record) CreateResult {
+	wakeAt := record.Spec.WakeAt
+	initial := Record{
+		ID:                record.ID,
+		Owner:             record.Owner,
+		Spec:              record.Spec,
+		State:             StateWaiting,
+		Revision:          1,
+		CreatedAtGameTick: record.CreatedAtGameTick,
+		CreatedAtUnixMS:   record.CreatedAtUnixMS,
+		NextWakeAt:        &wakeAt,
+		Operations:        []Operation{},
+		Evidence:          []Evidence{},
+		Cleanup:           []Cleanup{},
+	}
+	return CreateResult{Task: initial, Created: true}
+}
+
+func (s *SQLiteStore) insertTaskAndWakeTx(ctx context.Context, tx *sql.Tx, prepared preparedTaskCreate) error {
+	record, wake := prepared.record, prepared.wake
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE game_id = ? AND world_id = ?`, record.Owner.GameID, record.Owner.WorldID).Scan(&count); err != nil {
 		return err
-	})
+	}
+	if count >= s.options.MaxTasksPerWorld {
+		return ErrTaskCapacityExceeded
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks (
+		game_id, world_id, entity_id, task_id, state, revision, clock_id, next_wake_at,
+		create_event_id, create_turn_id, create_call_id, create_fingerprint, equivalence_key,
+		record_json, create_response_json, create_response_hash
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.Owner.GameID, record.Owner.WorldID, record.Owner.EntityID, record.ID,
+		string(record.State), int64(record.Revision), record.Spec.ClockID, nullableTick(record.NextWakeAt),
+		record.Spec.Source.EventID, record.Spec.Source.TurnID, record.Spec.Source.CallID,
+		prepared.fingerprint, record.Spec.EquivalenceKey, prepared.recordJSON,
+		prepared.createResponseJSON, prepared.createResponseHash,
+	); err != nil {
+		return err
+	}
+	if s.testAfterTaskInsert != nil {
+		if err := s.testAfterTaskInsert(ctx); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO task_wakeups (
+		wake_id, game_id, world_id, entity_id, task_id, clock_id, expected_revision,
+		due_tick, reason, status, claim_id, claimed_by, generation, attempt,
+		retry_after_unix_ms, wake_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		wake.ID, wake.Owner.GameID, wake.Owner.WorldID, wake.Owner.EntityID, wake.TaskID,
+		record.Spec.ClockID, int64(wake.ExpectedRevision), wake.DueTick, wake.Reason, wake.Status,
+		wake.ClaimID, wake.ClaimedBy, int64(wake.Generation), wake.Attempt, wake.RetryAfterUnixMS, prepared.wakeJSON,
+	)
+	return err
 }
 
 func (s *SQLiteStore) loadTask(ctx context.Context, owner session.AgentSessionKey, taskID string) (Record, error) {
@@ -354,6 +425,53 @@ func (s *SQLiteStore) loadTask(ctx context.Context, owner session.AgentSessionKe
 		return Record{}, classifyStoreError(err)
 	}
 	return record, nil
+}
+
+func (s *SQLiteStore) loadExactCreateTx(ctx context.Context, tx *sql.Tx, owner session.AgentSessionKey, source SourceRef, fingerprint string) (CreateResult, bool, error) {
+	var storedFingerprint string
+	err := tx.QueryRowContext(ctx, `SELECT create_fingerprint FROM tasks
+		WHERE game_id = ? AND world_id = ? AND entity_id = ?
+			AND create_event_id = ? AND create_turn_id = ? AND create_call_id = ?`,
+		owner.GameID, owner.WorldID, owner.EntityID, source.EventID, source.TurnID, source.CallID,
+	).Scan(&storedFingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CreateResult{}, false, nil
+	}
+	if err != nil {
+		return CreateResult{}, false, err
+	}
+	if storedFingerprint != fingerprint {
+		return CreateResult{}, true, ErrIdempotencyConflict
+	}
+	row := tx.QueryRowContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? AND entity_id = ?
+		AND create_event_id = ? AND create_turn_id = ? AND create_call_id = ?`,
+		owner.GameID, owner.WorldID, owner.EntityID, source.EventID, source.TurnID, source.CallID)
+	_, result, decodedFingerprint, err := scanTaskRowWithCreate(row)
+	if err != nil {
+		return CreateResult{}, true, err
+	}
+	if decodedFingerprint != fingerprint {
+		return CreateResult{}, true, ErrInvalidTaskSpec
+	}
+	return result, true, nil
+}
+
+func (s *SQLiteStore) loadEquivalentTaskTx(ctx context.Context, tx *sql.Tx, owner session.AgentSessionKey, equivalenceKey string) (Record, bool, error) {
+	if equivalenceKey == "" {
+		return Record{}, false, nil
+	}
+	row := tx.QueryRowContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? AND entity_id = ?
+		AND equivalence_key = ? AND state IN (?, ?, ?)`,
+		owner.GameID, owner.WorldID, owner.EntityID, equivalenceKey,
+		string(StateWaiting), string(StateRunning), string(StatePaused))
+	record, err := scanTaskRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, false, nil
+	}
+	if err != nil {
+		return Record{}, false, err
+	}
+	return record, true, nil
 }
 
 func (s *SQLiteStore) listTasks(ctx context.Context, owner session.AgentSessionKey) ([]Record, error) {
@@ -461,6 +579,33 @@ func (s *SQLiteStore) loadWorldHead(ctx context.Context, world WorldKey) (worldH
 	if err := world.Validate(); err != nil {
 		return worldHeadRow{}, err
 	}
+	row, err := scanWorldHeadRow(s.db.QueryRowContext(ctx, worldHeadSelectSQL, world.GameID, world.WorldID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return worldHeadRow{}, ErrTaskNotFound
+	}
+	if err != nil {
+		return worldHeadRow{}, classifyStoreError(err)
+	}
+	return row, nil
+}
+
+func (s *SQLiteStore) loadWorldHeadTx(ctx context.Context, tx *sql.Tx, world WorldKey) (worldHeadRow, bool, error) {
+	row, err := scanWorldHeadRow(tx.QueryRowContext(ctx, worldHeadSelectSQL, world.GameID, world.WorldID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return worldHeadRow{}, false, nil
+	}
+	if err != nil {
+		return worldHeadRow{}, false, err
+	}
+	return row, true, nil
+}
+
+const worldHeadSelectSQL = `SELECT game_id, world_id, run_id, generation,
+	clock_id, clock_tick, clock_sequence, checkpoint_id, save_request_id,
+	barrier_status, status, reason, head_json
+	FROM task_world_heads WHERE game_id = ? AND world_id = ?`
+
+func scanWorldHeadRow(scanner rowScanner) (worldHeadRow, error) {
 	var (
 		row                                                           worldHeadRow
 		gameID, worldID, runID, clockID, checkpointID, status, reason string
@@ -468,18 +613,12 @@ func (s *SQLiteStore) loadWorldHead(ctx context.Context, world WorldKey) (worldH
 		clockTick                                                     int64
 		headJSON                                                      []byte
 	)
-	err := s.db.QueryRowContext(ctx, `SELECT game_id, world_id, run_id, generation,
-		clock_id, clock_tick, clock_sequence, checkpoint_id, save_request_id,
-		barrier_status, status, reason, head_json
-		FROM task_world_heads WHERE game_id = ? AND world_id = ?`, world.GameID, world.WorldID).Scan(
+	err := scanner.Scan(
 		&gameID, &worldID, &runID, &generation, &clockID, &clockTick, &clockSequence,
 		&checkpointID, &row.SaveRequestID, &row.BarrierStatus, &status, &reason, &headJSON,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return worldHeadRow{}, ErrTaskNotFound
-	}
 	if err != nil {
-		return worldHeadRow{}, classifyStoreError(err)
+		return worldHeadRow{}, err
 	}
 	if generation <= 0 || clockSequence < 0 {
 		return worldHeadRow{}, ErrInvalidTaskSpec
@@ -503,6 +642,19 @@ func (s *SQLiteStore) loadWorldHead(ctx context.Context, world WorldKey) (worldH
 		return worldHeadRow{}, ErrInvalidTaskSpec
 	}
 	return stored, nil
+}
+
+func (s *SQLiteStore) insertWorldHeadTx(ctx context.Context, tx *sql.Tx, row worldHeadRow, headJSON []byte) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO task_world_heads (
+		game_id, world_id, run_id, generation, clock_id, clock_tick, clock_sequence,
+		checkpoint_id, save_request_id, barrier_status, status, reason, head_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.Head.Binding.World.GameID, row.Head.Binding.World.WorldID, row.Head.Binding.RunID,
+		int64(row.Head.Binding.Generation), row.Head.Clock.ID, row.Head.Clock.Tick,
+		int64(row.Head.Clock.Sequence), row.Head.CheckpointID, row.SaveRequestID,
+		row.BarrierStatus, row.Head.Status, row.Head.Reason, headJSON,
+	)
+	return err
 }
 
 func (s *SQLiteStore) insertCheckpoint(ctx context.Context, row checkpointRow) error {
@@ -592,31 +744,38 @@ func (s *SQLiteStore) withImmediateTransaction(ctx context.Context, callback fun
 
 const taskSelectSQL = `SELECT game_id, world_id, entity_id, task_id, state, revision,
 	clock_id, next_wake_at, create_event_id, create_turn_id, create_call_id,
-	create_fingerprint, equivalence_key, record_json FROM tasks`
+	create_fingerprint, equivalence_key, record_json, create_response_json,
+	create_response_hash FROM tasks`
 
 func scanTaskRow(row rowScanner) (Record, error) {
+	record, _, _, err := scanTaskRowWithCreate(row)
+	return record, err
+}
+
+func scanTaskRowWithCreate(row rowScanner) (Record, CreateResult, string, error) {
 	var columns taskRowColumns
 	if err := row.Scan(
 		&columns.gameID, &columns.worldID, &columns.entityID, &columns.taskID,
 		&columns.state, &columns.revision, &columns.clockID, &columns.nextWakeAt,
 		&columns.createEventID, &columns.createTurnID, &columns.createCallID,
 		&columns.createFingerprint, &columns.equivalenceKey, &columns.recordJSON,
+		&columns.createResponseJSON, &columns.createResponseHash,
 	); err != nil {
-		return Record{}, err
+		return Record{}, CreateResult{}, "", err
 	}
 	if columns.revision <= 0 {
-		return Record{}, ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
 	}
 	var record Record
 	if err := json.Unmarshal(columns.recordJSON, &record); err != nil {
-		return Record{}, ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
 	}
 	if err := record.Validate(); err != nil {
-		return Record{}, err
+		return Record{}, CreateResult{}, "", err
 	}
 	fingerprint, err := taskSpecFingerprint(record.Spec)
 	if err != nil {
-		return Record{}, ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
 	}
 	if record.Owner != (session.AgentSessionKey{GameID: columns.gameID, WorldID: columns.worldID, EntityID: columns.entityID}) ||
 		record.ID != columns.taskID || string(record.State) != columns.state ||
@@ -626,9 +785,48 @@ func scanTaskRow(row rowScanner) (Record, error) {
 		record.Spec.Source.TurnID != columns.createTurnID ||
 		record.Spec.Source.CallID != columns.createCallID ||
 		fingerprint != columns.createFingerprint || record.Spec.EquivalenceKey != columns.equivalenceKey {
-		return Record{}, ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
 	}
-	return record, nil
+	response, err := decodeCreateResponse(columns, columns.createFingerprint)
+	if err != nil {
+		return Record{}, CreateResult{}, "", err
+	}
+	return record, response, columns.createFingerprint, nil
+}
+
+func decodeCreateResponse(columns taskRowColumns, wantFingerprint string) (CreateResult, error) {
+	var result CreateResult
+	if columns.createResponseHash != sha256Hex(columns.createResponseJSON) {
+		return CreateResult{}, ErrInvalidTaskSpec
+	}
+	if err := json.Unmarshal(columns.createResponseJSON, &result); err != nil || !result.Created {
+		return CreateResult{}, ErrInvalidTaskSpec
+	}
+	if err := result.Task.Validate(); err != nil {
+		return CreateResult{}, ErrInvalidTaskSpec
+	}
+	fingerprint, err := taskSpecFingerprint(result.Task.Spec)
+	if err != nil || fingerprint != wantFingerprint ||
+		result.Task.Owner != (session.AgentSessionKey{GameID: columns.gameID, WorldID: columns.worldID, EntityID: columns.entityID}) ||
+		result.Task.ID != columns.taskID || result.Task.State != StateWaiting || result.Task.Revision != 1 ||
+		result.Task.Spec.Source.EventID != columns.createEventID ||
+		result.Task.Spec.Source.TurnID != columns.createTurnID ||
+		result.Task.Spec.Source.CallID != columns.createCallID ||
+		result.Task.Spec.EquivalenceKey != columns.equivalenceKey ||
+		result.Task.NextWakeAt == nil || *result.Task.NextWakeAt != result.Task.Spec.WakeAt ||
+		result.Task.CreatedAtGameTick < 0 || result.Task.CreatedAtUnixMS < 0 ||
+		len(result.Task.Progress) != 0 || result.Task.NeedsReconcile || result.Task.PauseReason != "" ||
+		result.Task.NoProgressAttempts != 0 || result.Task.ReconcileAttempts != 0 ||
+		len(result.Task.Operations) != 0 || len(result.Task.Evidence) != 0 || result.Task.Result != nil ||
+		len(result.Task.Cleanup) != 0 {
+		return CreateResult{}, ErrInvalidTaskSpec
+	}
+	return result, nil
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func validateTaskWakePair(record Record, wake Wake) error {
@@ -689,8 +887,7 @@ func taskSpecFingerprint(spec TaskSpec) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return sha256Hex(data), nil
 }
 
 func nullableTick(value *int64) any {

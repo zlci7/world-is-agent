@@ -50,9 +50,34 @@ func TestSQLiteStoreSchemaAndPragmas(t *testing.T) {
 		t.Fatalf("tables = %v, want %v", tables, wantTables)
 	}
 	indexes := sqliteObjectNames(t, store.db, "index")
-	for _, name := range []string{"idx_task_wakeups_due", "idx_tasks_owner_state"} {
+	for _, name := range []string{
+		"idx_task_wakeups_due",
+		"idx_tasks_active_equivalence",
+		"idx_tasks_create_call",
+		"idx_tasks_owner_state",
+	} {
 		if !containsString(indexes, name) {
 			t.Errorf("indexes %v missing %q", indexes, name)
+		}
+	}
+	columns := sqliteTableColumnNames(t, store.db, "tasks")
+	for _, name := range []string{"create_response_hash", "create_response_json"} {
+		if !containsString(columns, name) {
+			t.Errorf("tasks columns %v missing %q", columns, name)
+		}
+	}
+	var equivalenceIndexSQL string
+	if err := store.db.QueryRow(`SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = 'idx_tasks_active_equivalence'`).Scan(&equivalenceIndexSQL); err != nil {
+		t.Fatal(err)
+	}
+	normalizedIndexSQL := strings.Join(strings.Fields(equivalenceIndexSQL), " ")
+	for _, clause := range []string{
+		"UNIQUE INDEX",
+		"equivalence_key <> ''",
+		"state IN ('waiting', 'running', 'paused')",
+	} {
+		if !strings.Contains(normalizedIndexSQL, clause) {
+			t.Errorf("active-equivalence index %q missing %q", normalizedIndexSQL, clause)
 		}
 	}
 
@@ -296,14 +321,14 @@ func TestSQLiteStoreCloseThenReopenPreservesRowsAndReleasesLock(t *testing.T) {
 func TestStoreLimitsKeepOldRowsAtExactTaskAndWorldBoundaries(t *testing.T) {
 	t.Run("task bytes", func(t *testing.T) {
 		record, wake := taskStoreFixture(testOwner(), "task-exact", "wake-exact")
-		exact := len(mustTaskJSON(t, record))
+		exact := taskCreateStorageBytes(t, record)
 		store := openTaskTestStore(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite"), MaxTaskBytes: exact})
 		if err := store.insertTaskAndWake(context.Background(), record, wake); err != nil {
 			t.Fatalf("exact-boundary insert error = %v", err)
 		}
 		over, overWake := taskStoreFixture(testOwner(), "task-over", "wake-over")
 		over.Progress = json.RawMessage(`{"padding":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`)
-		if len(mustTaskJSON(t, over)) <= exact {
+		if taskCreateStorageBytes(t, over) <= exact {
 			t.Fatal("over-limit fixture did not exceed exact boundary")
 		}
 		if err := store.insertTaskAndWake(context.Background(), over, overWake); !errors.Is(err, ErrInvalidTaskSpec) {
@@ -554,6 +579,10 @@ func taskStoreFixture(owner session.AgentSessionKey, taskID, wakeID string) (Rec
 	record := testRecord()
 	record.ID = taskID
 	record.Owner = owner
+	record.Spec.Source.EventID = "event-" + taskID
+	record.Spec.Source.TurnID = "turn-" + taskID
+	record.Spec.Source.CallID = "call-" + taskID
+	record.Spec.EquivalenceKey = "equivalence-" + taskID
 	record.Progress = json.RawMessage(`{"status":"scheduled"}`)
 	wake := testWake()
 	wake.ID = wakeID
@@ -601,6 +630,29 @@ func sqliteObjectNames(t *testing.T, db *sql.DB, kind string) []string {
 	return names
 }
 
+func sqliteTableColumnNames(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+	rows, err := db.Query("PRAGMA table_info(" + table + ")") // table is a test-owned literal.
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var sequence, notNull, primaryKey int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&sequence, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
 func scopedRowCount(t *testing.T, db *sql.DB, table string, owner session.AgentSessionKey) int {
 	t.Helper()
 	query := "SELECT COUNT(*) FROM " + table + " WHERE game_id = ? AND world_id = ? AND entity_id = ?" // table is a test-controlled literal.
@@ -627,6 +679,28 @@ func mustTaskJSON(t *testing.T, record Record) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func taskCreateStorageBytes(t *testing.T, record Record) int {
+	t.Helper()
+	wakeAt := record.Spec.WakeAt
+	response, err := json.Marshal(CreateResult{Task: Record{
+		ID:                record.ID,
+		Owner:             record.Owner,
+		Spec:              record.Spec,
+		State:             StateWaiting,
+		Revision:          1,
+		CreatedAtGameTick: record.CreatedAtGameTick,
+		CreatedAtUnixMS:   record.CreatedAtUnixMS,
+		NextWakeAt:        &wakeAt,
+		Operations:        []Operation{},
+		Evidence:          []Evidence{},
+		Cleanup:           []Cleanup{},
+	}, Created: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(mustTaskJSON(t, record)) + len(response)
 }
 
 func assertTaskErrorSanitized(t *testing.T, err error, forbidden ...string) {
