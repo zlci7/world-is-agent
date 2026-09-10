@@ -438,10 +438,21 @@ func (w Wake) Validate() error {
 }
 
 func (i Intent) Validate() error {
-	if !validOptionalTick(i.NextWakeAt) {
+	switch i.Kind {
+	case "wait":
+		if i.NextWakeAt == nil || !validOptionalTick(i.NextWakeAt) || i.Reason != "" ||
+			i.ProgressNote != "" && strings.TrimSpace(i.ProgressNote) == "" {
+			return ErrInvalidTaskSpec
+		}
+		return nil
+	case "cancel":
+		if i.NextWakeAt != nil || i.ProgressNote != "" || !requiredIdentity(i.Reason) {
+			return ErrInvalidTaskSpec
+		}
+		return nil
+	default:
 		return ErrInvalidTaskSpec
 	}
-	return nil
 }
 
 func (a Admission) Validate() error {

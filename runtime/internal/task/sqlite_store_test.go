@@ -61,7 +61,7 @@ func TestSQLiteStoreSchemaAndPragmas(t *testing.T) {
 		}
 	}
 	columns := sqliteTableColumnNames(t, store.db, "tasks")
-	for _, name := range []string{"create_response_hash", "create_response_json"} {
+	for _, name := range []string{"create_response_hash", "create_response_json", "intent_history_hash", "intent_history_json"} {
 		if !containsString(columns, name) {
 			t.Errorf("tasks columns %v missing %q", columns, name)
 		}
@@ -491,6 +491,33 @@ func TestSQLiteStoreRejectsUnexpectedPersistentSchemaObjects(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreRejectsPreIntentSchemaOnReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-intent-schema.sqlite")
+	seed := openTaskTestStoreWithoutCleanup(t, StoreOptions{Path: path})
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", taskSQLiteDSN(path, time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`ALTER TABLE tasks RENAME COLUMN intent_history_hash TO legacy_intent_history_hash`); err != nil {
+		_ = raw.Close()
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := OpenSQLiteStore(context.Background(), StoreOptions{Path: path})
+	if got != nil {
+		_ = got.Close()
+	}
+	if !errors.Is(err, ErrTaskConflict) {
+		t.Fatalf("OpenSQLiteStore() error = %v, want ErrTaskConflict", err)
+	}
+	assertTaskErrorSanitized(t, err, path, "legacy_intent_history_hash", "ALTER TABLE")
+}
+
 func TestSQLiteStoreWorldHeadAndCheckpointRoundTripByWorld(t *testing.T) {
 	store := openTaskTestStore(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite")})
 	head := worldHeadRow{
@@ -700,7 +727,7 @@ func taskCreateStorageBytes(t *testing.T, record Record) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return len(mustTaskJSON(t, record)) + len(response)
+	return len(mustTaskJSON(t, record)) + len(response) + len([]byte("[]"))
 }
 
 func assertTaskErrorSanitized(t *testing.T, err error, forbidden ...string) {

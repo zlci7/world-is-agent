@@ -185,6 +185,43 @@ func TestTaskExecutionContextValidatesRequiredObjectsAndOptionalRevision(t *test
 	}
 }
 
+func TestIntentValidationEnforcesWaitAndCancelShapes(t *testing.T) {
+	wakeAt := int64(20)
+	tests := []struct {
+		name   string
+		intent Intent
+		valid  bool
+	}{
+		{name: "wait", intent: Intent{Kind: "wait", NextWakeAt: &wakeAt}, valid: true},
+		{name: "wait with note", intent: Intent{Kind: "wait", NextWakeAt: &wakeAt, ProgressNote: "route selected"}, valid: true},
+		{name: "wait missing time", intent: Intent{Kind: "wait"}},
+		{name: "wait negative time", intent: Intent{Kind: "wait", NextWakeAt: testInt64(-1)}},
+		{name: "wait reason", intent: Intent{Kind: "wait", NextWakeAt: &wakeAt, Reason: "later"}},
+		{name: "wait blank note", intent: Intent{Kind: "wait", NextWakeAt: &wakeAt, ProgressNote: " \t\n"}},
+		{name: "cancel", intent: Intent{Kind: "cancel", Reason: "player withdrew"}, valid: true},
+		{name: "cancel missing reason", intent: Intent{Kind: "cancel"}},
+		{name: "cancel blank reason", intent: Intent{Kind: "cancel", Reason: " \t\n"}},
+		{name: "cancel wake", intent: Intent{Kind: "cancel", NextWakeAt: &wakeAt, Reason: "player withdrew"}},
+		{name: "cancel note", intent: Intent{Kind: "cancel", ProgressNote: "model note", Reason: "player withdrew"}},
+		{name: "empty kind", intent: Intent{}},
+		{name: "succeeded", intent: Intent{Kind: "succeeded"}},
+		{name: "failed", intent: Intent{Kind: "failed"}},
+		{name: "case variant", intent: Intent{Kind: "WAIT", NextWakeAt: &wakeAt}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.intent.Validate()
+			if tt.valid && err != nil {
+				t.Fatalf("Intent.Validate() error = %v", err)
+			}
+			if !tt.valid && !errors.Is(err, ErrInvalidTaskSpec) {
+				t.Fatalf("Intent.Validate() error = %v, want ErrInvalidTaskSpec", err)
+			}
+		})
+	}
+}
+
 func TestTaskDurableCounterValidationAndCheckedIncrement(t *testing.T) {
 	for _, value := range []uint64{1, uint64(math.MaxInt64)} {
 		if err := ValidateDurableCounter(value); err != nil {

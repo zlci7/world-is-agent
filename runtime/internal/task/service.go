@@ -157,6 +157,9 @@ func (s *Service) Create(ctx context.Context, exec ExecutionContext, spec TaskSp
 			result = CreateResult{Task: equivalent, Created: false}
 			return nil
 		}
+		if err := enforceAdmissionTx(ctx, tx, exec.Owner, admission); err != nil {
+			return err
+		}
 		if exec.Clock.Tick >= clonedSpec.WakeAt || clonedSpec.WakeAt > clonedSpec.DeadlineAt {
 			return ErrInvalidTaskSpec
 		}
@@ -173,6 +176,162 @@ func (s *Service) Create(ctx context.Context, exec ExecutionContext, spec TaskSp
 		return CreateResult{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent Intent) (Record, error) {
+	if err := validateService(s, ctx); err != nil {
+		return Record{}, err
+	}
+	if err := validateApplyIntentInput(exec, intent); err != nil {
+		return Record{}, err
+	}
+	request, err := prepareIntentRequest(exec, intent)
+	if err != nil {
+		return Record{}, err
+	}
+
+	var result Record
+	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
+		head, found, err := s.store.loadWorldHeadTx(ctx, tx, exec.Binding.World)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrWorldNotReady
+		}
+		if err := validateCreateAuthority(head, exec); err != nil {
+			return err
+		}
+
+		exact, found, err := s.store.loadExactIntentTx(ctx, tx, exec.Owner, request)
+		if err != nil {
+			return err
+		}
+		if found {
+			if exact.Spec.ClockID != exec.Clock.ID {
+				return ErrClockMismatch
+			}
+			result = exact
+			return nil
+		}
+
+		current, err := s.store.loadIntentTaskTx(ctx, tx, exec.Owner, exec.TaskID)
+		if err != nil {
+			return err
+		}
+		if current.record.Spec.ClockID != exec.Clock.ID {
+			return ErrClockMismatch
+		}
+		if taskStateTerminal(current.record.State) {
+			return ErrTaskTerminal
+		}
+		if current.record.Result != nil {
+			return ErrInvalidTaskSpec
+		}
+		if current.record.Revision != exec.ExpectedRevision {
+			return ErrTaskChanged
+		}
+		if current.record.NeedsReconcile || recordHasUnappliedEvidence(current.record) {
+			return ErrTaskChanged
+		}
+		nextRevision, err := NextDurableCounter(current.record.Revision)
+		if err != nil {
+			return err
+		}
+
+		updated := current.record
+		updated.Revision = nextRevision
+		updated.NeedsReconcile = false
+		updated.PauseReason = ""
+		updated.NoProgressAttempts = 0
+		updated.ReconcileAttempts = 0
+		reserveTerminal := false
+		switch intent.Kind {
+		case "wait":
+			if intent.NextWakeAt == nil || exec.Clock.Tick >= *intent.NextWakeAt || *intent.NextWakeAt > current.record.Spec.DeadlineAt {
+				return ErrInvalidTaskSpec
+			}
+			updated.State = StateWaiting
+			nextWake := *intent.NextWakeAt
+			updated.NextWakeAt = &nextWake
+			updated.Result = nil
+			if intent.ProgressNote != "" {
+				progress, err := modelProgressJSON(intent.ProgressNote)
+				if err != nil {
+					return ErrInvalidTaskSpec
+				}
+				updated.Progress = progress
+			}
+			reserveTerminal = true
+		case "cancel":
+			updated.State = StateCancelled
+			updated.NextWakeAt = nil
+			updated.Result = &Result{
+				ID: s.newID("result"), TaskID: updated.ID, Revision: nextRevision,
+				State: StateCancelled, Reason: intent.Reason, OccurredAt: exec.Clock.Tick,
+				EvidenceRefs: []string{}, Source: request.request.Source,
+			}
+		default:
+			return ErrInvalidTaskSpec
+		}
+
+		prepared, err := s.store.prepareIntentMutation(current, updated, request, reserveTerminal)
+		if err != nil {
+			return err
+		}
+		if err := s.store.updateIntentRecordTx(ctx, tx, current.record, prepared); err != nil {
+			return err
+		}
+		if err := s.store.consumeIntentWakesTx(ctx, tx, current.record); err != nil {
+			return err
+		}
+		if intent.Kind == "wait" {
+			wake := Wake{
+				ID: s.newID("wake"), TaskID: updated.ID, Owner: updated.Owner,
+				ExpectedRevision: updated.Revision, DueTick: *updated.NextWakeAt,
+				Reason: wakeReasonIntentWait, Status: wakeStatusPending,
+				Generation: exec.Binding.Generation,
+			}
+			if err := s.store.insertIntentWakeTx(ctx, tx, updated, wake); err != nil {
+				return err
+			}
+		}
+		if err := s.store.storeIntentHistoryTx(ctx, tx, current.record, prepared); err != nil {
+			return err
+		}
+		result = prepared.record
+		return nil
+	})
+	if err != nil {
+		return Record{}, err
+	}
+	return result, nil
+}
+
+func validateApplyIntentInput(exec ExecutionContext, intent Intent) error {
+	if err := exec.Validate(); err != nil {
+		return err
+	}
+	if !requiredIdentity(exec.TaskID) || exec.ExpectedRevision == 0 {
+		return ErrInvalidTaskSpec
+	}
+	if !requiredIdentity(exec.Source.EventID) || !requiredIdentity(exec.Source.TurnID) || !requiredIdentity(exec.Source.CallID) {
+		return ErrSourceInvalid
+	}
+	return intent.Validate()
+}
+
+func taskStateTerminal(state State) bool {
+	return state == StateSucceeded || state == StateFailed || state == StateCancelled
+}
+
+func recordHasUnappliedEvidence(record Record) bool {
+	for _, evidence := range record.Evidence {
+		if !evidence.Applied {
+			return true
+		}
+	}
+	return false
 }
 
 func validateService(service *Service, ctx context.Context) error {
@@ -240,7 +399,7 @@ func validateCreateInput(exec ExecutionContext, spec TaskSpec, admission Admissi
 	if err := spec.Validate(); err != nil {
 		return err
 	}
-	if err := admission.Validate(); err != nil || admission.MaxActivePerOwner != 0 {
+	if err := admission.Validate(); err != nil {
 		return ErrInvalidTaskSpec
 	}
 	if !requiredIdentity(exec.Source.EventID) || !requiredIdentity(exec.Source.TurnID) || !requiredIdentity(exec.Source.CallID) {

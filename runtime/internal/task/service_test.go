@@ -724,8 +724,8 @@ func TestCreateValidationAndAuthorityFailuresWriteNothing(t *testing.T) {
 		{name: "invalid contract json", mutate: func(_ *createFixture, _ *ExecutionContext, spec *TaskSpec, _ *Admission) {
 			spec.Contract = []byte(`{"bad":`)
 		}, want: ErrInvalidTaskSpec},
-		{name: "admission not implemented", mutate: func(_ *createFixture, _ *ExecutionContext, _ *TaskSpec, admission *Admission) {
-			admission.MaxActivePerOwner = 1
+		{name: "negative admission", mutate: func(_ *createFixture, _ *ExecutionContext, _ *TaskSpec, admission *Admission) {
+			admission.MaxActivePerOwner = -1
 		}, want: ErrInvalidTaskSpec},
 	}
 	for _, tt := range tests {

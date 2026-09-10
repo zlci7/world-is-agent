@@ -37,6 +37,9 @@ type SQLiteStore struct {
 	// testAfterTaskInsert is the narrow fault seam required to prove that the
 	// task and its first wake are one atomic write. Production never sets it.
 	testAfterTaskInsert func(context.Context) error
+	// testAfterIntentStage proves that each durable intent mutation rolls back
+	// as a unit. Production never sets it.
+	testAfterIntentStage func(context.Context, string) error
 }
 
 type worldHeadRow struct {
@@ -72,6 +75,8 @@ type taskRowColumns struct {
 	recordJSON         []byte
 	createResponseJSON []byte
 	createResponseHash string
+	intentHistoryJSON  []byte
+	intentHistoryHash  string
 }
 
 type preparedTaskCreate struct {
@@ -82,6 +87,8 @@ type preparedTaskCreate struct {
 	wakeJSON           []byte
 	createResponseJSON []byte
 	createResponseHash string
+	intentHistoryJSON  []byte
+	intentHistoryHash  string
 }
 
 type rowScanner interface {
@@ -130,6 +137,8 @@ var taskSQLiteSchema = []struct {
 			record_json BLOB NOT NULL,
 			create_response_json BLOB NOT NULL,
 			create_response_hash TEXT NOT NULL,
+			intent_history_json BLOB NOT NULL,
+			intent_history_hash TEXT NOT NULL,
 			PRIMARY KEY (game_id, world_id, entity_id, task_id)
 		)`,
 	},
@@ -338,7 +347,10 @@ func (s *SQLiteStore) prepareTaskCreate(record Record, wake Wake) (preparedTaskC
 		return preparedTaskCreate{}, ErrInvalidTaskSpec
 	}
 	responseJSON, err := json.Marshal(initialCreateResult(record))
-	if err != nil || len(recordJSON) > s.options.MaxTaskBytes || len(responseJSON) > s.options.MaxTaskBytes-len(recordJSON) {
+	intentHistoryJSON := []byte("[]")
+	if err != nil || len(recordJSON) > s.options.MaxTaskBytes ||
+		len(responseJSON) > s.options.MaxTaskBytes-len(recordJSON) ||
+		len(intentHistoryJSON) > s.options.MaxTaskBytes-len(recordJSON)-len(responseJSON) {
 		return preparedTaskCreate{}, ErrInvalidTaskSpec
 	}
 	return preparedTaskCreate{
@@ -349,6 +361,8 @@ func (s *SQLiteStore) prepareTaskCreate(record Record, wake Wake) (preparedTaskC
 		wakeJSON:           wakeJSON,
 		createResponseJSON: responseJSON,
 		createResponseHash: sha256Hex(responseJSON),
+		intentHistoryJSON:  intentHistoryJSON,
+		intentHistoryHash:  sha256Hex(intentHistoryJSON),
 	}, nil
 }
 
@@ -382,13 +396,14 @@ func (s *SQLiteStore) insertTaskAndWakeTx(ctx context.Context, tx *sql.Tx, prepa
 	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks (
 		game_id, world_id, entity_id, task_id, state, revision, clock_id, next_wake_at,
 		create_event_id, create_turn_id, create_call_id, create_fingerprint, equivalence_key,
-		record_json, create_response_json, create_response_hash
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record_json, create_response_json, create_response_hash, intent_history_json, intent_history_hash
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.Owner.GameID, record.Owner.WorldID, record.Owner.EntityID, record.ID,
 		string(record.State), int64(record.Revision), record.Spec.ClockID, nullableTick(record.NextWakeAt),
 		record.Spec.Source.EventID, record.Spec.Source.TurnID, record.Spec.Source.CallID,
 		prepared.fingerprint, record.Spec.EquivalenceKey, prepared.recordJSON,
 		prepared.createResponseJSON, prepared.createResponseHash,
+		prepared.intentHistoryJSON, prepared.intentHistoryHash,
 	); err != nil {
 		return err
 	}
@@ -763,7 +778,7 @@ func (s *SQLiteStore) withImmediateTransaction(ctx context.Context, callback fun
 const taskSelectSQL = `SELECT game_id, world_id, entity_id, task_id, state, revision,
 	clock_id, next_wake_at, create_event_id, create_turn_id, create_call_id,
 	create_fingerprint, equivalence_key, record_json, create_response_json,
-	create_response_hash FROM tasks`
+	create_response_hash, intent_history_json, intent_history_hash FROM tasks`
 
 func scanTaskRow(row rowScanner) (Record, error) {
 	record, _, _, err := scanTaskRowWithCreate(row)
@@ -771,6 +786,11 @@ func scanTaskRow(row rowScanner) (Record, error) {
 }
 
 func scanTaskRowWithCreate(row rowScanner) (Record, CreateResult, string, error) {
+	record, response, fingerprint, _, err := scanTaskRowWithMetadata(row)
+	return record, response, fingerprint, err
+}
+
+func scanTaskRowWithMetadata(row rowScanner) (Record, CreateResult, string, []intentCall, error) {
 	var columns taskRowColumns
 	if err := row.Scan(
 		&columns.gameID, &columns.worldID, &columns.entityID, &columns.taskID,
@@ -778,22 +798,23 @@ func scanTaskRowWithCreate(row rowScanner) (Record, CreateResult, string, error)
 		&columns.createEventID, &columns.createTurnID, &columns.createCallID,
 		&columns.createFingerprint, &columns.equivalenceKey, &columns.recordJSON,
 		&columns.createResponseJSON, &columns.createResponseHash,
+		&columns.intentHistoryJSON, &columns.intentHistoryHash,
 	); err != nil {
-		return Record{}, CreateResult{}, "", err
+		return Record{}, CreateResult{}, "", nil, err
 	}
 	if columns.revision <= 0 {
-		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", nil, ErrInvalidTaskSpec
 	}
 	var record Record
 	if err := json.Unmarshal(columns.recordJSON, &record); err != nil {
-		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", nil, ErrInvalidTaskSpec
 	}
 	if err := record.Validate(); err != nil {
-		return Record{}, CreateResult{}, "", err
+		return Record{}, CreateResult{}, "", nil, err
 	}
 	fingerprint, err := taskSpecFingerprint(record.Spec)
 	if err != nil {
-		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", nil, ErrInvalidTaskSpec
 	}
 	if record.Owner != (session.AgentSessionKey{GameID: columns.gameID, WorldID: columns.worldID, EntityID: columns.entityID}) ||
 		record.ID != columns.taskID || string(record.State) != columns.state ||
@@ -803,13 +824,17 @@ func scanTaskRowWithCreate(row rowScanner) (Record, CreateResult, string, error)
 		record.Spec.Source.TurnID != columns.createTurnID ||
 		record.Spec.Source.CallID != columns.createCallID ||
 		fingerprint != columns.createFingerprint || record.Spec.EquivalenceKey != columns.equivalenceKey {
-		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
+		return Record{}, CreateResult{}, "", nil, ErrInvalidTaskSpec
 	}
 	response, err := decodeCreateResponse(columns, record, columns.createFingerprint)
 	if err != nil {
-		return Record{}, CreateResult{}, "", err
+		return Record{}, CreateResult{}, "", nil, err
 	}
-	return record, response, columns.createFingerprint, nil
+	history, err := decodeIntentHistory(columns.intentHistoryJSON, columns.intentHistoryHash, record)
+	if err != nil {
+		return Record{}, CreateResult{}, "", nil, err
+	}
+	return record, response, columns.createFingerprint, history, nil
 }
 
 func decodeCreateResponse(columns taskRowColumns, record Record, wantFingerprint string) (CreateResult, error) {
