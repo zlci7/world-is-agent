@@ -1,6 +1,7 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -600,6 +601,23 @@ func (s *SQLiteStore) loadWorldHeadTx(ctx context.Context, tx *sql.Tx, world Wor
 	return row, true, nil
 }
 
+func (s *SQLiteStore) worldHasDurableStateTx(ctx context.Context, tx *sql.Tx, world WorldKey) (bool, error) {
+	var exists int
+	err := tx.QueryRowContext(ctx, `SELECT CASE WHEN
+		EXISTS (SELECT 1 FROM tasks WHERE game_id = ? AND world_id = ?) OR
+		EXISTS (SELECT 1 FROM task_wakeups WHERE game_id = ? AND world_id = ?) OR
+		EXISTS (SELECT 1 FROM task_checkpoints WHERE game_id = ? AND world_id = ?)
+		THEN 1 ELSE 0 END`,
+		world.GameID, world.WorldID,
+		world.GameID, world.WorldID,
+		world.GameID, world.WorldID,
+	).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists == 1, nil
+}
+
 const worldHeadSelectSQL = `SELECT game_id, world_id, run_id, generation,
 	clock_id, clock_tick, clock_sequence, checkpoint_id, save_request_id,
 	barrier_status, status, reason, head_json
@@ -787,41 +805,30 @@ func scanTaskRowWithCreate(row rowScanner) (Record, CreateResult, string, error)
 		fingerprint != columns.createFingerprint || record.Spec.EquivalenceKey != columns.equivalenceKey {
 		return Record{}, CreateResult{}, "", ErrInvalidTaskSpec
 	}
-	response, err := decodeCreateResponse(columns, columns.createFingerprint)
+	response, err := decodeCreateResponse(columns, record, columns.createFingerprint)
 	if err != nil {
 		return Record{}, CreateResult{}, "", err
 	}
 	return record, response, columns.createFingerprint, nil
 }
 
-func decodeCreateResponse(columns taskRowColumns, wantFingerprint string) (CreateResult, error) {
-	var result CreateResult
+func decodeCreateResponse(columns taskRowColumns, record Record, wantFingerprint string) (CreateResult, error) {
 	if columns.createResponseHash != sha256Hex(columns.createResponseJSON) {
 		return CreateResult{}, ErrInvalidTaskSpec
 	}
-	if err := json.Unmarshal(columns.createResponseJSON, &result); err != nil || !result.Created {
+	canonical := initialCreateResult(record)
+	canonicalJSON, err := json.Marshal(canonical)
+	if err != nil || !bytes.Equal(columns.createResponseJSON, canonicalJSON) {
 		return CreateResult{}, ErrInvalidTaskSpec
 	}
-	if err := result.Task.Validate(); err != nil {
+	if err := canonical.Task.Validate(); err != nil {
 		return CreateResult{}, ErrInvalidTaskSpec
 	}
-	fingerprint, err := taskSpecFingerprint(result.Task.Spec)
-	if err != nil || fingerprint != wantFingerprint ||
-		result.Task.Owner != (session.AgentSessionKey{GameID: columns.gameID, WorldID: columns.worldID, EntityID: columns.entityID}) ||
-		result.Task.ID != columns.taskID || result.Task.State != StateWaiting || result.Task.Revision != 1 ||
-		result.Task.Spec.Source.EventID != columns.createEventID ||
-		result.Task.Spec.Source.TurnID != columns.createTurnID ||
-		result.Task.Spec.Source.CallID != columns.createCallID ||
-		result.Task.Spec.EquivalenceKey != columns.equivalenceKey ||
-		result.Task.NextWakeAt == nil || *result.Task.NextWakeAt != result.Task.Spec.WakeAt ||
-		result.Task.CreatedAtGameTick < 0 || result.Task.CreatedAtUnixMS < 0 ||
-		len(result.Task.Progress) != 0 || result.Task.NeedsReconcile || result.Task.PauseReason != "" ||
-		result.Task.NoProgressAttempts != 0 || result.Task.ReconcileAttempts != 0 ||
-		len(result.Task.Operations) != 0 || len(result.Task.Evidence) != 0 || result.Task.Result != nil ||
-		len(result.Task.Cleanup) != 0 {
+	fingerprint, err := taskSpecFingerprint(canonical.Task.Spec)
+	if err != nil || fingerprint != wantFingerprint {
 		return CreateResult{}, ErrInvalidTaskSpec
 	}
-	return result, nil
+	return canonical, nil
 }
 
 func sha256Hex(data []byte) string {

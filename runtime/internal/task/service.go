@@ -63,6 +63,13 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 			result = current.Head
 			return nil
 		}
+		hasState, err := s.store.worldHasDurableStateTx(ctx, tx, world)
+		if err != nil {
+			return err
+		}
+		if hasState {
+			return ErrWorldNotReady
+		}
 		if err := s.store.insertWorldHeadTx(ctx, tx, row, headJSON); err != nil {
 			return err
 		}

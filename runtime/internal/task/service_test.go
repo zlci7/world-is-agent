@@ -3,7 +3,9 @@ package task
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -527,6 +529,111 @@ func TestActivateWorldRejectsInvalidOrUnsupportedReferencesWithoutWriting(t *tes
 	}
 }
 
+func TestActivateWorldRejectsMissingHeadWithDurableWorldState(t *testing.T) {
+	t.Run("orphan task and wake", func(t *testing.T) {
+		fixture := newCreateFixture(t, StoreOptions{})
+		if _, err := fixture.svc.Create(context.Background(), fixture.exec, fixture.spec, Admission{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.store.db.Exec(`DELETE FROM task_world_heads WHERE game_id = ? AND world_id = ?`,
+			fixture.world.GameID, fixture.world.WorldID); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, "run-recreated", fixture.clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); !errors.Is(err, ErrWorldNotReady) {
+			t.Fatalf("ActivateWorld() error = %v, want ErrWorldNotReady", err)
+		}
+		if got := totalRows(t, fixture.store.db, "task_world_heads"); got != 0 {
+			t.Fatalf("world head count = %d, want 0", got)
+		}
+		assertCreateRowCounts(t, fixture.store, fixture.exec.Owner, 1, 1)
+	})
+
+	t.Run("checkpoint only", func(t *testing.T) {
+		store := openTaskTestStore(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite")})
+		checkpoint := checkpointStoreFixture("checkpoint-orphan", "save-orphan", []byte(`{"tasks":[]}`))
+		if err := store.insertCheckpoint(context.Background(), checkpoint); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewService(store).ActivateWorld(context.Background(), checkpoint.World, "run-a", checkpoint.Clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: checkpoint.World}); !errors.Is(err, ErrWorldNotReady) {
+			t.Fatalf("ActivateWorld() error = %v, want ErrWorldNotReady", err)
+		}
+		if got := totalRows(t, store.db, "task_world_heads"); got != 0 {
+			t.Fatalf("world head count = %d, want 0", got)
+		}
+		if got := totalRows(t, store.db, "task_checkpoints"); got != 1 {
+			t.Fatalf("checkpoint count = %d, want 1", got)
+		}
+	})
+
+	t.Run("other world state does not block", func(t *testing.T) {
+		store := openTaskTestStore(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite")})
+		ownerA := testOwner()
+		record, wake := taskStoreFixture(ownerA, "task-world-a", "wake-world-a")
+		if err := store.insertTaskAndWake(context.Background(), record, wake); err != nil {
+			t.Fatal(err)
+		}
+		checkpoint := checkpointStoreFixture("checkpoint-world-a", "save-world-a", []byte(`{"tasks":[]}`))
+		if err := store.insertCheckpoint(context.Background(), checkpoint); err != nil {
+			t.Fatal(err)
+		}
+
+		worldB := WorldKey{GameID: ownerA.GameID, WorldID: "world-b"}
+		clock := Clock{ID: "fake.minute.v1", Tick: 100, Sequence: 1}
+		head, err := NewService(store).ActivateWorld(context.Background(), worldB, "run-b", clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: worldB})
+		if err != nil {
+			t.Fatalf("ActivateWorld(other world) error = %v", err)
+		}
+		if head.Binding.World != worldB || head.Binding.Generation != 1 {
+			t.Fatalf("other-world head = %+v", head)
+		}
+	})
+}
+
+func TestActivateWorldSerializesResidualStateCheckWithHeadInsert(t *testing.T) {
+	store := openTaskTestStore(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite")})
+	owner := testOwner()
+	record, wake := taskStoreFixture(owner, "task-race", "wake-race")
+	taskInserted := make(chan struct{})
+	allowWakeInsert := make(chan struct{})
+	store.testAfterTaskInsert = func(context.Context) error {
+		close(taskInserted)
+		<-allowWakeInsert
+		return nil
+	}
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- store.insertTaskAndWake(context.Background(), record, wake)
+	}()
+	<-taskInserted
+
+	activationStarted := make(chan struct{})
+	activationDone := make(chan error, 1)
+	go func() {
+		close(activationStarted)
+		_, err := NewService(store).ActivateWorld(context.Background(), testWorld(), "run-race",
+			Clock{ID: "fake.minute.v1", Tick: 100, Sequence: 1},
+			CheckpointRef{Status: checkpointStatusAbsent, World: testWorld()})
+		activationDone <- err
+	}()
+	<-activationStarted
+	close(allowWakeInsert)
+	if err := <-insertDone; err != nil {
+		t.Fatalf("insertTaskAndWake() error = %v", err)
+	}
+	store.testAfterTaskInsert = nil
+	if err := <-activationDone; !errors.Is(err, ErrWorldNotReady) {
+		t.Fatalf("concurrent ActivateWorld() error = %v, want ErrWorldNotReady", err)
+	}
+	if got := totalRows(t, store.db, "task_world_heads"); got != 0 {
+		t.Fatalf("world head count = %d, want 0", got)
+	}
+	assertCreateRowCounts(t, store, owner, 1, 1)
+}
+
 func TestCreatePersistsExactInitialTaskAndWakeWithOpaqueLexemes(t *testing.T) {
 	fixture := newCreateFixture(t, StoreOptions{})
 	created, err := fixture.svc.Create(context.Background(), fixture.exec, fixture.spec, Admission{})
@@ -702,6 +809,53 @@ func TestCreateIdempotencyRejectsCorruptOrNoncanonicalStoredResponse(t *testing.
 			t.Fatalf("exact retry error = %v, want ErrInvalidTaskSpec", err)
 		}
 	})
+}
+
+func TestCreateIdempotencyRejectsRehashedNoncanonicalOrChangedResponse(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, []byte) []byte
+	}{
+		{name: "added whitespace", mutate: func(_ *testing.T, original []byte) []byte {
+			return append(append([]byte{' ', '\n'}, original...), '\n')
+		}},
+		{name: "created timestamp changed", mutate: func(t *testing.T, original []byte) []byte {
+			var result CreateResult
+			if err := json.Unmarshal(original, &result); err != nil {
+				t.Fatal(err)
+			}
+			result.Task.CreatedAtUnixMS++
+			return mustJSONBytes(t, result)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newCreateFixture(t, StoreOptions{})
+			created, err := fixture.svc.Create(context.Background(), fixture.exec, fixture.spec, Admission{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var original []byte
+			if err := fixture.store.db.QueryRow(`SELECT create_response_json FROM tasks
+				WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ?`,
+				fixture.exec.Owner.GameID, fixture.exec.Owner.WorldID, fixture.exec.Owner.EntityID, created.Task.ID).Scan(&original); err != nil {
+				t.Fatal(err)
+			}
+			changed := tt.mutate(t, original)
+			changedHash := independentSHA256Hex(changed)
+			if _, err := fixture.store.db.Exec(`UPDATE tasks SET create_response_json = ?, create_response_hash = ?
+				WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ?`,
+				changed, changedHash, fixture.exec.Owner.GameID, fixture.exec.Owner.WorldID, fixture.exec.Owner.EntityID, created.Task.ID); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := fixture.svc.Create(context.Background(), fixture.exec, fixture.spec, Admission{}); !errors.Is(err, ErrInvalidTaskSpec) {
+				t.Fatalf("exact retry error = %v, want ErrInvalidTaskSpec", err)
+			}
+			assertCreateRowCounts(t, fixture.store, fixture.exec.Owner, 1, 1)
+		})
+	}
 }
 
 func TestCreateCallerMutationCannotAlterDurableTaskOrExactResponse(t *testing.T) {
@@ -981,6 +1135,11 @@ func mustJSONBytes(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func independentSHA256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func cloneExecutionContextForTest(t *testing.T, value ExecutionContext) ExecutionContext {
