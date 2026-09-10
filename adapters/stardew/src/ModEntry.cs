@@ -1,6 +1,7 @@
 using System;
 using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Dialogue;
+using GameAgent.Stardew.Diagnostics;
 using GameAgent.Stardew.Events;
 using GameAgent.Stardew.Runtime;
 using GameAgent.Stardew.State;
@@ -24,10 +25,19 @@ public sealed class ModEntry : Mod
     private MoveToCapability? moveToCapability;
     private PlayerInteractProbe? playerInteractProbe;
     private RuntimeClient? runtimeClient;
+    private StardewRouteProbe? phase9RouteProbe;
 
     public override void Entry(IModHelper helper)
     {
         this.config = helper.ReadConfig<AdapterConfig>();
+        if (this.config.EnablePhase9RouteProbe)
+        {
+            this.phase9RouteProbe = new StardewRouteProbe(helper, this.Monitor, this.config);
+            helper.Events.GameLoop.UpdateTicked += (_, _) => this.phase9RouteProbe.Update();
+            helper.Events.GameLoop.SaveLoaded += (_, _) => this.phase9RouteProbe.WorldChanged("save_loaded");
+            helper.Events.GameLoop.ReturnedToTitle += (_, _) => this.phase9RouteProbe.WorldChanged("returned_to_title");
+            helper.Events.GameLoop.DayStarted += (_, _) => this.phase9RouteProbe.WorldChanged("day_started");
+        }
         this.dispatcher = new MainThreadDispatcher(this.Monitor);
         this.conversationStore = new ConversationStateStore(new ConversationIdGenerator());
         this.dialogueController = new DialogueInteractionController();
@@ -72,7 +82,10 @@ public sealed class ModEntry : Mod
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
+            this.phase9RouteProbe?.Dispose();
             this.runtimeClient?.Dispose();
+        }
     }
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)

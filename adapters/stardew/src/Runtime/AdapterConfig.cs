@@ -15,4 +15,8 @@ public sealed class AdapterConfig
     public List<string> AgentTargets { get; set; } = new();
 
     public bool EnableProtocolTrace { get; set; } = true;
+
+    public bool EnablePhase9RouteProbe { get; set; } = false;
+
+    public string Phase9TestSaveSlot { get; set; } = "";
 }

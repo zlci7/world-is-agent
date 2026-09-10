@@ -266,6 +266,25 @@ if (Test-Path -LiteralPath $playerInteractProbePath) {
     }
 }
 
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'pathfindToNextScheduleLocation' 'Phase9 diagnostic routes must use the local native NPC schedule pathfinder.'
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'checkSchedule\(Game1.timeOfDay\)' 'Phase9 diagnostic restoration must rejoin the current native schedule.'
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'isPositionImpassableForNPCSchedule' 'Phase9 diagnostic endpoints must validate native schedule passability as well as route existence.'
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'ProbeTestSaveLoader.RegisterCommand' 'The live test-save entry must use the tested opt-in registration gate.'
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'ProbeTestSaveLoader.Load' 'The live test-save entry must use the tested configured-basename gate.'
+Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'SaveGame.Load\(slot\)' 'The test-save loader must use the public local game loader.'
+$phase9EntrySource = Get-Content -LiteralPath (Join-Path $Root 'src/ModEntry.cs') -Raw
+if ($phase9EntrySource -notmatch 'if \(this.config.EnablePhase9RouteProbe\)\s*\{\s*this.phase9RouteProbe = new StardewRouteProbe') {
+    $failures.Add('Phase9 diagnostic commands and update wiring must be opt-in.') | Out-Null
+}
+Reject-Content 'src/Runtime/CapabilityCatalog.cs' 'phase9|route_probe|load_test_save' 'Phase9 diagnostic entry points must remain outside the model-visible capability list.'
+Reject-Content 'src/Runtime/RuntimeClient.cs' 'Diagnostics|phase9_route|load_test_save' 'Runtime must not dispatch the feasibility probe.'
+Get-ChildItem -LiteralPath (Join-Path $Root 'src/Diagnostics') -Filter '*.cs' | ForEach-Object {
+    $relative = 'src/Diagnostics/' + $_.Name
+    Reject-Content $relative 'warpToPathControllerDestination|warpCharacter|setTilePosition|\.Position\s*=(?!=)|\.currentLocation\s*=(?!=)' 'Phase9 diagnostic code must not teleport or directly reposition an NPC.'
+    Reject-Content $relative '(owned|controller|native)\.update\(' 'Phase9 diagnostic orchestration must let the game update path controllers.'
+    Reject-Content $relative 'File\.(Write|Copy|Move|Delete)|Directory\.(Create|Move|Delete)|SaveGame\.Save\(' 'Phase9 diagnostic code must not mutate save files.'
+}
+
 if ($failures.Count -gt 0) {
     Write-Host 'Stardew adapter context static check failed:'
     foreach ($failure in $failures) {
