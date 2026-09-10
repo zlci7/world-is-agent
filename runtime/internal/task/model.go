@@ -325,10 +325,17 @@ func (r Record) Validate() error {
 		if err := operation.Validate(); err != nil {
 			return err
 		}
+		if !sameOwnerWorld(r.Owner, operation.Binding.World) {
+			return ErrWorldMismatch
+		}
 	}
 	for _, evidence := range r.Evidence {
 		if err := evidence.Validate(); err != nil {
 			return err
+		}
+		if !sameOwnerWorld(r.Owner, evidence.Binding.World) ||
+			evidence.RevalidatedIn != nil && !sameOwnerWorld(r.Owner, evidence.RevalidatedIn.World) {
+			return ErrWorldMismatch
 		}
 	}
 	if r.Result != nil {
@@ -484,6 +491,10 @@ func validateOwner(owner session.AgentSessionKey) error {
 		return ErrInvalidTaskSpec
 	}
 	return nil
+}
+
+func sameOwnerWorld(owner session.AgentSessionKey, world WorldKey) bool {
+	return owner.GameID == world.GameID && owner.WorldID == world.WorldID
 }
 
 func requiredIdentity(value string) bool {

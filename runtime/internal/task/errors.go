@@ -1,5 +1,10 @@
 package task
 
+import (
+	"context"
+	"errors"
+)
+
 type Code string
 
 const (
@@ -97,6 +102,27 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
+// WrapError retains only causes that can be reduced to a payload-free classification.
 func WrapError(code Code, cause error) *Error {
-	return &Error{Code: code, cause: cause}
+	return &Error{Code: code, cause: sanitizedCause(cause)}
+}
+
+func sanitizedCause(cause error) error {
+	if cause == nil {
+		return nil
+	}
+
+	var taskErr *Error
+	if errors.As(cause, &taskErr) && taskErr != nil && taskErr.Code.Valid() {
+		return &Error{Code: taskErr.Code, cause: sanitizedCause(taskErr.cause)}
+	}
+
+	switch {
+	case errors.Is(cause, context.Canceled):
+		return context.Canceled
+	case errors.Is(cause, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
 }

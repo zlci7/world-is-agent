@@ -3,7 +3,9 @@ package task
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"math"
+	"reflect"
 	"testing"
 
 	"gameagent/runtime/internal/session"
@@ -246,6 +248,52 @@ func TestRecordValidationRejectsInvalidIdentityRevisionAndTimestamps(t *testing.
 				t.Fatal("Record.Validate() returned nil")
 			}
 		})
+	}
+}
+
+func TestRecordValidationRejectsNestedWorldMismatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Record)
+	}{
+		{name: "operation game", mutate: func(value *Record) { value.Operations[0].Binding.World.GameID = "other-game" }},
+		{name: "operation world", mutate: func(value *Record) { value.Operations[0].Binding.World.WorldID = "other-world" }},
+		{name: "evidence game", mutate: func(value *Record) { value.Evidence[0].Binding.World.GameID = "other-game" }},
+		{name: "evidence world", mutate: func(value *Record) { value.Evidence[0].Binding.World.WorldID = "other-world" }},
+		{name: "revalidated game", mutate: func(value *Record) { value.Evidence[0].RevalidatedIn.World.GameID = "other-game" }},
+		{name: "revalidated world", mutate: func(value *Record) { value.Evidence[0].RevalidatedIn.World.WorldID = "other-world" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			record := testRecord()
+			record.Operations = []Operation{testOperation()}
+			record.Evidence = []Evidence{testEvidence()}
+			tt.mutate(&record)
+
+			err := record.Validate()
+			if !errors.Is(err, ErrWorldMismatch) {
+				t.Fatalf("Record.Validate() error = %v, want ErrWorldMismatch", err)
+			}
+		})
+	}
+}
+
+func TestRecordValidationAllowsNestedHistoricalBindingForSameWorld(t *testing.T) {
+	record := testRecord()
+	operation := testOperation()
+	operation.Binding.RunID = "historical-run"
+	operation.Binding.Generation = 2
+	evidence := testEvidence()
+	evidence.Binding.RunID = "earlier-run"
+	evidence.Binding.Generation = 3
+	evidence.RevalidatedIn.RunID = "current-run"
+	evidence.RevalidatedIn.Generation = 4
+	record.Operations = []Operation{operation}
+	record.Evidence = []Evidence{evidence}
+
+	if err := record.Validate(); err != nil {
+		t.Fatalf("Record.Validate() returned error for same-world historical bindings: %v", err)
 	}
 }
 
@@ -518,6 +566,96 @@ func TestTaskJSONUsesSnakeCaseForStandaloneContracts(t *testing.T) {
 	}
 }
 
+func TestTaskOwnerJSONUsesExactSnakeCaseInEveryContainer(t *testing.T) {
+	values := []struct {
+		name  string
+		value any
+	}{
+		{name: "execution context", value: ExecutionContext{Owner: testOwner(), Binding: testBinding(), Clock: testClock(), Source: testSource(), TaskID: "task-a", WakeID: "wake-a", ExpectedRevision: 1}},
+		{name: "record", value: testRecord()},
+		{name: "wake", value: testWake()},
+	}
+
+	for _, tt := range values {
+		t.Run(tt.name, func(t *testing.T) {
+			root := marshalJSONObject(t, tt.value)
+			owner := decodeJSONObject(t, root["owner"])
+			if len(owner) != 3 {
+				t.Fatalf("owner key count = %d, want 3: %+v", len(owner), owner)
+			}
+			requireJSONKeys(t, owner, "game_id", "world_id", "entity_id")
+			requireNoPascalCaseKeys(t, owner)
+			if got := decodeJSONString(t, owner["game_id"]); got != "fake-game" {
+				t.Fatalf("game_id = %q, want fake-game", got)
+			}
+			if got := decodeJSONString(t, owner["world_id"]); got != "world-a" {
+				t.Fatalf("world_id = %q, want world-a", got)
+			}
+			if got := decodeJSONString(t, owner["entity_id"]); got != "actor-a" {
+				t.Fatalf("entity_id = %q, want actor-a", got)
+			}
+		})
+	}
+}
+
+func TestTaskOwnerJSONDecodesSnakeCaseAndRoundTripsEveryContainer(t *testing.T) {
+	exec := ExecutionContext{Owner: testOwner(), Binding: testBinding(), Clock: testClock(), Source: testSource(), TaskID: "task-a", WakeID: "wake-a", ExpectedRevision: 1}
+	requireJSONRoundTrip(t, exec)
+	requireJSONRoundTrip(t, testRecord())
+	requireJSONRoundTrip(t, testWake())
+
+	owner := json.RawMessage(`{"game_id":"fake-game","world_id":"world-a","entity_id":"actor-a"}`)
+	for _, tt := range []struct {
+		name   string
+		decode func([]byte) (session.AgentSessionKey, error)
+	}{
+		{name: "execution context", decode: func(data []byte) (session.AgentSessionKey, error) {
+			var value ExecutionContext
+			err := json.Unmarshal(data, &value)
+			return value.Owner, err
+		}},
+		{name: "record", decode: func(data []byte) (session.AgentSessionKey, error) {
+			var value Record
+			err := json.Unmarshal(data, &value)
+			return value.Owner, err
+		}},
+		{name: "wake", decode: func(data []byte) (session.AgentSessionKey, error) {
+			var value Wake
+			err := json.Unmarshal(data, &value)
+			return value.Owner, err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data := ownerContainerJSON(t, tt.name, owner)
+			got, err := tt.decode(data)
+			if err != nil {
+				t.Fatalf("json.Unmarshal() returned error: %v", err)
+			}
+			if got != testOwner() {
+				t.Fatalf("decoded owner = %+v, want %+v", got, testOwner())
+			}
+		})
+	}
+}
+
+func TestTaskOwnerJSONRejectsPascalCaseOnlyInputInEveryContainer(t *testing.T) {
+	owner := json.RawMessage(`{"GameID":"fake-game","WorldID":"world-a","EntityID":"actor-a"}`)
+	for _, tt := range []struct {
+		name   string
+		decode func([]byte) error
+	}{
+		{name: "execution context", decode: func(data []byte) error { return json.Unmarshal(data, &ExecutionContext{}) }},
+		{name: "record", decode: func(data []byte) error { return json.Unmarshal(data, &Record{}) }},
+		{name: "wake", decode: func(data []byte) error { return json.Unmarshal(data, &Wake{}) }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.decode(ownerContainerJSON(t, tt.name, owner)); err == nil {
+				t.Fatal("json.Unmarshal() accepted PascalCase-only owner")
+			}
+		})
+	}
+}
+
 func testWorld() WorldKey {
 	return WorldKey{GameID: "fake-game", WorldID: "world-a"}
 }
@@ -655,6 +793,52 @@ func marshalJSONObject(t *testing.T, value any) map[string]json.RawMessage {
 		t.Fatalf("json.Marshal(%T) returned error: %v", value, err)
 	}
 	return decodeJSONObject(t, data)
+}
+
+func ownerContainerJSON(t *testing.T, name string, owner json.RawMessage) []byte {
+	t.Helper()
+	var value any
+	switch name {
+	case "execution context":
+		value = ExecutionContext{Owner: testOwner(), Binding: testBinding(), Clock: testClock(), Source: testSource(), TaskID: "task-a", WakeID: "wake-a", ExpectedRevision: 1}
+	case "record":
+		value = testRecord()
+	case "wake":
+		value = testWake()
+	default:
+		t.Fatalf("unknown owner container %q", name)
+	}
+	root := marshalJSONObject(t, value)
+	root["owner"] = owner
+	data, err := json.Marshal(root)
+	if err != nil {
+		t.Fatalf("json.Marshal(owner container) returned error: %v", err)
+	}
+	return data
+}
+
+func requireJSONRoundTrip[T any](t *testing.T, want T) {
+	t.Helper()
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal(%T) returned error: %v", want, err)
+	}
+	var got T
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal(%T) returned error: %v", want, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("JSON round trip for %T = %+v, want %+v", want, got, want)
+	}
+}
+
+func decodeJSONString(t *testing.T, data []byte) string {
+	t.Helper()
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatalf("json.Unmarshal(string) returned error: %v", err)
+	}
+	return value
 }
 
 func decodeJSONObject(t *testing.T, data []byte) map[string]json.RawMessage {
