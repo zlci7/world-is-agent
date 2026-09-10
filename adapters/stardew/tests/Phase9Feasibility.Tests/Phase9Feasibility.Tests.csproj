@@ -14,6 +14,8 @@
     <Compile Include="../../src/Diagnostics/RouteProbe.cs" Link="RouteProbe.cs" />
     <Compile Include="../../src/Diagnostics/ProbeControllerOwnership.cs" Link="ProbeControllerOwnership.cs" />
     <Compile Include="../../src/Diagnostics/ProbeTestSaveLoader.cs" Link="ProbeTestSaveLoader.cs" />
+    <Compile Include="../../src/Diagnostics/SaveProbe.cs" Link="SaveProbe.cs" />
+    <Compile Include="../../src/Diagnostics/SaveProbeTransport.cs" Link="SaveProbeTransport.cs" />
     <Compile Include="../../src/Runtime/AdapterConfig.cs" Link="AdapterConfig.cs" />
   </ItemGroup>
 </Project>

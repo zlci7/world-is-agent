@@ -26,10 +26,12 @@ public sealed class ModEntry : Mod
     private PlayerInteractProbe? playerInteractProbe;
     private RuntimeClient? runtimeClient;
     private StardewRouteProbe? phase9RouteProbe;
+    private StardewSaveProbe? phase9SaveProbe;
 
     public override void Entry(IModHelper helper)
     {
         this.config = helper.ReadConfig<AdapterConfig>();
+        this.phase9SaveProbe = StardewSaveProbe.Create(helper, this.Monitor, this.config);
         if (this.config.EnablePhase9RouteProbe)
         {
             this.phase9RouteProbe = new StardewRouteProbe(helper, this.Monitor, this.config);
@@ -84,6 +86,7 @@ public sealed class ModEntry : Mod
         if (disposing)
         {
             this.phase9RouteProbe?.Dispose();
+            this.phase9SaveProbe?.Dispose();
             this.runtimeClient?.Dispose();
         }
     }

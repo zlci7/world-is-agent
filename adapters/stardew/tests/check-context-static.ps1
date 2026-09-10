@@ -287,6 +287,16 @@ Get-ChildItem -LiteralPath (Join-Path $Root 'src/Diagnostics') -Filter '*.cs' | 
     Reject-Content $relative 'File\.(Write|Copy|Move|Delete)|Directory\.(Create|Move|Delete)|SaveGame\.Save\(' 'Phase9 diagnostic code must not mutate save files.'
 }
 
+Require-Content 'src/Diagnostics/StardewSaveProbe.cs' 'SaveProbe.Install\(config' 'Save-probe live wiring must use the tested opt-in installation gate.'
+Require-Content 'src/Diagnostics/StardewSaveProbe.cs' 'GameLoop.Saving \+= OnSaving' 'Save-probe markers must run in the real SMAPI Saving event.'
+Require-Content 'src/Diagnostics/StardewSaveProbe.cs' 'GameLoop.Saved \+= OnSaved' 'Save-probe completion evidence must come from the real SMAPI Saved event.'
+Require-Content 'src/Diagnostics/StardewSaveProbe.cs' 'WriteSaveData\(SaveProbe.DataKey, marker\)' 'Save-probe persistence must use the diagnostic SMAPI save-data key.'
+Require-Content 'src/Diagnostics/SaveProbe.cs' 'TaskCreationOptions.RunContinuationsAsynchronously' 'Save-probe completion must isolate response callbacks from continuations.'
+foreach ($saveProbeFile in @('SaveProbe.cs', 'SaveProbeTransport.cs', 'StardewSaveProbe.cs')) {
+    Reject-Content ('src/Diagnostics/' + $saveProbeFile) 'MainThreadDispatcher|\.Enqueue\(|\.Drain\(|\bNPC\b|PathFindController|\.Halt\(|getCharacterFromName|runtime-task-checkpoint' 'Save handoff diagnostics must be independent of game-thread dispatch, NPC control, and production checkpoints.'
+    Reject-Content ('src/Diagnostics/' + $saveProbeFile) 'Thread.Sleep|\.Wait\(\)|\.Result\b' 'Save handoff diagnostics must use finite waits without sleep or unbounded task waits.'
+}
+
 if ($failures.Count -gt 0) {
     Write-Host 'Stardew adapter context static check failed:'
     foreach ($failure in $failures) {

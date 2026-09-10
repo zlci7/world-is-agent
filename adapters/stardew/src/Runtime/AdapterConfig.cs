@@ -18,5 +18,9 @@ public sealed class AdapterConfig
 
     public bool EnablePhase9RouteProbe { get; set; } = false;
 
+    public bool EnablePhase9SaveProbe { get; set; } = false;
+
+    public int Phase9SaveProbeTimeoutSeconds { get; set; } = 5;
+
     public string Phase9TestSaveSlot { get; set; } = "";
 }
