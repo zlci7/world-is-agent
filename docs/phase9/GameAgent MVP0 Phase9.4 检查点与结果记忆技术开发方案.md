@@ -2,7 +2,7 @@
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-10
-> **执行方式:** 使用 executing-plans 连续实现；故障窗口逐项测试，最终独立 review 在 Phase9.5。
+> **执行方式:** 每个独立审查单元先完成测试、聚焦验证、阶段回归和 `git diff --check`，再以实现及其测试创建一个本地提交并交由独立任务 CR；CR 修正使用独立 `fix:` 本地提交，通过后自动继续。Phase9.5 保留最终整分支/系统 review。
 > **Goal:** 任务随游戏检查点准确恢复，真实结果在无模型确认的情况下进入 History，并可在后续对话引用。
 > **Architecture:** 游戏保存精确引用，Runtime 保存不可变全量 Task 快照；Task 是执行权威，History 是认知来源。
 > **Tech Stack:** SQLite、gRPC、SMAPI Saving/Saved、现有 Phase8 History/Context。
@@ -12,6 +12,8 @@
 
 ## 1. 全局约束
 
+- 保存桥接、加载恢复和其他真实游戏依赖代码以 9.0 可行性门通过为硬前提；游戏环境不可用时不得以 fake 替代相关结论。
+- 从 `e482923` 实现基点在 `codex/phase9-durable-task` 开发，保留 `daf4f98` 作为已检查代码基线；每个提交保持可构建、可测试，且包含实现及其测试。未获用户明确授权不得 `git push`。
 - 使用 9.1 已实现的快照内核；不另建 Adapter 任务镜像或第二份未来任务列表。
 - 不支持离线完整保存 Task。Runtime 断线时游戏照常保存，任务引用标记 unconfirmed。
 - 不恢复 LLM 栈、旧 Turn、goroutine、controller、UI 或 Action waiter。
@@ -196,6 +198,8 @@ Task 投影字段：task_id、目标、权威 state/revision、next_wakeup_at/de
 
 ### 9.4-A：保存桥接
 
+提交边界：Adapter 保存桥接与 Runtime 保存屏障分别形成独立可审查提交。
+
 - [ ] 写 CheckpointMarker 的 confirmed/unconfirmed/非法字段 round-trip 测试。
 - [ ] 写网络回复不经过主线程 dispatcher 也能完成 Saving 等待的测试；设置有限测试截止，死锁必须失败。
 - [ ] 实现 request_id pending 表、有限等待、迟到拒绝、OnSaved/OnSaveAborted/断线幂等收尾。
@@ -229,6 +233,8 @@ go test ./runtime/internal/task ./runtime/internal/gateway -run 'TestCheckpoint|
 ```
 
 ### 9.4-C：独立结果来源
+
+提交边界：History 支持与结果发布器分别形成独立可审查提交。
 
 - [ ] 先写 CanonicalHistoryBatch 的新类型接受/旧类型约束不放松测试。
 - [ ] 实现 TaskResult DTO、键、存取、HistoryTextFields；保持原字段序列化顺序和 omitempty 兼容。
@@ -270,4 +276,4 @@ dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.cspro
 - [ ] 保存、引用、加载和旧回调的故障窗口全部有自动化断言。
 - [ ] 后台 task_result 无需 LLM 即可入 History；后续请求有真实结果来源。
 - [ ] Task 终态不提前结束真实 UI，UI 真正结束后恢复原生日程。
-- [ ] 旧 Memory / Context 测试通过；实机限制如实记录后进入 Phase9.5 集中验收和 review。
+- [ ] 旧 Memory / Context 测试通过；实机限制如实记录，完成最后一个本阶段提交及其独立任务 CR 后进入 Phase9.5 最终验收和整分支/系统 review。

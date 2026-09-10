@@ -2,7 +2,7 @@
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-10
-> **执行方式:** 使用 executing-plans 连续实现；每个单元测试通过后继续，集中 review 在 Phase9.5。
+> **执行方式:** 每个独立审查单元先完成测试、聚焦验证、阶段回归和 `git diff --check`，再以实现及其测试创建一个本地提交并交由独立任务 CR；CR 修正使用独立 `fix:` 本地提交，通过后自动继续。Phase9.5 保留最终整分支/系统 review。
 > **Goal:** 把持久 Task 接入真实 Runtime 的工具、协议、游戏时钟和 NPC lane。
 > **Architecture:** 进程级 TaskService + 当前连接绑定；Runtime 工具本地执行，Environment 工具通过 ActionRequest 执行。
 > **Tech Stack:** Go 1.25、gRPC / Protobuf v1alpha2、现有 Tool View / Scheduler。
@@ -13,6 +13,8 @@
 ## 1. 全局约束
 
 - TaskSpec、ExecutionContext、Record、Evidence、Wake、CheckpointRef 使用 Phase9.1 的合同。
+- 从 `e482923` 实现基点在 `codex/phase9-durable-task` 开发，保留 `daf4f98` 作为已检查代码基线；每个提交保持可构建、可测试，且包含实现及其测试。未获用户明确授权不得 `git push`。
+- 仓库默认 `task.enabled=false` 保持不变；专用演示/本地配置显式启用任务功能，不提交凭据或私有本地配置。
 - Runtime 不按能力名称、事件名称、Stardew state 或自然语言 description 分支。
 - wake 协调与玩家事件共用现有 FIFO lane；`EnqueueMaintenance` 不承载持久任务。
 - Runtime 重启可显式重新连接同一游戏 run；自动重连、backoff loop、跨连接事件补发和旧 Action 续跑归 Phase10。
@@ -223,6 +225,8 @@ Loop 新增 `HandleTaskWake`，输入当前 Environment、ConnectionContext、ca
 
 ### 9.2-A：Protocol 与映射
 
+协议定义、生成文件和其测试必须处于同一个提交；映射实现及其测试可作为后续独立提交。
+
 - [ ] 按第 3 节增补消息，保持所有旧字段编号与 presence。
 - [ ] 生成 Go；C# 测试项目通过 Grpc.Tools 构建生成，不手改生成文件。
 - [ ] 实现 task_protocol.go 的 scope/clock/evidence/proposal 双向映射。
@@ -236,6 +240,8 @@ go test ./runtime/internal/gateway -run 'TestTaskProtocol|TestLegacyProtocol' -c
 ```
 
 ### 9.2-B：Registry 与 Runtime Tools
+
+提交边界：Registry 与 Runtime Tools 分别形成独立可审查提交。
 
 - [ ] 写混合 kind、同名冲突、预算和执行位置测试，先运行确认失败。
 - [ ] 实现 RuntimeExecutor 包装、两项 schema、proposal_ref 生命周期和服务端版本注入。
@@ -261,6 +267,8 @@ go test ./runtime/internal/agent -run 'TestRuntimeTool|TestMixedTool|TestTaskInt
 ```
 
 ### 9.2-C：世界绑定与持久投递
+
+提交边界：绑定/Clock 与 dispatcher/lane 分别形成独立可审查提交。
 
 - [ ] 接入 task 配置、WorldRegistry 和进程级 Service；增加能力协商与独立 task-ready 状态。
 - [ ] 接入 WorldClockUpdate、序号去重、倒退暂停与 disconnect 清理。
@@ -304,5 +312,5 @@ go test ./... -count=1
 - [ ] 创建 Turn 已结束后，fake 游戏时间独立触发新的有界认知；后续等待可持续跨天。
 - [ ] Runtime 与 Environment 工具执行位置有计数断言，内部 Task trigger 没有伪造玩家来源。
 - [ ] 队列满、数据库提交失败、断连、保存屏障均不丢持久 wake。
-- [ ] Protocol 生成及 Runtime 回归通过；测试记录完整后自动进入 Phase9.3。
+- [ ] Protocol 生成及 Runtime 回归通过；完成最后一个本阶段提交及其独立任务 CR 后自动进入 Phase9.3。
 - [ ] 本阶段不以 fake 测试替代跨地图、玩家 UI 或真实存档验证。

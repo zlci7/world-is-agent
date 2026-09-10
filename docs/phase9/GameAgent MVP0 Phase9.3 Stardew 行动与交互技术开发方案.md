@@ -2,7 +2,7 @@
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-10
-> **执行方式:** 使用 executing-plans 连续实现；单元测试和游戏可行性验证随开发进行，集中 review 在 Phase9.5。
+> **执行方式:** 每个独立审查单元先完成测试、聚焦验证、阶段回归和 `git diff --check`，再以实现及其测试创建一个本地提交并交由独立任务 CR；CR 修正使用独立 `fix:` 本地提交，通过后自动继续。Phase9.5 保留最终整分支/系统 review。
 > **Goal:** NPC 能真实赴约、等待和接近玩家，并在交互结束后继续当前原生日程。
 > **Architecture:** Adapter 管理当前世界效果及控制权；未来任务和唤醒始终由 Runtime 管理。
 > **Tech Stack:** C# / .NET 6、SMAPI、游戏原生寻路与 UI；纯逻辑使用 xUnit。
@@ -13,6 +13,8 @@
 ## 1. 全局约束
 
 - 仅单人存档、当前玩家、配置受控 NPC；不实现多人控制权协商。
+- 真实游戏依赖代码以 9.0 可行性门通过为硬前提；游戏环境不可用时不得以 fake 替代 9.0、跨地图、原生恢复或保存结论。
+- 从 `e482923` 实现基点在 `codex/phase9-durable-task` 开发，保留 `daf4f98` 作为已检查代码基线；每个提交保持可构建、可测试，且包含实现及其测试。未获用户明确授权不得 `git push`。
 - 世界读取、位置/寻路、controller、UI、SaveData 均在游戏主线程。
 - GameClock 输出稳定逻辑分钟，不能用 Game1.ticks 或现实时间计算预约到期。
 - 使用总方案中的目标日、窗口、节日规则；跨天/季/年预约成立，单次会面窗口位于一个目标日。
@@ -250,6 +252,8 @@ dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.cspro
 
 ### 9.3-B：租约、跨地图及等待
 
+提交边界：租约、跨地图 travel 与 wait_for_player/等待监听分别形成独立可审查提交。
+
 - [ ] 先用 fake driver 测 Acquire/Transfer/Release、同 operation 重试、第三方接管。
 - [ ] 实现 GameNpcDriver 与 TaskExecutionDriver；通过 9.0 路线验证，禁止在 production 分支使用 fake 成功回执。
 - [ ] 实现 wait_for_player 和 MeetingWaitMonitor，确保 Sync Action 返回后仍有有限世界监听。
@@ -302,6 +306,8 @@ dotnet test adapters/stardew/tests/ActionCancellationRegistry.Tests/ActionCancel
 
 ### 9.3-D：真实交互与原生恢复
 
+提交边界：交互生命周期与原生行为恢复分别形成独立可审查提交。
+
 - [ ] 给 DialoguePresentationFlow 增加显式结束原因及幂等回调，覆盖 ReplySubmitted 与 Ended。
 - [ ] 在 PlayerInteractProbe/RuntimeClient 中取得交互占用后再排队发送；发送失败释放。
 - [ ] TurnCompletion 不直接关闭仍活动的 UI；TaskControl 对 handed_off 不撤销合法交互。
@@ -332,4 +338,4 @@ dotnet build adapters/stardew/GameAgent.Stardew.csproj --configuration Debug
 - [ ] 四个能力、来源和租约测试通过；旧 move_to / 对话/取消回归通过。
 - [ ] NPC 恢复原生行为有真实移动证据，而非仅日志和 controller=null。
 - [ ] 无重复终态、第三方控制器误清理或永久停留。
-- [ ] 保存未接通的能力边界在验收记录中明确，自动进入 Phase9.4 完成检查点与认知闭环。
+- [ ] 保存未接通的能力边界在验收记录中明确；完成最后一个本阶段提交及其独立任务 CR 后自动进入 Phase9.4 完成检查点与认知闭环。

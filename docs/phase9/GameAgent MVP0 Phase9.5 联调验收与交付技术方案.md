@@ -2,22 +2,22 @@
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-10
-> **执行方式:** 连续执行完 9.1–9.4 后集中联调、独立 review、修复和复验；不省略开发过程中的测试。
+> **执行方式:** 9.1–9.4 的每个独立审查单元均已完成增量本地提交与独立任务 CR 后，执行最终联调、整分支/系统 review、修复和复验；不省略开发过程中的测试或 CR。
 > **Goal:** 交付真实游戏/真实模型中可复现的预约最小闭环，以及可核验的代码与验收记录。
 > **Architecture:** Runtime Task、Environment Action、Interaction、Checkpoint 和 History 各自保持权威边界。
 > **Tech Stack:** Go / SQLite / gRPC、C# / SMAPI、既有真实模型配置。
 > **Spec:** [Phase9 总方案](./GameAgent%20MVP0%20Phase9%20技术开发与验收方案.md)
 > **前置:** [9.1](./GameAgent%20MVP0%20Phase9.1%20Runtime%20Task%20内核技术开发方案.md)、[9.2](./GameAgent%20MVP0%20Phase9.2%20Runtime%20Tools%20与调度接入技术开发方案.md)、[9.3](./GameAgent%20MVP0%20Phase9.3%20Stardew%20行动与交互技术开发方案.md)、[9.4](./GameAgent%20MVP0%20Phase9.4%20检查点与结果记忆技术开发方案.md)
 
-## 1. 连续开发与集中 review 的规则
+## 1. 增量开发与最终 review 的规则
 
-- 9.1–9.4 每个单元先完成失败测试、实现与回归；通过后自动继续，不逐阶段等待人工 review 或 Accepted。
+- 9.1–9.4 每个独立审查单元先完成失败测试、实现、聚焦验证和阶段回归，运行 `git diff --check` 后创建一个包含实现及其测试的本地提交，并交由独立任务 CR。CR 修正以独立 `fix:` 本地提交提交；通过 CR 后自动继续，不等待用户逐项确认。
 - 测试失败先定位原因并直接修正相关逻辑；不能跳过、删除断言、扩大超时掩盖问题。
 - 跨地图、原生恢复和 Saving 交接的 9.0 可行性门必须有真实证据。缺少游戏环境时可以完成不依赖它的内核/协议工作，但不能把 fake 通过记为该门通过。
 - 环境/权限/产品规则真的阻断时，说明具体缺失和已完成内容；不自行删减跨天、检查点或原生行为恢复需求。
-- 本阶段的 review 是集中的代码与系统审查；此前自动测试、开发者自查和实机探针仍持续进行。
+- 本阶段在全部增量任务 CR 后执行最终整分支/系统 review；此前自动测试、开发者自查和实机探针仍持续进行。增量 CR 不替代最终 review 或真实游戏验收。
 - 使用专用测试存档；不为了验收删除用户现有存档、Task DB 或 Memory DB。故障注入使用临时副本和测试实例。
-- 不自动 git commit / push，不提交模型密钥、真实存档、运行数据库、构建输出或含隐私的完整日志。
+- 每个提交保持可构建、可测试；协议生成文件与其协议变更必须处于同一个提交。允许按上述流程自动创建本地提交，但未获用户明确授权不得 `git push`；不提交模型密钥、真实存档、运行数据库、构建输出或含隐私的完整日志。
 
 ## 2. 交付文件与测试范围
 
@@ -28,7 +28,7 @@
 | `adapters/stardew/tests/TaskExecution.Tests/` | 补齐跨能力租约、到达与截止竞争、保存和 UI 组合用例 |
 | `scripts/check-architecture.ps1` | 保持 game-agnostic 检查，覆盖 Runtime Tool 执行分流 |
 | `adapters/stardew/tests/check-context-static.ps1` | 新 schema、Mapper、Observation 与资源装配 |
-| `runtime/config/agent.json`、`adapters/stardew/assets/landmarks.json` | 明确启用演示任务功能与已验证点位，不携带凭据 |
+| 专用演示/本地任务配置、`adapters/stardew/assets/landmarks.json` | 演示/本地配置显式启用任务功能，仓库默认配置保持 `enabled=false`；使用已验证点位且不携带凭据 |
 | `docs/phase9/GameAgent MVP0 Phase9 开发与验收记录.md` | 执行时创建；基线、命令结果、实机证据、review 与最终限制 |
 
 验收记录从真实执行结果生成，不复制技术方案的预期输出作为证据。9.1–9.5 的开发状态可记录 Completed；Phase9 Accepted 仍以最终通过条件和负责人确认决定。

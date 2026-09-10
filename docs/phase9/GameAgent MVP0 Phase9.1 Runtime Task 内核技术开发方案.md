@@ -2,7 +2,7 @@
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-10
-> **执行方式:** 使用 executing-plans 按任务单元连续实现；自动测试通过后进入下一单元，独立 review 集中在 Phase9.5。
+> **执行方式:** 每个独立审查单元先完成测试、聚焦验证、阶段回归和 `git diff --check`，再以实现及其测试创建一个本地提交并交由独立任务 CR；CR 修正使用独立 `fix:` 本地提交，通过后自动继续。Phase9.5 保留最终整分支/系统 review。
 > **Goal:** 建立支持跨天、可靠唤醒、权威结果和完整快照恢复的 Runtime 任务内核。
 > **Architecture:** TaskService 是进程内模块，SQLite 是状态权威；模型工具、连接和游戏 API 均在模块之外接入。
 > **Tech Stack:** Go 1.25、modernc.org/sqlite；复用仓库现有依赖，不引入调度框架。
@@ -11,7 +11,8 @@
 
 ## 1. 执行边界
 
-- 从工作区实际状态开始，核对 `daf4f98` 基线及现有改动；保留用户修改，不创建提交或推送。
+- 从工作区实际状态开始，核对已检查代码基线 `daf4f98`、实现分支基点 `e482923` 及现有改动；在 `codex/phase9-durable-task` 开发，保留用户修改。
+- 每个本阶段提交保持可构建、可测试，并包含对应实现和测试；未获用户明确授权不得 `git push`。
 - 阅读总方案第 1–6、10 节和仓库 AGENTS.md。Phase9.0 的游戏可行性探针位于总方案第 13 节。
 - 本阶段不调用 LLM、gRPC 或 Stardew API；不实现生产预约之外的新任务场景。
 - 测试时直接提交规范化 TaskSpec，不能为了测试内核伪造玩家点击或 Adapter Proposal。
@@ -133,6 +134,8 @@ SQLite 使用外键校验、WAL、`synchronous=FULL`、有限 busy timeout。数
 
 修改范围：model、errors、store、sqlite_store、平台锁及相应 tests。
 
+提交边界：先提交模型、错误和 Store 合同；再提交 SQLite、事务和文件锁及其测试。
+
 - [ ] 定义第 3 节类型与 StoreOptions；为状态、时间范围、空身份、JSON 数字精度编写失败测试。
 - [ ] 创建四张表和索引，保存完整 owner；所有读写包含 game/world/entity 条件。
 - [ ] 实现文件锁、事务取消和 Close 幂等；不在事务中做外部 I/O。
@@ -148,6 +151,8 @@ go test ./runtime/internal/task -run 'TestStore|TestTaskValidation|TestTaskIsola
 ### 9.1-B：创建与模型意图
 
 修改范围：service、admission、service_test、admission_test。
+
+提交边界：创建/幂等与预约准入分别形成可独立审查的提交。
 
 Create 要求同一 clock、`now < WakeAt <= DeadlineAt`、有效 owner/run/generation；生成 task_id，revision=1，state=waiting，首次 wake 与 Task 同事务提交。预约准入传 MaxActivePerOwner=1；内核测试可以传 0。
 
@@ -239,6 +244,8 @@ go test ./runtime/internal/task -run 'TestEvidence|TestOperation|TestReconcile|T
 
 修改范围：wake、service、wake_test、sqlite_store_test。
 
+提交边界：wake claim/admission 与重启/不确定执行恢复分别形成可独立审查的提交。
+
 状态为 `pending → claimed → enqueued → running → consumed`。认领只针对 ready 世界、相同 clock 且 due_tick 已到的项；retry_after 是现实技术重试时间，不推进游戏时间。
 
 同 owner/task 的未消费 wake 使用 partial unique 约束，保证最多一份可执行资格。新 Evidence 提前已有 pending wake；若 wake 正在执行则只登记 inbox/needs_reconcile，由当前执行收敛后产生下次 wake。Wake.ExpectedRevision 用于 admission，当前执行自己的状态推进不使自己的消费资格失效；消费仍校验 wake_id/claim_id/绑定。
@@ -298,6 +305,6 @@ go test ./runtime/internal/task ./runtime/internal/session -count=1
 - [ ] 第 3.1 节公开接口存在，全部上述测试通过；缺少实现不能通过空返回、跳过或只测 mock 代替。
 - [ ] task 包不依赖 LLM/gateway/game；内部 TaskSpec 用例没有 Proposal 和玩家来源。
 - [ ] 创建、结果、后续 wake 与快照有故障窗口测试；任务库重开后能够复现。
-- [ ] 在验收记录填写命令、输出摘要、阻断和未执行项，再自动进入 Phase9.2，不等待中途人工 review。
+- [ ] 在验收记录填写命令、输出摘要、阻断和未执行项；完成最后一个本阶段提交及其独立任务 CR 后自动进入 Phase9.2。
 
 仅本阶段通过表示 Task 内核可用，不表示游戏预约、实机存档或 Phase9 整体已验收。
