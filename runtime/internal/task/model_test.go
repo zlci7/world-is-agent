@@ -656,6 +656,86 @@ func TestTaskOwnerJSONRejectsPascalCaseOnlyInputInEveryContainer(t *testing.T) {
 	}
 }
 
+func TestTaskOwnerJSONRejectsDuplicateKeysWithoutMutatingContainer(t *testing.T) {
+	tests := []struct {
+		name      string
+		container string
+		owner     json.RawMessage
+		decode    func(*testing.T, []byte)
+	}{
+		{
+			name:      "execution context duplicate game_id",
+			container: "execution context",
+			owner:     json.RawMessage(`{"game_id":"trusted-game","game_id":"other-game","world_id":"world-a","entity_id":"actor-a"}`),
+			decode: func(t *testing.T, data []byte) {
+				requireInvalidOwnerJSONLeavesReceiverUnchanged(t, data, ExecutionContext{
+					Owner:            session.AgentSessionKey{GameID: "preserved-game", WorldID: "preserved-world", EntityID: "preserved-entity"},
+					TaskID:           "preserved-task",
+					WakeID:           "preserved-wake",
+					ExpectedRevision: 99,
+				})
+			},
+		},
+		{
+			name:      "record duplicate world_id",
+			container: "record",
+			owner:     json.RawMessage(`{"game_id":"fake-game","world_id":"trusted-world","world_id":"other-world","entity_id":"actor-a"}`),
+			decode: func(t *testing.T, data []byte) {
+				requireInvalidOwnerJSONLeavesReceiverUnchanged(t, data, Record{
+					ID:    "preserved-task",
+					Owner: session.AgentSessionKey{GameID: "preserved-game", WorldID: "preserved-world", EntityID: "preserved-entity"},
+					State: StatePaused,
+				})
+			},
+		},
+		{
+			name:      "wake duplicate entity_id",
+			container: "wake",
+			owner:     json.RawMessage(`{"game_id":"fake-game","world_id":"world-a","entity_id":"trusted-entity","entity_id":"other-entity"}`),
+			decode: func(t *testing.T, data []byte) {
+				requireInvalidOwnerJSONLeavesReceiverUnchanged(t, data, Wake{
+					ID:     "preserved-wake",
+					Owner:  session.AgentSessionKey{GameID: "preserved-game", WorldID: "preserved-world", EntityID: "preserved-entity"},
+					Status: "claimed",
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.decode(t, ownerContainerJSON(t, tt.container, tt.owner))
+		})
+	}
+}
+
+func TestTaskOwnerJSONRejectsNonExactObjectShape(t *testing.T) {
+	tests := []struct {
+		name  string
+		owner json.RawMessage
+	}{
+		{name: "missing field", owner: json.RawMessage(`{"game_id":"fake-game","world_id":"world-a"}`)},
+		{name: "unknown field", owner: json.RawMessage(`{"game_id":"fake-game","world_id":"world-a","entity_id":"actor-a","tenant_id":"tenant-a"}`)},
+		{name: "game id is not a string", owner: json.RawMessage(`{"game_id":1,"world_id":"world-a","entity_id":"actor-a"}`)},
+		{name: "world id is not a string", owner: json.RawMessage(`{"game_id":"fake-game","world_id":true,"entity_id":"actor-a"}`)},
+		{name: "entity id is null", owner: json.RawMessage(`{"game_id":"fake-game","world_id":"world-a","entity_id":null}`)},
+		{name: "array", owner: json.RawMessage(`[]`)},
+		{name: "trailing value", owner: json.RawMessage(`{"game_id":"fake-game","world_id":"world-a","entity_id":"actor-a"} true`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := decodeOwner(tt.owner)
+			if !errors.Is(err, ErrInvalidTaskSpec) {
+				t.Fatalf("decodeOwner() error = %v, want ErrInvalidTaskSpec", err)
+			}
+			if got != (session.AgentSessionKey{}) {
+				t.Fatalf("decodeOwner() = %+v, want zero owner", got)
+			}
+		})
+	}
+}
+
 func testWorld() WorldKey {
 	return WorldKey{GameID: "fake-game", WorldID: "world-a"}
 }
@@ -829,6 +909,21 @@ func requireJSONRoundTrip[T any](t *testing.T, want T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("JSON round trip for %T = %+v, want %+v", want, got, want)
+	}
+}
+
+func requireInvalidOwnerJSONLeavesReceiverUnchanged[T any](t *testing.T, data []byte, before T) {
+	t.Helper()
+	got := before
+	err := json.Unmarshal(data, &got)
+	if err == nil {
+		t.Fatal("json.Unmarshal() accepted invalid owner JSON")
+	}
+	if !errors.Is(err, ErrInvalidTaskSpec) {
+		t.Fatalf("json.Unmarshal() error = %v, want ErrInvalidTaskSpec", err)
+	}
+	if !reflect.DeepEqual(got, before) {
+		t.Fatalf("failed json.Unmarshal() changed receiver to %+v, want %+v", got, before)
 	}
 }
 

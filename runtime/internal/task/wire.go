@@ -1,7 +1,10 @@
 package task
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 
 	"gameagent/runtime/internal/session"
 )
@@ -108,25 +111,63 @@ func encodeOwner(owner session.AgentSessionKey) ownerWire {
 }
 
 func decodeOwner(data json.RawMessage) (session.AgentSessionKey, error) {
-	var fields map[string]json.RawMessage
-	if len(data) == 0 || json.Unmarshal(data, &fields) != nil || len(fields) != 3 {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
 		return session.AgentSessionKey{}, ErrInvalidTaskSpec
 	}
-	for _, key := range []string{"game_id", "world_id", "entity_id"} {
-		if _, ok := fields[key]; !ok {
+
+	owner := session.AgentSessionKey{}
+	seen := make(map[string]struct{}, 3)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
 			return session.AgentSessionKey{}, ErrInvalidTaskSpec
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return session.AgentSessionKey{}, ErrInvalidTaskSpec
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return session.AgentSessionKey{}, ErrInvalidTaskSpec
+		}
+		seen[key] = struct{}{}
+
+		switch key {
+		case "game_id", "world_id", "entity_id":
+		default:
+			return session.AgentSessionKey{}, ErrInvalidTaskSpec
+		}
+
+		valueToken, err := decoder.Token()
+		if err != nil {
+			return session.AgentSessionKey{}, ErrInvalidTaskSpec
+		}
+		value, ok := valueToken.(string)
+		if !ok {
+			return session.AgentSessionKey{}, ErrInvalidTaskSpec
+		}
+
+		switch key {
+		case "game_id":
+			owner.GameID = value
+		case "world_id":
+			owner.WorldID = value
+		case "entity_id":
+			owner.EntityID = value
 		}
 	}
 
-	var wire ownerWire
-	if err := json.Unmarshal(data, &wire); err != nil {
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim('}') || len(seen) != 3 {
 		return session.AgentSessionKey{}, ErrInvalidTaskSpec
 	}
-	owner := session.AgentSessionKey{
-		GameID:   wire.GameID,
-		WorldID:  wire.WorldID,
-		EntityID: wire.EntityID,
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return session.AgentSessionKey{}, ErrInvalidTaskSpec
 	}
+
 	if err := validateOwner(owner); err != nil {
 		return session.AgentSessionKey{}, err
 	}
