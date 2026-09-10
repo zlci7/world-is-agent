@@ -180,20 +180,17 @@ func OpenSQLiteStore(ctx context.Context, options StoreOptions) (*SQLiteStore, e
 	if err := ctx.Err(); err != nil {
 		return nil, WrapError(CodeTaskConflict, err)
 	}
-	absolutePath, err := filepath.Abs(resolved.Path)
+	canonicalPath, err := resolveSQLiteStorePath(resolved.Path)
 	if err != nil {
 		return nil, WrapError(CodeTaskConflict, err)
 	}
-	absolutePath = filepath.Clean(absolutePath)
-	if err := os.MkdirAll(filepath.Dir(absolutePath), 0o755); err != nil {
-		return nil, WrapError(CodeTaskConflict, err)
-	}
-	lock, err := acquireStoreProcessLock(absolutePath)
+	resolved.Path = canonicalPath
+	lock, err := acquireStoreProcessLock(canonicalPath)
 	if err != nil {
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", taskSQLiteDSN(absolutePath, resolved.BusyTimeout))
+	db, err := sql.Open("sqlite", taskSQLiteDSN(canonicalPath, resolved.BusyTimeout))
 	if err != nil {
 		_ = lock.release()
 		return nil, WrapError(CodeTaskConflict, err)
@@ -203,7 +200,7 @@ func OpenSQLiteStore(ctx context.Context, options StoreOptions) (*SQLiteStore, e
 	db.SetConnMaxIdleTime(0)
 	db.SetConnMaxLifetime(0)
 
-	store := &SQLiteStore{path: absolutePath, options: resolved, db: db, lock: lock}
+	store := &SQLiteStore{path: canonicalPath, options: resolved, db: db, lock: lock}
 	if err := store.prepare(ctx); err != nil {
 		_ = db.Close()
 		_ = lock.release()
@@ -743,7 +740,7 @@ func durationMillisecondsCeiling(value time.Duration) int64 {
 
 func schemaObjectSQL(ctx context.Context, tx *sql.Tx) (map[string]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT name, sql FROM sqlite_schema
-		WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL`)
+		WHERE name NOT GLOB 'sqlite_*' AND sql IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
@@ -776,6 +773,41 @@ func schemaMatches(existing map[string]string) bool {
 
 func normalizeSQL(statement string) string {
 	return strings.Join(strings.Fields(statement), " ")
+}
+
+func resolveSQLiteStorePath(path string) (string, error) {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	absolutePath = filepath.Clean(absolutePath)
+	if _, err := os.Lstat(absolutePath); err == nil {
+		resolvedPath, err := filepath.EvalSymlinks(absolutePath)
+		if err != nil {
+			return "", err
+		}
+		resolvedPath, err = filepath.Abs(resolvedPath)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Clean(resolvedPath), nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	parent := filepath.Dir(absolutePath)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", err
+	}
+	resolvedParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", err
+	}
+	resolvedParent, err = filepath.Abs(resolvedParent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Clean(resolvedParent), filepath.Base(absolutePath)), nil
 }
 
 func classifyStoreError(err error) error {

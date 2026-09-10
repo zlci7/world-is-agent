@@ -47,6 +47,65 @@ func TestStoreLockCanonicalizesRelativeAndAbsolutePaths(t *testing.T) {
 	}
 }
 
+func TestStoreLockCanonicalizesExistingDatabaseSymlink(t *testing.T) {
+	dir := t.TempDir()
+	realPath := filepath.Join(dir, "real.sqlite")
+	seed := openTaskTestStoreWithoutCleanup(t, StoreOptions{Path: realPath})
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	aliasPath := filepath.Join(dir, "alias.sqlite")
+	if err := os.Symlink(realPath, aliasPath); err != nil {
+		t.Skipf("file symlink unavailable on %s: %v", runtime.GOOS, err)
+	}
+	realStore := openTaskTestStore(t, StoreOptions{Path: realPath})
+	aliasStore, err := OpenSQLiteStore(context.Background(), StoreOptions{Path: aliasPath})
+	if aliasStore != nil {
+		_ = aliasStore.Close()
+	}
+	if !errors.Is(err, ErrStoreInUse) {
+		t.Fatalf("symlink alias open error = %v, want ErrStoreInUse", err)
+	}
+	if realStore.path != filepath.Clean(realPath) {
+		t.Fatalf("real store path = %q, want %q", realStore.path, filepath.Clean(realPath))
+	}
+	assertTaskErrorSanitized(t, err, dir, realPath, aliasPath, "LockFileEx", "Flock")
+
+	if err := realStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	aliasStore, err = OpenSQLiteStore(context.Background(), StoreOptions{Path: aliasPath})
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore(alias) after release error = %v", err)
+	}
+	defer func() { _ = aliasStore.Close() }()
+	if aliasStore.path != filepath.Clean(realPath) {
+		t.Fatalf("alias store path = %q, want canonical %q", aliasStore.path, filepath.Clean(realPath))
+	}
+}
+
+func TestStoreLockRejectsDanglingDatabaseSymlinkBeforeCreatingSidecar(t *testing.T) {
+	dir := t.TempDir()
+	missingPath := filepath.Join(dir, "missing.sqlite")
+	aliasPath := filepath.Join(dir, "dangling.sqlite")
+	if err := os.Symlink(missingPath, aliasPath); err != nil {
+		t.Skipf("file symlink unavailable on %s: %v", runtime.GOOS, err)
+	}
+
+	store, err := OpenSQLiteStore(context.Background(), StoreOptions{Path: aliasPath})
+	if store != nil {
+		_ = store.Close()
+	}
+	if !errors.Is(err, ErrTaskConflict) {
+		t.Fatalf("dangling symlink open error = %v, want ErrTaskConflict", err)
+	}
+	if _, statErr := os.Stat(aliasPath + ".lock"); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("dangling alias sidecar exists: %v", statErr)
+	}
+	assertTaskErrorSanitized(t, err, dir, missingPath, aliasPath)
+}
+
 func TestStoreLockHelperProcessExclusionAndCrashRecovery(t *testing.T) {
 	if os.Getenv(storeLockHelperEnv) != "" {
 		runStoreLockHelperProcess()

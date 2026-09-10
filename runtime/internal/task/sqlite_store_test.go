@@ -406,6 +406,66 @@ func TestSQLiteStoreRejectsMalformedJSONAndIndexDisagreement(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreRejectsUnexpectedPersistentSchemaObjects(t *testing.T) {
+	tests := []struct {
+		name      string
+		statement string
+		secret    string
+	}{
+		{
+			name:      "trigger",
+			statement: `CREATE TRIGGER secret_task_trigger AFTER INSERT ON tasks BEGIN SELECT 1; END`,
+			secret:    "secret_task_trigger",
+		},
+		{
+			name:      "view",
+			statement: `CREATE VIEW secret_task_view AS SELECT record_json FROM tasks`,
+			secret:    "secret_task_view",
+		},
+		{
+			name:      "trigger resembling internal prefix",
+			statement: `CREATE TRIGGER sqliteXsecret_task_trigger AFTER INSERT ON tasks BEGIN SELECT 1; END`,
+			secret:    "sqliteXsecret_task_trigger",
+		},
+		{
+			name:      "view resembling internal prefix",
+			statement: `CREATE VIEW sqliteXsecret_task_view AS SELECT record_json FROM tasks`,
+			secret:    "sqliteXsecret_task_view",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "private-schema.sqlite")
+			seed := openTaskTestStoreWithoutCleanup(t, StoreOptions{Path: path})
+			if err := seed.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			raw, err := sql.Open("sqlite", taskSQLiteDSN(path, time.Second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := raw.Exec(tt.statement); err != nil {
+				_ = raw.Close()
+				t.Fatal(err)
+			}
+			if err := raw.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			store, err := OpenSQLiteStore(context.Background(), StoreOptions{Path: path})
+			if store != nil {
+				_ = store.Close()
+			}
+			if !errors.Is(err, ErrTaskConflict) {
+				t.Fatalf("OpenSQLiteStore() error = %v, want ErrTaskConflict", err)
+			}
+			assertTaskErrorSanitized(t, err, path, tt.statement, tt.secret, "record_json")
+		})
+	}
+}
+
 func TestSQLiteStoreWorldHeadAndCheckpointRoundTripByWorld(t *testing.T) {
 	store := openTaskTestStore(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite")})
 	head := worldHeadRow{
