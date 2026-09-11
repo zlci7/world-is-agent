@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math"
 	"time"
 
@@ -39,7 +41,38 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 	if err := validateService(s, ctx); err != nil {
 		return Head{}, err
 	}
-	if err := validateFreshActivation(world, runID, clock, ref); err != nil {
+	if err := validateActivationBase(world, runID, clock); err != nil {
+		return Head{}, err
+	}
+	if err := validateCheckpointReference(world, ref); err != nil {
+		if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, err); pauseErr != nil {
+			return Head{}, pauseErr
+		}
+		return Head{}, err
+	}
+	current, err := s.store.loadWorldHead(ctx, world)
+	switch {
+	case err == nil && current.Head.Binding.RunID == runID && current.Head.Status == worldHeadStatusPaused:
+		return s.activatePausedWorkingHead(ctx, world, runID, clock)
+	case err == nil && current.Head.Binding.RunID != runID:
+		if ref.Status != checkpointStatusConfirmed {
+			if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, ErrCheckpointMissing); pauseErr != nil {
+				return Head{}, pauseErr
+			}
+			return Head{}, ErrCheckpointMissing
+		}
+		restored, restoreErr := s.activateCheckpoint(ctx, world, runID, clock, ref)
+		if restoreErr != nil {
+			if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, restoreErr); pauseErr != nil {
+				return Head{}, pauseErr
+			}
+		}
+		return restored, restoreErr
+	case errors.Is(err, ErrTaskNotFound):
+		if ref.Status == checkpointStatusConfirmed {
+			return s.activateCheckpoint(ctx, world, runID, clock, ref)
+		}
+	case err != nil:
 		return Head{}, err
 	}
 
@@ -454,27 +487,40 @@ func validateService(service *Service, ctx context.Context) error {
 	return nil
 }
 
-func validateFreshActivation(world WorldKey, runID string, clock Clock, ref CheckpointRef) error {
+func validateActivationBase(world WorldKey, runID string, clock Clock) error {
 	if err := world.Validate(); err != nil || !requiredIdentity(runID) {
 		return ErrInvalidTaskSpec
 	}
 	if err := clock.Validate(); err != nil || clock.Sequence > uint64(math.MaxInt64) {
 		return ErrInvalidTaskSpec
 	}
-	if ref.Status != checkpointStatusAbsent {
-		switch ref.Status {
-		case "unconfirmed":
-			return ErrCheckpointUnconfirmed
-		case "confirmed":
-			return ErrCheckpointMissing
-		default:
+	return nil
+}
+
+func validateCheckpointReference(world WorldKey, ref CheckpointRef) error {
+	switch ref.Status {
+	case checkpointStatusAbsent:
+		if ref.World != world || ref.ID != "" || ref.Checksum != "" || ref.SchemaVersion != 0 || !optionalIdentity(ref.Reason) {
 			return ErrCheckpointInvalid
 		}
-	}
-	if ref.World != world || ref.ID != "" || ref.Checksum != "" || ref.SchemaVersion != 0 || !optionalIdentity(ref.Reason) {
+		return nil
+	case checkpointStatusUnconfirmed:
+		if ref.World != world || ref.ID != "" || ref.Checksum != "" || ref.SchemaVersion != checkpointSchemaVersion || !requiredIdentity(ref.Reason) {
+			return ErrCheckpointInvalid
+		}
+		return ErrCheckpointUnconfirmed
+	case checkpointStatusConfirmed:
+		if ref.World != world || !requiredIdentity(ref.ID) || len(ref.Checksum) != 64 ||
+			ref.SchemaVersion != checkpointSchemaVersion || ref.Reason != "" {
+			return ErrCheckpointInvalid
+		}
+		if _, err := hex.DecodeString(ref.Checksum); err != nil {
+			return ErrCheckpointInvalid
+		}
+		return nil
+	default:
 		return ErrCheckpointInvalid
 	}
-	return nil
 }
 
 func validateActivationRetry(current worldHeadRow, runID string, clock Clock) error {
@@ -484,7 +530,7 @@ func validateActivationRetry(current worldHeadRow, runID string, clock Clock) er
 	if current.BarrierStatus != "" || current.SaveRequestID != "" {
 		return ErrSaveInProgress
 	}
-	if current.Head.Binding.RunID != runID || current.Head.CheckpointID != "" {
+	if current.Head.Binding.RunID != runID {
 		return ErrTaskChanged
 	}
 	if current.Head.Clock.ID != clock.ID {

@@ -483,7 +483,6 @@ func TestActivateWorldFreshAbsentIsAtomicAndConflictsNeverOverwriteHead(t *testi
 		clock Clock
 		want  error
 	}{
-		{name: "different run", runID: "run-b", clock: clock, want: ErrTaskChanged},
 		{name: "rewound tick", runID: "run-a", clock: Clock{ID: clock.ID, Tick: 99, Sequence: 1}, want: ErrClockRewound},
 		{name: "advanced tick", runID: "run-a", clock: Clock{ID: clock.ID, Tick: 101, Sequence: 1}, want: ErrClockMismatch},
 		{name: "rewound sequence", runID: "run-a", clock: Clock{ID: clock.ID, Tick: 100, Sequence: 0}, want: ErrClockRewound},
@@ -504,6 +503,16 @@ func TestActivateWorldFreshAbsentIsAtomicAndConflictsNeverOverwriteHead(t *testi
 			}
 		})
 	}
+	if _, err := svc.ActivateWorld(ctx, world, "run-b", clock, CheckpointRef{Status: "absent", World: world}); !errors.Is(err, ErrCheckpointMissing) {
+		t.Fatalf("different-run absent error = %v, want checkpoint_missing", err)
+	}
+	stored, err := store.loadWorldHead(ctx, world)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Head.Status != worldHeadStatusPaused || stored.Head.Reason != ErrCheckpointMissing.Error() {
+		t.Fatalf("different-run absent Head = %+v, want paused", stored.Head)
+	}
 }
 
 func TestActivateWorldRejectsInvalidOrUnsupportedReferencesWithoutWriting(t *testing.T) {
@@ -522,8 +531,8 @@ func TestActivateWorldRejectsInvalidOrUnsupportedReferencesWithoutWriting(t *tes
 		{name: "absent checkpoint id", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "absent", World: testWorld(), ID: "checkpoint"}, want: ErrCheckpointInvalid},
 		{name: "absent checksum", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "absent", World: testWorld(), Checksum: "sum"}, want: ErrCheckpointInvalid},
 		{name: "absent schema", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "absent", World: testWorld(), SchemaVersion: 1}, want: ErrCheckpointInvalid},
-		{name: "confirmed unsupported", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "confirmed", World: testWorld(), ID: "checkpoint", SchemaVersion: 1}, want: ErrCheckpointMissing},
-		{name: "unconfirmed unsupported", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "unconfirmed", World: testWorld()}, want: ErrCheckpointUnconfirmed},
+		{name: "confirmed missing", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "confirmed", World: testWorld(), ID: "checkpoint", Checksum: strings.Repeat("0", 64), SchemaVersion: 1}, want: ErrCheckpointMissing},
+		{name: "unconfirmed", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "unconfirmed", World: testWorld(), SchemaVersion: 1, Reason: "runtime unavailable"}, want: ErrCheckpointUnconfirmed},
 		{name: "unknown status", world: testWorld(), runID: "run-a", clock: Clock{ID: "clock", Tick: 0}, ref: CheckpointRef{Status: "latest", World: testWorld()}, want: ErrCheckpointInvalid},
 	}
 	for _, tt := range tests {

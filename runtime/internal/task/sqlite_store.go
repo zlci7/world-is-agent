@@ -49,6 +49,9 @@ type SQLiteStore struct {
 	// testAfterWakeStage proves that wake delivery and admission transitions
 	// remain atomic with their canonical JSON. Production never sets it.
 	testAfterWakeStage func(context.Context, string) error
+	// testAfterCheckpointStage proves that evidence, fencing, immutable snapshot,
+	// and working-head changes commit as one unit. Production never sets it.
+	testAfterCheckpointStage func(context.Context, string) error
 }
 
 type worldHeadRow struct {
@@ -860,6 +863,14 @@ func scanTaskRowWithCreate(row rowScanner) (Record, CreateResult, string, error)
 }
 
 func scanTaskRowWithMetadata(row rowScanner) (Record, CreateResult, string, []intentCall, error) {
+	columns, err := scanTaskRowColumns(row)
+	if err != nil {
+		return Record{}, CreateResult{}, "", nil, err
+	}
+	return decodeTaskRowColumns(columns)
+}
+
+func scanTaskRowColumns(row rowScanner) (taskRowColumns, error) {
 	var columns taskRowColumns
 	if err := row.Scan(
 		&columns.gameID, &columns.worldID, &columns.entityID, &columns.taskID,
@@ -869,8 +880,12 @@ func scanTaskRowWithMetadata(row rowScanner) (Record, CreateResult, string, []in
 		&columns.createResponseJSON, &columns.createResponseHash,
 		&columns.intentHistoryJSON, &columns.intentHistoryHash,
 	); err != nil {
-		return Record{}, CreateResult{}, "", nil, err
+		return taskRowColumns{}, err
 	}
+	return columns, nil
+}
+
+func decodeTaskRowColumns(columns taskRowColumns) (Record, CreateResult, string, []intentCall, error) {
 	if columns.revision <= 0 {
 		return Record{}, CreateResult{}, "", nil, ErrInvalidTaskSpec
 	}

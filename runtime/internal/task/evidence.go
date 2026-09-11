@@ -49,58 +49,60 @@ func (s *Service) AdmitEvidence(ctx context.Context, binding Binding, evidence E
 		if err := validateEvidenceAuthority(head, binding); err != nil {
 			return err
 		}
-
-		current, err := s.store.loadWorldTaskByIDTx(ctx, tx, binding.World, cloned.TaskID)
-		if err != nil {
-			return err
-		}
-		if current.record.Spec.ClockID != head.Head.Clock.ID {
-			return ErrClockMismatch
-		}
-		graph, err := s.store.loadWorldTaskIdentityGraphTx(ctx, tx, binding.World)
-		if errors.Is(err, errAmbiguousWorldTaskIdentityGraph) {
-			return ErrEvidenceConflict
-		}
-		if err != nil {
-			return err
-		}
-		if identity, found := graph.facts[cloned.FactID]; found {
-			if identity.owner != current.record.Owner || identity.taskID != current.record.ID ||
-				!evidenceEqualIgnoringApplied(identity.evidence, cloned) {
-				return ErrEvidenceConflict
-			}
-			added = false
-			return nil
-		}
-		if source, complete := completeEvidenceSourceIdentity(cloned.Source); complete {
-			if _, found := graph.sources[source]; found {
-				return ErrEvidenceConflict
-			}
-		}
-
-		if err := validateNewEvidence(head.Head, current.record, cloned); err != nil {
-			return err
-		}
-		if _, err := NextDurableCounter(current.record.Revision); err != nil {
-			return err
-		}
-		updated := current.record
-		updated.Evidence = append(cloneEvidenceSlice(current.record.Evidence), cloned)
-		updated.NeedsReconcile = true
-		prepared, err := s.store.prepareNoRevisionMutation(current, updated)
-		if err != nil {
-			return err
-		}
-		if err := s.store.updateNoRevisionRecordTx(ctx, tx, current.record, prepared, noRevisionStageEvidenceMerged); err != nil {
-			return err
-		}
-		added = true
-		return nil
+		added, err = s.store.admitEvidenceTx(ctx, tx, head, cloned)
+		return err
 	})
 	if err != nil {
 		return false, err
 	}
 	return added, nil
+}
+
+func (s *SQLiteStore) admitEvidenceTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, evidence Evidence) (bool, error) {
+	current, err := s.loadWorldTaskByIDTx(ctx, tx, head.Head.Binding.World, evidence.TaskID)
+	if err != nil {
+		return false, err
+	}
+	if current.record.Spec.ClockID != head.Head.Clock.ID {
+		return false, ErrClockMismatch
+	}
+	graph, err := s.loadWorldTaskIdentityGraphTx(ctx, tx, head.Head.Binding.World)
+	if errors.Is(err, errAmbiguousWorldTaskIdentityGraph) {
+		return false, ErrEvidenceConflict
+	}
+	if err != nil {
+		return false, err
+	}
+	if identity, found := graph.facts[evidence.FactID]; found {
+		if identity.owner != current.record.Owner || identity.taskID != current.record.ID ||
+			!evidenceEqualIgnoringApplied(identity.evidence, evidence) {
+			return false, ErrEvidenceConflict
+		}
+		return false, nil
+	}
+	if source, complete := completeEvidenceSourceIdentity(evidence.Source); complete {
+		if _, found := graph.sources[source]; found {
+			return false, ErrEvidenceConflict
+		}
+	}
+
+	if err := validateNewEvidence(head.Head, current.record, evidence); err != nil {
+		return false, err
+	}
+	if _, err := NextDurableCounter(current.record.Revision); err != nil {
+		return false, err
+	}
+	updated := current.record
+	updated.Evidence = append(cloneEvidenceSlice(current.record.Evidence), evidence)
+	updated.NeedsReconcile = true
+	prepared, err := s.prepareNoRevisionMutation(current, updated)
+	if err != nil {
+		return false, err
+	}
+	if err := s.updateNoRevisionRecordTx(ctx, tx, current.record, prepared, noRevisionStageEvidenceMerged); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func validateEvidenceAuthority(head worldHeadRow, binding Binding) error {
