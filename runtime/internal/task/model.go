@@ -35,6 +35,14 @@ const (
 	AttemptOutcomeKindProgress        = "progress"
 	AttemptOutcomeKindNoProgress      = "no_progress"
 	AttemptOutcomeKindReconcileFailed = "reconcile_failed"
+
+	OperationStatusRegistered = "registered"
+	OperationStatusUncertain  = "uncertain"
+
+	EvidenceKindProgress    = "progress"
+	EvidenceKindSatisfied   = "satisfied"
+	EvidenceKindUnsatisfied = "unsatisfied"
+	EvidenceKindInterrupted = "interrupted"
 )
 
 type WorldKey struct {
@@ -321,6 +329,7 @@ func (r Record) Validate() error {
 		r.NoProgressAttempts < 0 || r.ReconcileAttempts < 0 {
 		return ErrInvalidTaskSpec
 	}
+	operations := make(map[string]Operation, len(r.Operations))
 	for _, operation := range r.Operations {
 		if err := operation.Validate(); err != nil {
 			return err
@@ -328,7 +337,15 @@ func (r Record) Validate() error {
 		if !sameOwnerWorld(r.Owner, operation.Binding.World) {
 			return ErrWorldMismatch
 		}
+		if operation.StartRevision > r.Revision {
+			return ErrInvalidTaskSpec
+		}
+		if _, duplicate := operations[operation.ID]; duplicate {
+			return ErrInvalidTaskSpec
+		}
+		operations[operation.ID] = operation
 	}
+	facts := make(map[string]struct{}, len(r.Evidence))
 	for _, evidence := range r.Evidence {
 		if err := evidence.Validate(); err != nil {
 			return err
@@ -337,6 +354,34 @@ func (r Record) Validate() error {
 			evidence.RevalidatedIn != nil && !sameOwnerWorld(r.Owner, evidence.RevalidatedIn.World) {
 			return ErrWorldMismatch
 		}
+		if evidence.TaskID != r.ID || evidence.StartRevision > r.Revision {
+			return ErrInvalidTaskSpec
+		}
+		if evidence.WaitUntil != nil &&
+			(evidence.OccurredAt >= *evidence.WaitUntil || *evidence.WaitUntil > r.Spec.DeadlineAt) {
+			return ErrInvalidTaskSpec
+		}
+		if _, duplicate := facts[evidence.FactID]; duplicate {
+			return ErrInvalidTaskSpec
+		}
+		facts[evidence.FactID] = struct{}{}
+		if evidence.OperationID == "" {
+			if evidence.RevalidatedIn != nil {
+				return ErrInvalidTaskSpec
+			}
+			continue
+		}
+		operation, found := operations[evidence.OperationID]
+		if !found || evidence.StartRevision != operation.StartRevision || evidence.Binding != operation.Binding {
+			return ErrInvalidTaskSpec
+		}
+		if evidence.RevalidatedIn != nil &&
+			(evidence.Binding.RunID != evidence.RevalidatedIn.RunID || evidence.Binding.Generation >= evidence.RevalidatedIn.Generation) {
+			return ErrInvalidTaskSpec
+		}
+	}
+	if !recordEvidenceSourceIdentityValid(r) {
+		return ErrInvalidTaskSpec
 	}
 	if r.Result != nil {
 		if err := r.Result.Validate(); err != nil {
@@ -361,6 +406,11 @@ func (o Operation) Validate() error {
 	if err := o.Binding.Validate(); err != nil {
 		return err
 	}
+	switch o.Status {
+	case OperationStatusRegistered, OperationStatusUncertain:
+	default:
+		return ErrInvalidTaskSpec
+	}
 	if !validRawJSON(o.Receipt) {
 		return ErrInvalidTaskSpec
 	}
@@ -378,6 +428,15 @@ func (e Evidence) Validate() error {
 		return err
 	}
 	if e.OccurredAt < 0 || !validOptionalTick(e.WaitUntil) || !validRawJSON(e.Details) {
+		return ErrInvalidTaskSpec
+	}
+	switch e.Kind {
+	case EvidenceKindProgress:
+	case EvidenceKindSatisfied, EvidenceKindUnsatisfied, EvidenceKindInterrupted:
+		if e.WaitUntil != nil {
+			return ErrInvalidTaskSpec
+		}
+	default:
 		return ErrInvalidTaskSpec
 	}
 	if err := e.Source.Validate(); err != nil {

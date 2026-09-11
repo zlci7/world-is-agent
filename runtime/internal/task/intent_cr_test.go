@@ -325,7 +325,7 @@ func TestCancelExactHistoryAnchorsTerminalResultAndShape(t *testing.T) {
 		current.Cleanup = append(current.Cleanup, Cleanup{OperationID: "operation-later", Status: "done", Reason: "released"})
 		current.Evidence = append(current.Evidence, Evidence{
 			FactID: "fact-later", TaskID: current.ID, Binding: fixture.head.Binding,
-			StartRevision: current.Revision, OccurredAt: fixture.clock.Tick, Kind: "cleanup",
+			StartRevision: current.Revision, OccurredAt: fixture.clock.Tick, Kind: EvidenceKindProgress,
 			Source: SourceRef{Kind: SourceKindEnvironment, EventID: "later-e", TurnID: "later-t", CallID: "later-c"}, Applied: true,
 		})
 		setRecordForIntentTest(t, fixture.store, current)

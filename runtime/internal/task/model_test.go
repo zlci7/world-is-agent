@@ -322,9 +322,8 @@ func TestRecordValidationAllowsNestedHistoricalBindingForSameWorld(t *testing.T)
 	operation.Binding.RunID = "historical-run"
 	operation.Binding.Generation = 2
 	evidence := testEvidence()
-	evidence.Binding.RunID = "earlier-run"
-	evidence.Binding.Generation = 3
-	evidence.RevalidatedIn.RunID = "current-run"
+	evidence.Binding = operation.Binding
+	evidence.RevalidatedIn.RunID = "historical-run"
 	evidence.RevalidatedIn.Generation = 4
 	record.Operations = []Operation{operation}
 	record.Evidence = []Evidence{evidence}
@@ -848,6 +847,7 @@ func testOperation() Operation {
 
 func testEvidence() Evidence {
 	revalidated := testBinding()
+	revalidated.Generation++
 	return Evidence{
 		FactID:        "fact-a",
 		TaskID:        "task-a",

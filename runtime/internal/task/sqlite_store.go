@@ -40,6 +40,9 @@ type SQLiteStore struct {
 	// testAfterIntentStage proves that each durable intent mutation rolls back
 	// as a unit. Production never sets it.
 	testAfterIntentStage func(context.Context, string) error
+	// testAfterNoRevisionStage proves that operation/evidence merges remain
+	// atomic even though they intentionally do not advance business revision.
+	testAfterNoRevisionStage func(context.Context, string) error
 }
 
 type worldHeadRow struct {
@@ -89,6 +92,11 @@ type preparedTaskCreate struct {
 	createResponseHash string
 	intentHistoryJSON  []byte
 	intentHistoryHash  string
+}
+
+type preparedNoRevisionMutation struct {
+	record     Record
+	recordJSON []byte
 }
 
 type rowScanner interface {
@@ -484,11 +492,27 @@ func (s *SQLiteStore) loadEquivalentTaskTx(ctx context.Context, tx *sql.Tx, owne
 }
 
 func (s *SQLiteStore) listTasks(ctx context.Context, owner session.AgentSessionKey) ([]Record, error) {
+	return s.listTasksQuery(ctx, owner, 0, false)
+}
+
+func (s *SQLiteStore) listTasksLimit(ctx context.Context, owner session.AgentSessionKey, limit int) ([]Record, error) {
+	if limit <= 0 {
+		return []Record{}, nil
+	}
+	return s.listTasksQuery(ctx, owner, limit, true)
+}
+
+func (s *SQLiteStore) listTasksQuery(ctx context.Context, owner session.AgentSessionKey, limit int, limited bool) ([]Record, error) {
 	if err := validateOwner(owner); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? AND entity_id = ? ORDER BY task_id`,
-		owner.GameID, owner.WorldID, owner.EntityID)
+	query := taskSelectSQL + ` WHERE game_id = ? AND world_id = ? AND entity_id = ? ORDER BY task_id`
+	args := []any{owner.GameID, owner.WorldID, owner.EntityID}
+	if limited {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, classifyStoreError(err)
 	}
@@ -805,6 +829,10 @@ func scanTaskRowWithMetadata(row rowScanner) (Record, CreateResult, string, []in
 	if err := record.Validate(); err != nil {
 		return Record{}, CreateResult{}, "", nil, err
 	}
+	canonicalRecordJSON, err := json.Marshal(record)
+	if err != nil || !bytes.Equal(columns.recordJSON, canonicalRecordJSON) {
+		return Record{}, CreateResult{}, "", nil, ErrInvalidTaskSpec
+	}
 	fingerprint, err := taskSpecFingerprint(record.Spec)
 	if err != nil {
 		return Record{}, CreateResult{}, "", nil, ErrInvalidTaskSpec
@@ -828,6 +856,71 @@ func scanTaskRowWithMetadata(row rowScanner) (Record, CreateResult, string, []in
 		return Record{}, CreateResult{}, "", nil, err
 	}
 	return record, response, columns.createFingerprint, history, nil
+}
+
+func (s *SQLiteStore) prepareNoRevisionMutation(current storedIntentTask, updated Record) (preparedNoRevisionMutation, error) {
+	if err := updated.Validate(); err != nil {
+		return preparedNoRevisionMutation{}, err
+	}
+	if current.record.ID != updated.ID || current.record.Owner != updated.Owner ||
+		!taskSpecsEqual(current.record.Spec, updated.Spec) || current.record.State != updated.State ||
+		current.record.Revision != updated.Revision || current.record.CreatedAtGameTick != updated.CreatedAtGameTick ||
+		current.record.CreatedAtUnixMS != updated.CreatedAtUnixMS ||
+		!sameTickPointers(current.record.NextWakeAt, updated.NextWakeAt) {
+		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
+	}
+	recordJSON, err := json.Marshal(updated)
+	if err != nil {
+		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
+	}
+	createResponseJSON, err := json.Marshal(initialCreateResult(current.record))
+	if err != nil {
+		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
+	}
+	intentHistoryJSON, err := json.Marshal(current.history)
+	if err != nil {
+		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
+	}
+	if !taskBytesFit(s.options.MaxTaskBytes,
+		len(recordJSON), len(createResponseJSON), len(intentHistoryJSON),
+		len(recordJSON), intentTerminalStructuralReserve) {
+		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
+	}
+	return preparedNoRevisionMutation{record: updated, recordJSON: recordJSON}, nil
+}
+
+func (s *SQLiteStore) updateNoRevisionRecordTx(ctx context.Context, tx *sql.Tx, before Record, prepared preparedNoRevisionMutation, stage string) error {
+	beforeJSON, err := json.Marshal(before)
+	if err != nil {
+		return ErrInvalidTaskSpec
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE tasks SET record_json = ?
+		WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ?
+			AND state = ? AND revision = ? AND clock_id = ? AND record_json = ?`,
+		prepared.recordJSON,
+		before.Owner.GameID, before.Owner.WorldID, before.Owner.EntityID, before.ID,
+		string(before.State), int64(before.Revision), before.Spec.ClockID, beforeJSON)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrTaskChanged
+	}
+	if s.testAfterNoRevisionStage != nil {
+		return s.testAfterNoRevisionStage(ctx, stage)
+	}
+	return ctx.Err()
+}
+
+func sameTickPointers(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func decodeCreateResponse(columns taskRowColumns, record Record, wantFingerprint string) (CreateResult, error) {

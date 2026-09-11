@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gameagent/runtime/internal/idgen"
+	"gameagent/runtime/internal/session"
 )
 
 const (
@@ -176,6 +177,29 @@ func (s *Service) Create(ctx context.Context, exec ExecutionContext, spec TaskSp
 		return CreateResult{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) Read(ctx context.Context, owner session.AgentSessionKey, taskID string) (Record, error) {
+	if err := validateService(s, ctx); err != nil {
+		return Record{}, err
+	}
+	if err := validateTaskLookup(owner, taskID); err != nil {
+		return Record{}, err
+	}
+	return s.store.loadTask(ctx, owner, taskID)
+}
+
+func (s *Service) List(ctx context.Context, owner session.AgentSessionKey, limit int) ([]Record, error) {
+	if err := validateService(s, ctx); err != nil {
+		return nil, err
+	}
+	if err := validateOwner(owner); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []Record{}, nil
+	}
+	return s.store.listTasksLimit(ctx, owner, limit)
 }
 
 func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent Intent) (Record, error) {
