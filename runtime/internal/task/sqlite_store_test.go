@@ -51,6 +51,7 @@ func TestSQLiteStoreSchemaAndPragmas(t *testing.T) {
 	}
 	indexes := sqliteObjectNames(t, store.db, "index")
 	for _, name := range []string{
+		"idx_task_wakeups_claim_due",
 		"idx_task_wakeups_due",
 		"idx_tasks_active_equivalence",
 		"idx_tasks_create_call",

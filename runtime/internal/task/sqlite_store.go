@@ -216,6 +216,12 @@ var taskSQLiteSchema = []struct {
 		statement: `CREATE INDEX idx_task_wakeups_due ON task_wakeups (game_id, world_id, clock_id, due_tick, status, wake_id)`,
 	},
 	{
+		name: "idx_task_wakeups_claim_due",
+		statement: `CREATE INDEX idx_task_wakeups_claim_due
+			ON task_wakeups (game_id, world_id, clock_id, generation, due_tick, entity_id, task_id, wake_id)
+			WHERE status = 'pending'`,
+	},
+	{
 		name: "idx_task_wakeups_executable_task",
 		statement: `CREATE UNIQUE INDEX idx_task_wakeups_executable_task
 			ON task_wakeups (game_id, world_id, entity_id, task_id)

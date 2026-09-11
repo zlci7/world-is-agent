@@ -18,10 +18,22 @@ const wakeSelectSQL = `SELECT
 	JOIN tasks t ON t.game_id = w.game_id AND t.world_id = w.world_id
 		AND t.entity_id = w.entity_id AND t.task_id = w.task_id`
 
+const admissionWakeSelectSQL = `SELECT
+	w.wake_id, w.game_id, w.world_id, w.entity_id, w.task_id, w.clock_id,
+	w.expected_revision, w.due_tick, w.reason, w.status, w.claim_id, w.claimed_by,
+	w.generation, w.attempt, w.retry_after_unix_ms, w.wake_json
+	FROM task_wakeups w`
+
+const claimDueWakeSQL = admissionWakeSelectSQL + ` WHERE
+	w.game_id = ? AND w.world_id = ? AND w.clock_id = ? AND w.status = 'pending'
+	AND w.generation = ? AND w.due_tick <= ? AND w.retry_after_unix_ms <= ?
+	ORDER BY w.due_tick, w.entity_id, w.task_id, w.wake_id LIMIT ?`
+
 type durableWake struct {
 	wake   Wake
 	record storedIntentTask
 	raw    []byte
+	clock  string
 }
 
 type preparedBeginMutation struct {
@@ -375,23 +387,20 @@ func (s *SQLiteStore) loadDueWakeCandidatesTx(ctx context.Context, tx *sql.Tx, h
 	if limit == 0 {
 		return []durableWake{}, nil
 	}
-	rows, err := tx.QueryContext(ctx, wakeSelectSQL+` WHERE
-		w.game_id = ? AND w.world_id = ? AND w.clock_id = ? AND w.status = ?
-		AND w.generation = ? AND w.due_tick <= ? AND w.retry_after_unix_ms <= ?
-		ORDER BY w.due_tick, w.entity_id, w.task_id, w.wake_id LIMIT ?`,
-		head.Head.Binding.World.GameID, head.Head.Binding.World.WorldID, clock.ID, wakeStatusPending,
+	rows, err := tx.QueryContext(ctx, claimDueWakeSQL,
+		head.Head.Binding.World.GameID, head.Head.Binding.World.WorldID, clock.ID,
 		int64(head.Head.Binding.Generation), clock.Tick, nowUnixMS, limit)
 	if err != nil {
 		return nil, err
 	}
 	var wakes []durableWake
 	for rows.Next() {
-		wake, raw, err := scanWakeRow(rows)
+		wake, raw, clockID, err := scanAdmissionWakeRow(rows)
 		if err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		wakes = append(wakes, durableWake{wake: wake, raw: raw})
+		wakes = append(wakes, durableWake{wake: wake, raw: raw, clock: clockID})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -419,7 +428,7 @@ func (s *SQLiteStore) findStrictWorldWakeTx(ctx context.Context, tx *sql.Tx, hea
 	if err != nil {
 		return durableWake{}, err
 	}
-	wake, raw, err := scanWakeRow(tx.QueryRowContext(ctx, wakeSelectSQL+` WHERE w.game_id = ? AND w.world_id = ? AND w.wake_id = ?`,
+	wake, raw, clockID, err := scanAdmissionWakeRow(tx.QueryRowContext(ctx, admissionWakeSelectSQL+` WHERE w.game_id = ? AND w.world_id = ? AND w.wake_id = ?`,
 		head.Head.Binding.World.GameID, head.Head.Binding.World.WorldID, wakeID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return durableWake{}, ErrTaskNotFound
@@ -431,7 +440,7 @@ func (s *SQLiteStore) findStrictWorldWakeTx(ctx context.Context, tx *sql.Tx, hea
 	if !found {
 		return durableWake{}, ErrInvalidTaskSpec
 	}
-	candidate := durableWake{wake: wake, record: record, raw: raw}
+	candidate := durableWake{wake: wake, record: record, raw: raw, clock: clockID}
 	if err := validateDurableWakeRelation(head, candidate); err != nil {
 		return durableWake{}, err
 	}
@@ -453,6 +462,36 @@ func scanWakeRow(scanner rowScanner) (Wake, []byte, error) {
 	); err != nil {
 		return Wake{}, nil, err
 	}
+	wake, canonicalRaw, err := validateScannedWake(indexed, expectedRevision, generation, raw)
+	if err != nil || clockID != taskClockID {
+		return Wake{}, nil, ErrInvalidTaskSpec
+	}
+	return wake, canonicalRaw, nil
+}
+
+func scanAdmissionWakeRow(scanner rowScanner) (Wake, []byte, string, error) {
+	var (
+		indexed                      Wake
+		clockID                      string
+		expectedRevision, generation int64
+		raw                          []byte
+	)
+	if err := scanner.Scan(
+		&indexed.ID, &indexed.Owner.GameID, &indexed.Owner.WorldID, &indexed.Owner.EntityID,
+		&indexed.TaskID, &clockID, &expectedRevision, &indexed.DueTick, &indexed.Reason,
+		&indexed.Status, &indexed.ClaimID, &indexed.ClaimedBy, &generation, &indexed.Attempt,
+		&indexed.RetryAfterUnixMS, &raw,
+	); err != nil {
+		return Wake{}, nil, "", err
+	}
+	wake, canonicalRaw, err := validateScannedWake(indexed, expectedRevision, generation, raw)
+	if err != nil || !requiredIdentity(clockID) {
+		return Wake{}, nil, "", ErrInvalidTaskSpec
+	}
+	return wake, canonicalRaw, clockID, nil
+}
+
+func validateScannedWake(indexed Wake, expectedRevision, generation int64, raw []byte) (Wake, []byte, error) {
 	if expectedRevision <= 0 || generation <= 0 {
 		return Wake{}, nil, ErrInvalidTaskSpec
 	}
@@ -460,7 +499,7 @@ func scanWakeRow(scanner rowScanner) (Wake, []byte, error) {
 	indexed.Generation = uint64(generation)
 	var stored Wake
 	if err := json.Unmarshal(raw, &stored); err != nil || stored.Validate() != nil ||
-		!wakeIndexedValuesEqual(stored, indexed) || clockID != taskClockID {
+		!wakeIndexedValuesEqual(stored, indexed) {
 		return Wake{}, nil, ErrInvalidTaskSpec
 	}
 	canonical, err := json.Marshal(stored)
@@ -472,7 +511,8 @@ func scanWakeRow(scanner rowScanner) (Wake, []byte, error) {
 
 func validateDurableWakeRelation(head worldHeadRow, candidate durableWake) error {
 	wake, record := candidate.wake, candidate.record.record
-	if wake.Owner != record.Owner || wake.TaskID != record.ID || wake.DueTick > record.Spec.DeadlineAt || record.Spec.ClockID != head.Head.Clock.ID {
+	if wake.Owner != record.Owner || wake.TaskID != record.ID || wake.DueTick > record.Spec.DeadlineAt ||
+		candidate.clock != record.Spec.ClockID || record.Spec.ClockID != head.Head.Clock.ID {
 		return ErrInvalidTaskSpec
 	}
 	switch wake.Status {
