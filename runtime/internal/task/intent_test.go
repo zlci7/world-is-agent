@@ -271,6 +271,7 @@ func TestApplyIntentExactRetryPrecedesNewUnappliedEvidenceAtSameRevision(t *test
 		StartRevision: current.Revision, OccurredAt: fixture.clock.Tick, Kind: "progress",
 		Source: SourceRef{Kind: SourceKindEnvironment, EventID: "after-e", TurnID: "after-t", CallID: "after-c"},
 	})
+	current.NeedsReconcile = true
 	setRecordForIntentTest(t, fixture.store, current)
 	again, err := fixture.svc.ApplyIntent(context.Background(), exec, intent)
 	if err != nil || !reflect.DeepEqual(again, want) {
@@ -439,6 +440,7 @@ func TestApplyIntentRejectsRevisionEvidenceAndAuthorityFailuresWithoutWrites(t *
 		}, want: ErrTaskChanged},
 		{name: "unapplied evidence", mutate: func(t *testing.T, fixture *createFixture, record *Record, _ *ExecutionContext, _ *Intent) {
 			record.Evidence = []Evidence{{FactID: "fact-new", TaskID: record.ID, Binding: fixture.head.Binding, StartRevision: 1, OccurredAt: 100, Kind: "progress", Source: SourceRef{Kind: SourceKindEnvironment, EventID: "e", TurnID: "t", CallID: "c"}}}
+			record.NeedsReconcile = true
 			setRecordForIntentTest(t, fixture.store, *record)
 		}, want: ErrTaskChanged},
 		{name: "revision overflow", mutate: func(t *testing.T, fixture *createFixture, record *Record, exec *ExecutionContext, _ *Intent) {
@@ -600,6 +602,7 @@ func TestApplyIntentBlocksWaitAndCancelWhenFactsNeedReconcile(t *testing.T) {
 						StartRevision: record.Revision, OccurredAt: fixture.clock.Tick, Kind: "progress",
 						Source: SourceRef{Kind: SourceKindEnvironment, EventID: "fact-e", TurnID: "fact-t", CallID: "fact-c"},
 					}}
+					record.NeedsReconcile = true
 				}
 				setRecordForIntentTest(t, fixture.store, record)
 				exec := intentExecution(fixture, record, wake.ID, record.Revision, "evidence")
@@ -634,6 +637,7 @@ func TestApplyIntentObservesEvidenceCommittedWhileWaitingForWriter(t *testing.T)
 		StartRevision: record.Revision, OccurredAt: fixture.clock.Tick, Kind: "progress",
 		Source: SourceRef{Kind: SourceKindEnvironment, EventID: "race-e", TurnID: "race-t", CallID: "race-c"},
 	}}
+	record.NeedsReconcile = true
 	if _, err := tx.Exec(`UPDATE tasks SET record_json = ?
 		WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ?`,
 		mustJSONBytes(t, record), record.Owner.GameID, record.Owner.WorldID, record.Owner.EntityID, record.ID); err != nil {

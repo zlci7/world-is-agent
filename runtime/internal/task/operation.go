@@ -50,7 +50,10 @@ func (s *Service) RegisterOperation(ctx context.Context, exec ExecutionContext, 
 			if storedClockID != exec.Clock.ID {
 				return ErrClockMismatch
 			}
-			if storedOperation.Binding != exec.Binding {
+			if storedOperation.Binding.World != exec.Binding.World {
+				return ErrWorldMismatch
+			}
+			if storedOperation.Binding.RunID != exec.Binding.RunID || storedOperation.Binding.Generation > exec.Binding.Generation {
 				return ErrGenerationStale
 			}
 			result = storedOperation
@@ -66,6 +69,9 @@ func (s *Service) RegisterOperation(ctx context.Context, exec ExecutionContext, 
 		}
 		if current.record.Spec.ClockID != exec.Clock.ID {
 			return ErrClockMismatch
+		}
+		if current.record.NeedsReconcile || recordHasUnappliedEvidence(current.record) {
+			return ErrTaskChanged
 		}
 		if taskStateTerminal(current.record.State) {
 			return ErrTaskTerminal

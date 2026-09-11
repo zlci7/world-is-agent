@@ -288,6 +288,34 @@ func TestRecordValidationRejectsInvalidIdentityRevisionAndTimestamps(t *testing.
 	}
 }
 
+func TestRecordValidationRequiresReconcileMarkerForUnappliedEvidence(t *testing.T) {
+	record := testRecord()
+	record.NeedsReconcile = false
+	evidence := testEvidence()
+	evidence.OperationID = ""
+	evidence.RevalidatedIn = nil
+	evidence.Applied = false
+	record.Evidence = []Evidence{evidence}
+	if err := record.Validate(); !errors.Is(err, ErrInvalidTaskSpec) {
+		t.Fatalf("Record.Validate() error = %v, want ErrInvalidTaskSpec", err)
+	}
+
+	record.NeedsReconcile = true
+	if err := record.Validate(); err != nil {
+		t.Fatalf("Record.Validate() with marker error = %v", err)
+	}
+	record.Evidence[0].Applied = true
+	record.NeedsReconcile = false
+	if err := record.Validate(); err != nil {
+		t.Fatalf("Record.Validate() with only applied Evidence error = %v", err)
+	}
+	record.Evidence = []Evidence{}
+	record.NeedsReconcile = true
+	if err := record.Validate(); err != nil {
+		t.Fatalf("Record.Validate() with marker but no Evidence error = %v", err)
+	}
+}
+
 func TestRecordValidationRejectsNestedWorldMismatch(t *testing.T) {
 	tests := []struct {
 		name   string

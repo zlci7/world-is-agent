@@ -148,6 +148,56 @@ func TestAdmitEvidenceConcurrentIdenticalAndConflictingFactsAppendAtMostOnce(t *
 	}
 }
 
+func TestAdmitEvidenceRejectsCompleteSourceIdentityReusedAcrossSameWorldTasks(t *testing.T) {
+	fixture, first, _ := newIntentFixture(t, StoreOptions{})
+	firstEvidence := taskEvidence(fixture.head.Binding, first.Task, "fact-source-world-first", EvidenceKindProgress)
+	firstEvidence.Source = SourceRef{Kind: SourceKindEnvironment, EventID: "shared-event", TurnID: "shared-turn", CallID: "shared-call"}
+	if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, firstEvidence); err != nil || !added {
+		t.Fatalf("first AdmitEvidence() = (%v, %v), want true/nil", added, err)
+	}
+
+	secondExec, secondSpec := withCreateCall(fixture.exec, fixture.spec, "source-task-e2", "source-task-t2", "source-task-c2")
+	secondSpec.EquivalenceKey = "source-task-second"
+	second, err := fixture.svc.Create(context.Background(), secondExec, secondSpec, Admission{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondEvidence := taskEvidence(fixture.head.Binding, second.Task, "fact-source-world-second", EvidenceKindProgress)
+	secondEvidence.Source = firstEvidence.Source
+	if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, secondEvidence); !errors.Is(err, ErrEvidenceConflict) || added {
+		t.Fatalf("same-world source reuse = (%v, %v), want false/ErrEvidenceConflict", added, err)
+	}
+	stored, err := fixture.svc.Read(context.Background(), second.Task.Owner, second.Task.ID)
+	if err != nil || len(stored.Evidence) != 0 || stored.NeedsReconcile {
+		t.Fatalf("second Task changed = (%+v, %v)", stored, err)
+	}
+}
+
+func TestAdmitEvidenceKeepsCompleteSourceIdentityIsolatedAcrossWorlds(t *testing.T) {
+	store := openTaskTestStore(t, StoreOptions{Path: t.TempDir() + "/tasks.sqlite"})
+	svc := deterministicTaskService(store)
+	clock := Clock{ID: "fake.minute.v1", Tick: 100, Sequence: 1}
+	worlds := []WorldKey{{GameID: "fake-game", WorldID: "source-world-a"}, {GameID: "fake-game", WorldID: "source-world-b"}}
+	for index, world := range worlds {
+		head, err := svc.ActivateWorld(context.Background(), world, "source-run", clock, CheckpointRef{Status: checkpointStatusAbsent, World: world})
+		if err != nil {
+			t.Fatal(err)
+		}
+		owner := testOwner()
+		owner.WorldID = world.WorldID
+		exec, spec := createInputs(head, clock, owner, "create-event-"+world.WorldID, "create-turn-"+world.WorldID, "create-call-"+world.WorldID, "source-"+world.WorldID)
+		created, err := svc.Create(context.Background(), exec, spec, Admission{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		evidence := taskEvidence(head.Binding, created.Task, "fact-source-world-"+string(rune('a'+index)), EvidenceKindProgress)
+		evidence.Source = SourceRef{Kind: SourceKindEnvironment, EventID: "shared-event", TurnID: "shared-turn", CallID: "shared-call"}
+		if added, err := svc.AdmitEvidence(context.Background(), head.Binding, evidence); err != nil || !added {
+			t.Fatalf("world %s AdmitEvidence() = (%v, %v), want true/nil", world.WorldID, added, err)
+		}
+	}
+}
+
 func TestAdmitEvidenceFactIdentityConflictsOnEveryImmutableFieldAcrossTasks(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -392,6 +442,123 @@ func TestReadRejectsCorruptOperationEvidenceGraph(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReadAndListFailClosedOnCrossTaskSourceIdentityCorruption(t *testing.T) {
+	t.Run("Read", func(t *testing.T) {
+		fixture, first := crossTaskSourceCorruptionFixture(t)
+		got, err := fixture.svc.Read(context.Background(), first.Owner, first.ID)
+		if !errors.Is(err, ErrInvalidTaskSpec) || !reflect.DeepEqual(got, Record{}) {
+			t.Fatalf("Read() = (%+v, %v), want zero/ErrInvalidTaskSpec", got, err)
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		fixture, first := crossTaskSourceCorruptionFixture(t)
+		got, err := fixture.svc.List(context.Background(), first.Owner, 10)
+		if !errors.Is(err, ErrInvalidTaskSpec) || len(got) != 0 {
+			t.Fatalf("List() = (%+v, %v), want empty/ErrInvalidTaskSpec", got, err)
+		}
+	})
+}
+
+func TestReadWrongOwnerOrTaskRemainsNotFoundWhenWorldIdentityGraphIsCorrupt(t *testing.T) {
+	for _, variant := range []string{"owner", "task"} {
+		t.Run(variant, func(t *testing.T) {
+			fixture, first := crossTaskSourceCorruptionFixture(t)
+			owner, taskID := first.Owner, first.ID
+			if variant == "owner" {
+				owner.EntityID = "actor-not-present"
+			} else {
+				taskID = "task-not-present"
+			}
+			got, err := fixture.svc.Read(context.Background(), owner, taskID)
+			if !errors.Is(err, ErrTaskNotFound) || !reflect.DeepEqual(got, Record{}) {
+				t.Fatalf("Read(wrong %s) = (%+v, %v), want zero/ErrTaskNotFound", variant, got, err)
+			}
+		})
+	}
+}
+
+func TestReadAndListFailClosedOnCrossTaskOperationAndFactIdentityCorruption(t *testing.T) {
+	for _, identity := range []string{"operation", "fact"} {
+		for _, api := range []string{"Read", "List"} {
+			t.Run(identity+"/"+api, func(t *testing.T) {
+				fixture, first, _ := newIntentFixture(t, StoreOptions{})
+				otherOwner := first.Task.Owner
+				otherOwner.EntityID = "actor-identity-corrupt"
+				otherExec, otherSpec := createInputs(fixture.head, fixture.clock, otherOwner,
+					"identity-create-event", "identity-create-turn", "identity-create-call", "identity-other")
+				other, err := fixture.svc.Create(context.Background(), otherExec, otherSpec, Admission{})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				otherRecord := other.Task
+				switch identity {
+				case "operation":
+					firstExec := operationExecution(fixture, first.Task, "identity-corrupt")
+					operation := registeredOperation(firstExec, "operation-cross-task-corrupt")
+					if _, err := fixture.svc.RegisterOperation(context.Background(), firstExec, operation); err != nil {
+						t.Fatal(err)
+					}
+					otherRecord.Operations = []Operation{operation}
+				case "fact":
+					firstEvidence := taskEvidence(fixture.head.Binding, first.Task, "fact-cross-task-corrupt", EvidenceKindProgress)
+					if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, firstEvidence); err != nil || !added {
+						t.Fatalf("first AdmitEvidence() = (%v, %v)", added, err)
+					}
+					otherEvidence := taskEvidence(fixture.head.Binding, other.Task, firstEvidence.FactID, EvidenceKindProgress)
+					otherEvidence.Source = SourceRef{Kind: SourceKindEnvironment, EventID: "other-fact-event", TurnID: "other-fact-turn", CallID: "other-fact-call"}
+					otherRecord.Evidence = []Evidence{otherEvidence}
+					otherRecord.NeedsReconcile = true
+				}
+				setRecordForIntentTest(t, fixture.store, otherRecord)
+
+				switch api {
+				case "Read":
+					got, err := fixture.svc.Read(context.Background(), first.Task.Owner, first.Task.ID)
+					if !errors.Is(err, ErrInvalidTaskSpec) || !reflect.DeepEqual(got, Record{}) {
+						t.Fatalf("Read() = (%+v, %v), want zero/ErrInvalidTaskSpec", got, err)
+					}
+				case "List":
+					got, err := fixture.svc.List(context.Background(), first.Task.Owner, 10)
+					if !errors.Is(err, ErrInvalidTaskSpec) || len(got) != 0 {
+						t.Fatalf("List() = (%+v, %v), want empty/ErrInvalidTaskSpec", got, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestReadAndListFailClosedWhenUnappliedEvidenceLacksReconcileMarker(t *testing.T) {
+	setup := func(t *testing.T) (createFixture, Record) {
+		t.Helper()
+		fixture, created, _ := newIntentFixture(t, StoreOptions{})
+		evidence := taskEvidence(fixture.head.Binding, created.Task, "fact-missing-reconcile", EvidenceKindProgress)
+		corrupt := created.Task
+		corrupt.Evidence = []Evidence{evidence}
+		corrupt.NeedsReconcile = false
+		setRecordForIntentTest(t, fixture.store, corrupt)
+		return fixture, corrupt
+	}
+
+	t.Run("Read", func(t *testing.T) {
+		fixture, corrupt := setup(t)
+		got, err := fixture.svc.Read(context.Background(), corrupt.Owner, corrupt.ID)
+		if !errors.Is(err, ErrInvalidTaskSpec) || !reflect.DeepEqual(got, Record{}) {
+			t.Fatalf("Read() = (%+v, %v), want zero/ErrInvalidTaskSpec", got, err)
+		}
+	})
+
+	t.Run("List", func(t *testing.T) {
+		fixture, corrupt := setup(t)
+		got, err := fixture.svc.List(context.Background(), corrupt.Owner, 10)
+		if !errors.Is(err, ErrInvalidTaskSpec) || len(got) != 0 {
+			t.Fatalf("List() = (%+v, %v), want empty/ErrInvalidTaskSpec", got, err)
+		}
+	})
 }
 
 func TestAdmitEvidenceAllowsOnlyExplicitSameRunOperationRevalidation(t *testing.T) {
@@ -861,6 +1028,32 @@ func cloneEvidenceForTest(t *testing.T, evidence Evidence) Evidence {
 		t.Fatal(err)
 	}
 	return cloned
+}
+
+func crossTaskSourceCorruptionFixture(t *testing.T) (createFixture, Record) {
+	t.Helper()
+	fixture, first, _ := newIntentFixture(t, StoreOptions{})
+	firstEvidence := taskEvidence(fixture.head.Binding, first.Task, "fact-corrupt-source-first", EvidenceKindProgress)
+	firstEvidence.Source = SourceRef{Kind: SourceKindEnvironment, EventID: "corrupt-event", TurnID: "corrupt-turn", CallID: "corrupt-call"}
+	if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, firstEvidence); err != nil || !added {
+		t.Fatalf("first AdmitEvidence() = (%v, %v)", added, err)
+	}
+
+	otherOwner := first.Task.Owner
+	otherOwner.EntityID = "actor-source-corrupt"
+	otherExec, otherSpec := createInputs(fixture.head, fixture.clock, otherOwner,
+		"corrupt-create-event", "corrupt-create-turn", "corrupt-create-call", "corrupt-source-other")
+	other, err := fixture.svc.Create(context.Background(), otherExec, otherSpec, Admission{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherEvidence := taskEvidence(fixture.head.Binding, other.Task, "fact-corrupt-source-other", EvidenceKindProgress)
+	otherEvidence.Source = firstEvidence.Source
+	otherRecord := other.Task
+	otherRecord.Evidence = []Evidence{otherEvidence}
+	otherRecord.NeedsReconcile = true
+	setRecordForIntentTest(t, fixture.store, otherRecord)
+	return fixture, first.Task
 }
 
 func setWorldBindingForEvidenceTest(t *testing.T, store *SQLiteStore, head Head, binding Binding) {

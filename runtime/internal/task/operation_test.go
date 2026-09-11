@@ -118,6 +118,84 @@ func TestRegisterOperationExactRetryStillRequiresTaskClockToMatchCurrentHead(t *
 	}
 }
 
+func TestRegisterOperationExactRetryAllowsSameRunGenerationUpgrade(t *testing.T) {
+	fixture, created, _ := newIntentFixture(t, StoreOptions{})
+	originalExec := operationExecution(fixture, created.Task, "generation-upgrade")
+	original := registeredOperation(originalExec, "operation-generation-upgrade")
+	if _, err := fixture.svc.RegisterOperation(context.Background(), originalExec, original); err != nil {
+		t.Fatal(err)
+	}
+
+	currentBinding := fixture.head.Binding
+	currentBinding.Generation++
+	setWorldBindingForEvidenceTest(t, fixture.store, fixture.head, currentBinding)
+	currentExec := originalExec
+	currentExec.Binding = currentBinding
+	got, err := fixture.svc.RegisterOperation(context.Background(), currentExec, original)
+	if err != nil || !reflect.DeepEqual(got, original) || got.Binding != originalExec.Binding {
+		t.Fatalf("same-run upgraded exact retry = (%+v, %v), want stored original %+v", got, err, original)
+	}
+	stored, err := fixture.svc.Read(context.Background(), created.Task.Owner, created.Task.ID)
+	if err != nil || len(stored.Operations) != 1 || !reflect.DeepEqual(stored.Operations[0], original) {
+		t.Fatalf("stored Operations = (%+v, %v), want unchanged original", stored.Operations, err)
+	}
+}
+
+func TestRegisterOperationExactRetryRejectsNewRun(t *testing.T) {
+	fixture, created, _ := newIntentFixture(t, StoreOptions{})
+	originalExec := operationExecution(fixture, created.Task, "new-run")
+	original := registeredOperation(originalExec, "operation-new-run")
+	if _, err := fixture.svc.RegisterOperation(context.Background(), originalExec, original); err != nil {
+		t.Fatal(err)
+	}
+
+	currentBinding := fixture.head.Binding
+	currentBinding.RunID = "run-new"
+	currentBinding.Generation++
+	setWorldBindingForEvidenceTest(t, fixture.store, fixture.head, currentBinding)
+	currentExec := originalExec
+	currentExec.Binding = currentBinding
+	if got, err := fixture.svc.RegisterOperation(context.Background(), currentExec, original); !errors.Is(err, ErrGenerationStale) || !reflect.DeepEqual(got, Operation{}) {
+		t.Fatalf("new-run exact retry = (%+v, %v), want zero/ErrGenerationStale", got, err)
+	}
+}
+
+func TestRegisterOperationRejectsNewOperationAfterEvidenceAdmission(t *testing.T) {
+	fixture, created, _ := newIntentFixture(t, StoreOptions{})
+	existingExec := operationExecution(fixture, created.Task, "coordination-existing")
+	existing := registeredOperation(existingExec, "operation-coordination-existing")
+	if _, err := fixture.svc.RegisterOperation(context.Background(), existingExec, existing); err != nil {
+		t.Fatal(err)
+	}
+	evidence := operationEvidence(existing, created.Task.ID, "fact-coordination-pending", EvidenceKindProgress)
+	if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, evidence); err != nil || !added {
+		t.Fatalf("AdmitEvidence() = (%v, %v), want true/nil", added, err)
+	}
+
+	beforeTask, beforeWake, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	newOperation := registeredOperation(existingExec, "operation-coordination-new")
+	if got, err := fixture.svc.RegisterOperation(context.Background(), existingExec, newOperation); !errors.Is(err, ErrTaskChanged) || !reflect.DeepEqual(got, Operation{}) {
+		t.Fatalf("new operation with pending evidence = (%+v, %v), want zero/ErrTaskChanged", got, err)
+	}
+	afterTask, afterWake, afterHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	if !bytes.Equal(beforeTask, afterTask) || !bytes.Equal(beforeWake, afterWake) || !bytes.Equal(beforeHistory, afterHistory) {
+		t.Fatal("rejected operation changed durable rows")
+	}
+
+	if got, err := fixture.svc.RegisterOperation(context.Background(), existingExec, existing); err != nil || !reflect.DeepEqual(got, existing) {
+		t.Fatalf("exact retry with pending evidence = (%+v, %v), want stored original", got, err)
+	}
+	conflicting := existing
+	conflicting.CommandFingerprint = "command-conflicting"
+	if got, err := fixture.svc.RegisterOperation(context.Background(), existingExec, conflicting); !errors.Is(err, ErrIdempotencyConflict) || !reflect.DeepEqual(got, Operation{}) {
+		t.Fatalf("conflicting retry with pending evidence = (%+v, %v), want zero/ErrIdempotencyConflict", got, err)
+	}
+	stored, err := fixture.svc.Read(context.Background(), created.Task.Owner, created.Task.ID)
+	if err != nil || len(stored.Operations) != 1 || stored.Operations[0].ID != existing.ID {
+		t.Fatalf("stored Operations = (%+v, %v), want only original", stored.Operations, err)
+	}
+}
+
 func TestRegisterOperationSerializesIdenticalAndConflictingRaces(t *testing.T) {
 	t.Run("identical", func(t *testing.T) {
 		fixture, created, _ := newIntentFixture(t, StoreOptions{})
@@ -203,6 +281,9 @@ func TestRegisterOperationRejectsSameWorldCrossTaskIdentityButIsolatesOtherWorld
 	}
 	otherOpExec := ExecutionContext{Owner: otherOwner, Binding: otherHead.Binding, Clock: otherClock,
 		Source: SourceRef{Kind: SourceKindInternal}, TaskID: other.Task.ID, ExpectedRevision: other.Task.Revision}
+	if got, err := fixture.svc.RegisterOperation(context.Background(), otherOpExec, operation); !errors.Is(err, ErrWorldMismatch) || !reflect.DeepEqual(got, Operation{}) {
+		t.Fatalf("other-world retry of original bytes = (%+v, %v), want zero/ErrWorldMismatch", got, err)
+	}
 	otherOperation := registeredOperation(otherOpExec, operation.ID)
 	if got, err := fixture.svc.RegisterOperation(context.Background(), otherOpExec, otherOperation); err != nil || got.ID != operation.ID {
 		t.Fatalf("other-world operation = (%+v, %v)", got, err)

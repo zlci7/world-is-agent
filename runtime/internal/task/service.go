@@ -186,7 +186,14 @@ func (s *Service) Read(ctx context.Context, owner session.AgentSessionKey, taskI
 	if err := validateTaskLookup(owner, taskID); err != nil {
 		return Record{}, err
 	}
-	return s.store.loadTask(ctx, owner, taskID)
+	record, err := s.store.loadTask(ctx, owner, taskID)
+	if err != nil {
+		return Record{}, err
+	}
+	if err := s.store.validateWorldTaskIdentityGraph(ctx, WorldKey{GameID: owner.GameID, WorldID: owner.WorldID}); err != nil {
+		return Record{}, err
+	}
+	return record, nil
 }
 
 func (s *Service) List(ctx context.Context, owner session.AgentSessionKey, limit int) ([]Record, error) {
@@ -198,6 +205,9 @@ func (s *Service) List(ctx context.Context, owner session.AgentSessionKey, limit
 	}
 	if limit <= 0 {
 		return []Record{}, nil
+	}
+	if err := s.store.validateWorldTaskIdentityGraph(ctx, WorldKey{GameID: owner.GameID, WorldID: owner.WorldID}); err != nil {
+		return nil, err
 	}
 	return s.store.listTasksLimit(ctx, owner, limit)
 }

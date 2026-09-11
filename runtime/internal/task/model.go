@@ -346,6 +346,7 @@ func (r Record) Validate() error {
 		operations[operation.ID] = operation
 	}
 	facts := make(map[string]struct{}, len(r.Evidence))
+	hasUnappliedEvidence := false
 	for _, evidence := range r.Evidence {
 		if err := evidence.Validate(); err != nil {
 			return err
@@ -365,6 +366,7 @@ func (r Record) Validate() error {
 			return ErrInvalidTaskSpec
 		}
 		facts[evidence.FactID] = struct{}{}
+		hasUnappliedEvidence = hasUnappliedEvidence || !evidence.Applied
 		if evidence.OperationID == "" {
 			if evidence.RevalidatedIn != nil {
 				return ErrInvalidTaskSpec
@@ -379,6 +381,9 @@ func (r Record) Validate() error {
 			(evidence.Binding.RunID != evidence.RevalidatedIn.RunID || evidence.Binding.Generation >= evidence.RevalidatedIn.Generation) {
 			return ErrInvalidTaskSpec
 		}
+	}
+	if hasUnappliedEvidence && !r.NeedsReconcile {
+		return ErrInvalidTaskSpec
 	}
 	if !recordEvidenceSourceIdentityValid(r) {
 		return ErrInvalidTaskSpec
