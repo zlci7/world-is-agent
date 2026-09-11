@@ -16,20 +16,22 @@ const (
 	checkpointStatusAbsent = "absent"
 	worldHeadStatusReady   = "ready"
 	wakeReasonCreated      = "created"
-	wakeStatusPending      = "pending"
 )
 
 type Service struct {
-	store     *SQLiteStore
-	newID     func(string) string
-	nowUnixMS func() int64
+	store      *SQLiteStore
+	newID      func(string) string
+	nowUnixMS  func() int64
+	claimantID string
 }
 
 func NewService(store *SQLiteStore) *Service {
+	claimantID := idgen.New("runtime")
 	return &Service{
-		store:     store,
-		newID:     idgen.New,
-		nowUnixMS: func() int64 { return time.Now().UnixMilli() },
+		store:      store,
+		newID:      idgen.New,
+		nowUnixMS:  func() int64 { return time.Now().UnixMilli() },
+		claimantID: claimantID,
 	}
 }
 
@@ -373,7 +375,7 @@ func validateService(service *Service, ctx context.Context) error {
 	if ctx == nil {
 		return ErrInvalidTaskSpec
 	}
-	if service == nil || service.store == nil || service.store.db == nil || service.newID == nil || service.nowUnixMS == nil {
+	if service == nil || service.store == nil || service.store.db == nil || service.newID == nil || service.nowUnixMS == nil || !requiredIdentity(service.claimantID) {
 		return ErrTaskConflict
 	}
 	if err := ctx.Err(); err != nil {

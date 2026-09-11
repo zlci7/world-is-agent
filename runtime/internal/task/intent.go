@@ -14,7 +14,6 @@ import (
 
 const (
 	wakeReasonIntentWait = "intent_wait"
-	wakeStatusConsumed   = "consumed"
 
 	intentStageTaskUpdated   = "task_updated"
 	intentStageWakesConsumed = "wakes_consumed"
@@ -350,8 +349,7 @@ func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, 
 	rows, err := tx.QueryContext(ctx, `SELECT wake_id, game_id, world_id, entity_id, task_id, clock_id,
 		expected_revision, due_tick, reason, status, claim_id, claimed_by, generation, attempt,
 		retry_after_unix_ms, wake_json FROM task_wakeups
-		WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ?
-			AND status IN ('pending', 'claimed', 'enqueued', 'running') ORDER BY wake_id`,
+		WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ? ORDER BY wake_id`,
 		record.Owner.GameID, record.Owner.WorldID, record.Owner.EntityID, record.ID)
 	if err != nil {
 		return err
@@ -385,7 +383,10 @@ func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, 
 			_ = rows.Close()
 			return ErrInvalidTaskSpec
 		}
-		wakes = append(wakes, stored)
+		switch stored.Status {
+		case wakeStatusPending, wakeStatusClaimed, wakeStatusEnqueued, wakeStatusRunning:
+			wakes = append(wakes, stored)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -397,13 +398,14 @@ func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, 
 	for _, wake := range wakes {
 		priorStatus := wake.Status
 		wake.Status = wakeStatusConsumed
+		wake.RetryAfterUnixMS = 0
 		wakeJSON, err := json.Marshal(wake)
 		if err != nil {
 			return ErrInvalidTaskSpec
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE task_wakeups SET status = ?, wake_json = ?
+		result, err := tx.ExecContext(ctx, `UPDATE task_wakeups SET status = ?, retry_after_unix_ms = ?, wake_json = ?
 			WHERE wake_id = ? AND game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ? AND status = ?`,
-			wake.Status, wakeJSON, wake.ID, wake.Owner.GameID, wake.Owner.WorldID, wake.Owner.EntityID, wake.TaskID, priorStatus)
+			wake.Status, wake.RetryAfterUnixMS, wakeJSON, wake.ID, wake.Owner.GameID, wake.Owner.WorldID, wake.Owner.EntityID, wake.TaskID, priorStatus)
 		if err != nil {
 			return err
 		}

@@ -923,7 +923,7 @@ func testWake() Wake {
 		ClaimedBy:        "runtime-a",
 		Generation:       1,
 		Attempt:          1,
-		RetryAfterUnixMS: 1_700_000_000_000,
+		RetryAfterUnixMS: 0,
 	}
 }
 

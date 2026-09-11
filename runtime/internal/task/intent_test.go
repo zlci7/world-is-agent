@@ -104,7 +104,7 @@ func TestApplyIntentWaitWithoutNotePreservesDurableFactsAndProgress(t *testing.T
 	}
 }
 
-func TestApplyIntentCancelCreatesStableResultConsumesEveryExecutableWakeAndPreservesCleanup(t *testing.T) {
+func TestApplyIntentCancelCreatesStableResultConsumesExecutableWakeAndPreservesCleanup(t *testing.T) {
 	fixture, created, initialWake := newIntentFixture(t, StoreOptions{})
 	current := created.Task
 	current.Progress = json.RawMessage(`{"author":"environment","status":"travelling"}`)
@@ -120,15 +120,6 @@ func TestApplyIntentCancelCreatesStableResultConsumesEveryExecutableWakeAndPrese
 	}}
 	current.Cleanup = []Cleanup{{OperationID: "operation-a", Status: CleanupStatusUnconfirmed, Reason: "release"}}
 	setRecordForIntentTest(t, fixture.store, current)
-	for index, status := range []string{"claimed", "enqueued", "running"} {
-		insertIntentWake(t, fixture.store, current, Wake{
-			ID: fmt.Sprintf("wake-extra-%d", index), TaskID: current.ID, Owner: current.Owner,
-			ExpectedRevision: uint64(index + 2), DueTick: int64(220 + index), Reason: fmt.Sprintf("extra-%d", index),
-			Status: status, ClaimID: fmt.Sprintf("claim-%d", index), ClaimedBy: "runtime-a",
-			Generation: fixture.head.Binding.Generation, Attempt: index + 1,
-		})
-	}
-
 	exec := intentExecution(fixture, current, initialWake.ID, 1, "cancel-a")
 	got, err := fixture.svc.ApplyIntent(context.Background(), exec, Intent{Kind: "cancel", Reason: "player withdrew"})
 	if err != nil {

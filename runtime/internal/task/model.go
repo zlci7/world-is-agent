@@ -47,6 +47,12 @@ const (
 	CleanupStatusReleased    = "released"
 	CleanupStatusHandedOff   = "handed_off"
 	CleanupStatusUnconfirmed = "unconfirmed"
+
+	wakeStatusPending  = "pending"
+	wakeStatusClaimed  = "claimed"
+	wakeStatusEnqueued = "enqueued"
+	wakeStatusRunning  = "running"
+	wakeStatusConsumed = "consumed"
 )
 
 type WorldKey struct {
@@ -544,7 +550,7 @@ func (c Cleanup) Validate() error {
 }
 
 func (w Wake) Validate() error {
-	if !requiredIdentity(w.ID) || !requiredIdentity(w.TaskID) ||
+	if !requiredIdentity(w.ID) || !requiredIdentity(w.TaskID) || !requiredIdentity(w.Reason) ||
 		!optionalIdentity(w.ClaimID) || !optionalIdentity(w.ClaimedBy) {
 		return ErrInvalidTaskSpec
 	}
@@ -558,6 +564,24 @@ func (w Wake) Validate() error {
 		return err
 	}
 	if w.DueTick < 0 || w.Attempt < 0 || w.RetryAfterUnixMS < 0 {
+		return ErrInvalidTaskSpec
+	}
+	claimPresent := w.ClaimID != ""
+	claimantPresent := w.ClaimedBy != ""
+	switch w.Status {
+	case wakeStatusPending:
+		if claimPresent || claimantPresent {
+			return ErrInvalidTaskSpec
+		}
+	case wakeStatusClaimed, wakeStatusEnqueued, wakeStatusRunning:
+		if !claimPresent || !claimantPresent || w.Attempt == 0 || w.RetryAfterUnixMS != 0 {
+			return ErrInvalidTaskSpec
+		}
+	case wakeStatusConsumed:
+		if claimPresent != claimantPresent || w.RetryAfterUnixMS != 0 {
+			return ErrInvalidTaskSpec
+		}
+	default:
 		return ErrInvalidTaskSpec
 	}
 	return nil

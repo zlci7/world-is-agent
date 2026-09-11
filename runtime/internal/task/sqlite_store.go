@@ -46,6 +46,9 @@ type SQLiteStore struct {
 	// testAfterReconcileStage proves that task, wake consumption, and optional
 	// replacement wake persistence commit as one atomic reconciliation.
 	testAfterReconcileStage func(context.Context, string) error
+	// testAfterWakeStage proves that wake delivery and admission transitions
+	// remain atomic with their canonical JSON. Production never sets it.
+	testAfterWakeStage func(context.Context, string) error
 }
 
 type worldHeadRow struct {
@@ -211,6 +214,12 @@ var taskSQLiteSchema = []struct {
 	{
 		name:      "idx_task_wakeups_due",
 		statement: `CREATE INDEX idx_task_wakeups_due ON task_wakeups (game_id, world_id, clock_id, due_tick, status, wake_id)`,
+	},
+	{
+		name: "idx_task_wakeups_executable_task",
+		statement: `CREATE UNIQUE INDEX idx_task_wakeups_executable_task
+			ON task_wakeups (game_id, world_id, entity_id, task_id)
+			WHERE status IN ('pending', 'claimed', 'enqueued', 'running')`,
 	},
 }
 
@@ -593,43 +602,14 @@ func (s *SQLiteStore) loadWake(ctx context.Context, owner session.AgentSessionKe
 	if err := validateOwner(owner); err != nil || !requiredIdentity(wakeID) {
 		return Wake{}, ErrInvalidTaskSpec
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT
-		w.wake_id, w.game_id, w.world_id, w.entity_id, w.task_id, w.clock_id,
-		w.expected_revision, w.due_tick, w.reason, w.status, w.claim_id, w.claimed_by,
-		w.generation, w.attempt, w.retry_after_unix_ms, w.wake_json, t.clock_id
-		FROM task_wakeups w
-		JOIN tasks t ON t.game_id = w.game_id AND t.world_id = w.world_id
-			AND t.entity_id = w.entity_id AND t.task_id = w.task_id
-		WHERE w.game_id = ? AND w.world_id = ? AND w.entity_id = ? AND w.wake_id = ?`,
-		owner.GameID, owner.WorldID, owner.EntityID, wakeID)
-	var (
-		indexed                      Wake
-		clockID, taskClockID         string
-		expectedRevision, generation int64
-		wakeJSON                     []byte
-	)
-	indexed.Owner = owner
-	if err := row.Scan(
-		&indexed.ID, &indexed.Owner.GameID, &indexed.Owner.WorldID, &indexed.Owner.EntityID,
-		&indexed.TaskID, &clockID, &expectedRevision, &indexed.DueTick, &indexed.Reason,
-		&indexed.Status, &indexed.ClaimID, &indexed.ClaimedBy, &generation, &indexed.Attempt,
-		&indexed.RetryAfterUnixMS, &wakeJSON, &taskClockID,
-	); errors.Is(err, sql.ErrNoRows) {
+	wake, _, err := scanWakeRow(s.db.QueryRowContext(ctx, wakeSelectSQL+` WHERE w.game_id = ? AND w.world_id = ? AND w.entity_id = ? AND w.wake_id = ?`,
+		owner.GameID, owner.WorldID, owner.EntityID, wakeID))
+	if errors.Is(err, sql.ErrNoRows) {
 		return Wake{}, ErrTaskNotFound
 	} else if err != nil {
 		return Wake{}, classifyStoreError(err)
 	}
-	if expectedRevision <= 0 || generation <= 0 {
-		return Wake{}, ErrInvalidTaskSpec
-	}
-	indexed.ExpectedRevision = uint64(expectedRevision)
-	indexed.Generation = uint64(generation)
-	var stored Wake
-	if err := json.Unmarshal(wakeJSON, &stored); err != nil || stored.Validate() != nil ||
-		!wakeIndexedValuesEqual(stored, indexed) || clockID != taskClockID {
-		return Wake{}, ErrInvalidTaskSpec
-	}
-	return stored, nil
+	return wake, nil
 }
 
 func (s *SQLiteStore) putWorldHead(ctx context.Context, row worldHeadRow) error {
@@ -1010,7 +990,22 @@ func validateTaskWakePair(record Record, wake Wake) error {
 	if err := wake.Validate(); err != nil {
 		return err
 	}
-	if record.Owner != wake.Owner || record.ID != wake.TaskID || record.Revision != wake.ExpectedRevision {
+	if record.Owner != wake.Owner || record.ID != wake.TaskID || wake.DueTick > record.Spec.DeadlineAt {
+		return ErrInvalidTaskSpec
+	}
+	switch wake.Status {
+	case wakeStatusPending, wakeStatusClaimed, wakeStatusEnqueued:
+		if taskStateTerminal(record.State) || record.State != StateWaiting || record.Result != nil ||
+			record.NextWakeAt == nil || *record.NextWakeAt != wake.DueTick || record.Revision != wake.ExpectedRevision {
+			return ErrInvalidTaskSpec
+		}
+	case wakeStatusRunning:
+		if record.State != StateRunning || record.Result != nil || record.NextWakeAt != nil ||
+			wake.ExpectedRevision >= uint64(math.MaxInt64) || record.Revision != wake.ExpectedRevision+1 {
+			return ErrInvalidTaskSpec
+		}
+	case wakeStatusConsumed:
+	default:
 		return ErrInvalidTaskSpec
 	}
 	return nil
