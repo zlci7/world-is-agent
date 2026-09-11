@@ -282,7 +282,6 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 		updated.PauseReason = ""
 		updated.NoProgressAttempts = 0
 		updated.ReconcileAttempts = 0
-		reserveTerminal := false
 		switch clonedIntent.Kind {
 		case "wait":
 			if clonedIntent.NextWakeAt == nil || exec.Clock.Tick >= *clonedIntent.NextWakeAt || *clonedIntent.NextWakeAt > current.record.Spec.DeadlineAt {
@@ -299,7 +298,6 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 				}
 				updated.Progress = progress
 			}
-			reserveTerminal = true
 		case "cancel":
 			updated.State = StateCancelled
 			updated.NextWakeAt = nil
@@ -312,7 +310,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 			return ErrInvalidTaskSpec
 		}
 
-		prepared, err := s.store.prepareIntentMutation(current, updated, request, reserveTerminal)
+		prepared, err := s.store.prepareIntentMutation(current, updated, request)
 		if err != nil {
 			return err
 		}

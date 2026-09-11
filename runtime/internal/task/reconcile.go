@@ -342,38 +342,10 @@ func (s *SQLiteStore) prepareReconcileMutation(current storedIntentTask, updated
 	if err != nil {
 		return preparedReconcileMutation{}, ErrInvalidTaskSpec
 	}
-	projectedJSON, err := recordWithMinimalMissingCleanups(updated)
-	if err != nil {
+	if err := s.validateTaskMutationCapacity(updated, createResponseJSON, intentHistoryJSON); err != nil {
 		return preparedReconcileMutation{}, err
 	}
-	parts := []int{len(recordJSON), len(createResponseJSON), len(intentHistoryJSON), len(projectedJSON)}
-	if !taskStateTerminal(updated.State) {
-		parts = append(parts, intentTerminalStructuralReserve)
-	}
-	if !taskBytesFit(s.options.MaxTaskBytes, parts...) {
-		return preparedReconcileMutation{}, ErrInvalidTaskSpec
-	}
 	return preparedReconcileMutation{record: updated, recordJSON: recordJSON}, nil
-}
-
-func recordWithMinimalMissingCleanups(record Record) ([]byte, error) {
-	projected := record
-	projected.Cleanup = append([]Cleanup(nil), record.Cleanup...)
-	cleaned := make(map[string]struct{}, len(projected.Cleanup))
-	for _, cleanup := range projected.Cleanup {
-		cleaned[cleanup.OperationID] = struct{}{}
-	}
-	for _, operation := range projected.Operations {
-		if _, found := cleaned[operation.ID]; found {
-			continue
-		}
-		projected.Cleanup = append(projected.Cleanup, Cleanup{OperationID: operation.ID, Status: CleanupStatusReleased})
-	}
-	data, err := json.Marshal(projected)
-	if err != nil {
-		return nil, ErrInvalidTaskSpec
-	}
-	return data, nil
 }
 
 func (s *SQLiteStore) updateReconcileRecordTx(ctx context.Context, tx *sql.Tx, before Record, prepared preparedReconcileMutation) error {

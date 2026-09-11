@@ -359,9 +359,10 @@ func (s *SQLiteStore) prepareTaskCreate(record Record, wake Wake) (preparedTaskC
 	}
 	responseJSON, err := json.Marshal(initialCreateResult(record))
 	intentHistoryJSON := []byte("[]")
-	if err != nil || !taskBytesFit(s.options.MaxTaskBytes,
-		len(recordJSON), len(responseJSON), len(intentHistoryJSON),
-		len(recordJSON), intentTerminalStructuralReserve) {
+	if err != nil {
+		return preparedTaskCreate{}, ErrInvalidTaskSpec
+	}
+	if err := s.validateTaskMutationCapacity(record, responseJSON, intentHistoryJSON); err != nil {
 		return preparedTaskCreate{}, ErrInvalidTaskSpec
 	}
 	return preparedTaskCreate{
@@ -386,6 +387,41 @@ func taskBytesFit(limit int, parts ...int) bool {
 		remaining -= part
 	}
 	return true
+}
+
+func (s *SQLiteStore) validateTaskMutationCapacity(record Record, createResponseJSON, intentHistoryJSON []byte) error {
+	projectedJSON, err := cleanupCompleteRecordJSON(record)
+	if err != nil {
+		return err
+	}
+	parts := []int{len(projectedJSON), len(createResponseJSON), len(intentHistoryJSON), len(projectedJSON)}
+	if !taskStateTerminal(record.State) {
+		parts = append(parts, intentTerminalStructuralReserve)
+	}
+	if !taskBytesFit(s.options.MaxTaskBytes, parts...) {
+		return ErrInvalidTaskSpec
+	}
+	return nil
+}
+
+func cleanupCompleteRecordJSON(record Record) ([]byte, error) {
+	projected := record
+	projected.Cleanup = append(make([]Cleanup, 0, len(record.Cleanup)), record.Cleanup...)
+	cleaned := make(map[string]struct{}, len(projected.Cleanup))
+	for _, cleanup := range projected.Cleanup {
+		cleaned[cleanup.OperationID] = struct{}{}
+	}
+	for _, operation := range projected.Operations {
+		if _, found := cleaned[operation.ID]; found {
+			continue
+		}
+		projected.Cleanup = append(projected.Cleanup, Cleanup{OperationID: operation.ID, Status: CleanupStatusReleased})
+	}
+	data, err := json.Marshal(projected)
+	if err != nil {
+		return nil, ErrInvalidTaskSpec
+	}
+	return data, nil
 }
 
 func initialCreateResult(record Record) CreateResult {
@@ -884,10 +920,8 @@ func (s *SQLiteStore) prepareNoRevisionMutation(current storedIntentTask, update
 	if err != nil {
 		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
 	}
-	if !taskBytesFit(s.options.MaxTaskBytes,
-		len(recordJSON), len(createResponseJSON), len(intentHistoryJSON),
-		len(recordJSON), intentTerminalStructuralReserve) {
-		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
+	if err := s.validateTaskMutationCapacity(updated, createResponseJSON, intentHistoryJSON); err != nil {
+		return preparedNoRevisionMutation{}, err
 	}
 	return preparedNoRevisionMutation{record: updated, recordJSON: recordJSON}, nil
 }

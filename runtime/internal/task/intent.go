@@ -289,7 +289,7 @@ func (s *SQLiteStore) loadExactIntentTx(ctx context.Context, tx *sql.Tx, owner s
 	return match.intentResponse, true, nil
 }
 
-func (s *SQLiteStore) prepareIntentMutation(current storedIntentTask, response Record, request preparedIntentRequest, reserveTerminal bool) (preparedIntentMutation, error) {
+func (s *SQLiteStore) prepareIntentMutation(current storedIntentTask, response Record, request preparedIntentRequest) (preparedIntentMutation, error) {
 	if err := response.Validate(); err != nil {
 		return preparedIntentMutation{}, err
 	}
@@ -312,12 +312,8 @@ func (s *SQLiteStore) prepareIntentMutation(current storedIntentTask, response R
 	if err != nil {
 		return preparedIntentMutation{}, ErrInvalidTaskSpec
 	}
-	parts := []int{len(recordJSON), len(createResponseJSON), len(historyJSON)}
-	if reserveTerminal {
-		parts = append(parts, len(recordJSON), intentTerminalStructuralReserve)
-	}
-	if !taskBytesFit(s.options.MaxTaskBytes, parts...) {
-		return preparedIntentMutation{}, ErrInvalidTaskSpec
+	if err := s.validateTaskMutationCapacity(response, createResponseJSON, historyJSON); err != nil {
+		return preparedIntentMutation{}, err
 	}
 	return preparedIntentMutation{
 		record: response, recordJSON: recordJSON,

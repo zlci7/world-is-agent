@@ -132,16 +132,8 @@ func (s *SQLiteStore) prepareCleanupMutation(current storedIntentTask, updated R
 	if err != nil {
 		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
 	}
-	projectedJSON, err := recordWithMinimalMissingCleanups(updated)
-	if err != nil {
+	if err := s.validateTaskMutationCapacity(updated, createResponseJSON, intentHistoryJSON); err != nil {
 		return preparedNoRevisionMutation{}, err
-	}
-	parts := []int{len(projectedJSON), len(createResponseJSON), len(intentHistoryJSON), len(projectedJSON)}
-	if !taskStateTerminal(updated.State) {
-		parts = append(parts, intentTerminalStructuralReserve)
-	}
-	if !taskBytesFit(s.options.MaxTaskBytes, parts...) {
-		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
 	}
 	return preparedNoRevisionMutation{record: updated, recordJSON: recordJSON}, nil
 }

@@ -77,7 +77,6 @@ func TestReconcilePreservesCreateIntentMetadataAndCapacity(t *testing.T) {
 			{OperationID: operationOne.ID, Status: CleanupStatusReleased},
 			{OperationID: operationTwo.ID, Status: CleanupStatusReleased},
 		}
-		pendingJSON := mustJSONBytes(t, pending)
 		pendingProjectedJSON := mustJSONBytes(t, pendingProjected)
 		terminal := pendingProjected
 		terminal.State = StateSucceeded
@@ -92,7 +91,7 @@ func TestReconcilePreservesCreateIntentMetadataAndCapacity(t *testing.T) {
 		}
 		terminalJSON := mustJSONBytes(t, terminal)
 		createJSON := mustJSONBytes(t, initialCreateResult(created.Task))
-		nonterminalCombinedLimit := len(pendingJSON) + len(createJSON) + len([]byte("[]")) + len(pendingProjectedJSON) + intentTerminalStructuralReserve
+		nonterminalCombinedLimit := len(pendingProjectedJSON) + len(createJSON) + len([]byte("[]")) + len(pendingProjectedJSON) + intentTerminalStructuralReserve
 		terminalCombinedLimit := len(terminalJSON) + len(createJSON) + len([]byte("[]")) + len(terminalJSON)
 		exactCombinedLimit := nonterminalCombinedLimit
 		if terminalCombinedLimit > exactCombinedLimit {

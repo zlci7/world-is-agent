@@ -873,8 +873,14 @@ func TestApplyIntentWaitCapacityPreservesTerminalHeadroomForShortCancel(t *testi
 	updated.Revision = 2
 	updated.NextWakeAt = &next
 	updated.Progress = json.RawMessage(fmt.Sprintf(`{"author":"model","kind":"explanation","note":%q}`, oversized))
-	if _, err := fixture.store.prepareIntentMutation(storedIntentTask{record: created.Task, history: []intentCall{}}, updated, request, false); err != nil {
-		t.Fatalf("candidate wait without terminal reserve error = %v; fixture must isolate reserve behavior", err)
+	responseJSON := mustJSONBytes(t, updated)
+	createJSON := mustJSONBytes(t, initialCreateResult(created.Task))
+	historyJSON := mustJSONBytes(t, []intentCall{{
+		RequestJSON: request.requestJSON, RequestHash: request.fingerprint,
+		ResponseJSON: responseJSON, ResponseHash: sha256Hex(responseJSON),
+	}})
+	if !taskBytesFit(20<<10, len(responseJSON), len(createJSON), len(historyJSON), len(responseJSON)) {
+		t.Fatal("candidate wait without terminal reserve exceeds fixture capacity")
 	}
 	beforeTask, beforeWake, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
 	if _, err := fixture.svc.ApplyIntent(context.Background(), exec, intent); !errors.Is(err, ErrInvalidTaskSpec) {
