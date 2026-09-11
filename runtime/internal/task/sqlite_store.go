@@ -1007,7 +1007,7 @@ func validateTaskWakePair(record Record, wake Wake) error {
 		}
 	case wakeStatusRunning:
 		if record.State != StateRunning || record.Result != nil || record.NextWakeAt != nil ||
-			wake.ExpectedRevision >= uint64(math.MaxInt64) || record.Revision != wake.ExpectedRevision+1 {
+			record.Revision <= wake.ExpectedRevision {
 			return ErrInvalidTaskSpec
 		}
 	case wakeStatusConsumed:

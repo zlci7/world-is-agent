@@ -523,7 +523,7 @@ func validateDurableWakeRelation(head worldHeadRow, candidate durableWake) error
 		}
 	case wakeStatusRunning:
 		if wake.Generation != head.Head.Binding.Generation || record.State != StateRunning || record.Result != nil ||
-			record.NextWakeAt != nil || wake.ExpectedRevision >= uint64(math.MaxInt64) || record.Revision != wake.ExpectedRevision+1 {
+			record.NextWakeAt != nil || record.Revision <= wake.ExpectedRevision {
 			return ErrInvalidTaskSpec
 		}
 	case wakeStatusConsumed:

@@ -54,6 +54,8 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 		return Head{}, ErrInvalidTaskSpec
 	}
 	var result Head
+	var retryNeedsRecovery bool
+	var recoveryWakeCount int
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
 		current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
 		if err != nil {
@@ -63,6 +65,12 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 			if err := validateActivationRetry(current, runID, clock); err != nil {
 				return err
 			}
+			plan, err := s.store.planRestartRecoveryTx(ctx, tx, current, s.claimantID)
+			if err != nil {
+				return err
+			}
+			retryNeedsRecovery = len(plan.deliveries) != 0 || len(plan.running) != 0
+			recoveryWakeCount = len(plan.running)
 			result = current.Head
 			return nil
 		}
@@ -82,7 +90,60 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 	if err != nil {
 		return Head{}, err
 	}
+	if !retryNeedsRecovery {
+		return result, nil
+	}
+	candidateWakeIDs, err := s.recoveryWakeIDs(recoveryWakeCount)
+	if err != nil {
+		return Head{}, err
+	}
+	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
+		current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrWorldNotReady
+		}
+		if err := validateActivationRetry(current, runID, clock); err != nil {
+			return err
+		}
+		plan, err := s.store.planRestartRecoveryTx(ctx, tx, current, s.claimantID)
+		if err != nil {
+			return err
+		}
+		if len(plan.running) > len(candidateWakeIDs) {
+			return ErrTaskChanged
+		}
+		if err := s.store.applyRestartRecoveryTx(ctx, tx, current, plan, candidateWakeIDs); err != nil {
+			return err
+		}
+		result = current.Head
+		return nil
+	})
+	if err != nil {
+		return Head{}, err
+	}
 	return result, nil
+}
+
+func (s *Service) recoveryWakeIDs(count int) ([]string, error) {
+	if count < 0 || count > s.store.options.MaxTasksPerWorld {
+		return nil, ErrTaskCapacityExceeded
+	}
+	ids := make([]string, count)
+	seen := make(map[string]struct{}, count)
+	for index := range ids {
+		ids[index] = s.newID("wake")
+		if !requiredIdentity(ids[index]) {
+			return nil, ErrInvalidTaskSpec
+		}
+		if _, duplicate := seen[ids[index]]; duplicate {
+			return nil, ErrInvalidTaskSpec
+		}
+		seen[ids[index]] = struct{}{}
+	}
+	return ids, nil
 }
 
 func (s *Service) Create(ctx context.Context, exec ExecutionContext, spec TaskSpec, admission Admission) (CreateResult, error) {

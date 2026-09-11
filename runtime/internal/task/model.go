@@ -627,6 +627,9 @@ func (r ReconcileResult) Validate() error {
 func (a AttemptOutcome) Validate() error {
 	switch a.Kind {
 	case AttemptOutcomeKindProgress, AttemptOutcomeKindNoProgress, AttemptOutcomeKindReconcileFailed:
+		if !optionalIdentity(a.Reason) {
+			return ErrInvalidTaskSpec
+		}
 		return nil
 	default:
 		return ErrInvalidTaskSpec
