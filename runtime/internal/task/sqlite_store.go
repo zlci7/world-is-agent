@@ -390,6 +390,25 @@ func taskBytesFit(limit int, parts ...int) bool {
 }
 
 func (s *SQLiteStore) validateTaskMutationCapacity(record Record, createResponseJSON, intentHistoryJSON []byte) error {
+	if err := s.validateCleanupCompleteCapacity(record, createResponseJSON, intentHistoryJSON); err != nil {
+		return err
+	}
+	pending := pendingEvidence(record)
+	if len(pending) == 0 {
+		return nil
+	}
+	// idgen.New("result") encodes an int64 timestamp and a uint64 counter.
+	// Their widest decimal representations bound the future ID without sampling
+	// time or allocating an identity during admission's transaction.
+	const projectedResultID = "result_-9223372036854775808_18446744073709551615"
+	projected, err := reconciledRecord(record, pending, projectedResultID)
+	if err != nil {
+		return err
+	}
+	return s.validateCleanupCompleteCapacity(projected, createResponseJSON, intentHistoryJSON)
+}
+
+func (s *SQLiteStore) validateCleanupCompleteCapacity(record Record, createResponseJSON, intentHistoryJSON []byte) error {
 	projectedJSON, err := cleanupCompleteRecordJSON(record)
 	if err != nil {
 		return err

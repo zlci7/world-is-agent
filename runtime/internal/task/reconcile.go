@@ -75,87 +75,9 @@ func (s *Service) Reconcile(ctx context.Context, exec ExecutionContext) (Reconci
 		if current.record.Revision != exec.ExpectedRevision {
 			return ErrTaskChanged
 		}
-		nextRevision, err := NextDurableCounter(current.record.Revision)
+		updated, err := reconciledRecord(current.record, pending, candidateResultID)
 		if err != nil {
 			return err
-		}
-
-		updated := current.record
-		updated.Revision = nextRevision
-		updated.Evidence = cloneEvidenceSlice(current.record.Evidence)
-		for index := range updated.Evidence {
-			if !updated.Evidence[index].Applied {
-				updated.Evidence[index].Applied = true
-			}
-		}
-		updated.NeedsReconcile = false
-		updated.PauseReason = ""
-		updated.NoProgressAttempts = 0
-		updated.ReconcileAttempts = 0
-
-		terminal, hasTerminal := selectTerminalEvidence(pending)
-		if hasTerminal {
-			updated.State = terminalResultState(terminal.Kind)
-			updated.NextWakeAt = nil
-			updated.Result = &Result{
-				ID: candidateResultID, TaskID: updated.ID, Revision: updated.Revision,
-				State: updated.State, Reason: terminal.Kind, OccurredAt: terminal.OccurredAt,
-				EvidenceRefs: []string{terminal.FactID}, Source: terminal.Source,
-			}
-			prepared, err := s.store.prepareReconcileMutation(current, updated)
-			if err != nil {
-				return err
-			}
-			if err := s.store.updateReconcileRecordTx(ctx, tx, current.record, prepared); err != nil {
-				return err
-			}
-			if err := s.store.consumeReconcileWakesTx(ctx, tx, current.record); err != nil {
-				return err
-			}
-			result = ReconcileResult{Task: prepared.record, Next: ReconcileNextSettled}
-			return nil
-		}
-		wait, hasWait := selectWaitEvidence(pending)
-		if hasWait {
-			updated.State = StateWaiting
-			nextWakeAt := *wait.WaitUntil
-			updated.NextWakeAt = &nextWakeAt
-			updated.Result = nil
-			if progress, found := selectProgressEvidence(pending); found {
-				updated.Progress = append(json.RawMessage(nil), progress.Details...)
-			}
-			prepared, err := s.store.prepareReconcileMutation(current, updated)
-			if err != nil {
-				return err
-			}
-			if err := s.store.updateReconcileRecordTx(ctx, tx, current.record, prepared); err != nil {
-				return err
-			}
-			if err := s.store.consumeReconcileWakesTx(ctx, tx, current.record); err != nil {
-				return err
-			}
-			wake := Wake{
-				ID: candidateWakeID, TaskID: updated.ID, Owner: updated.Owner,
-				ExpectedRevision: updated.Revision, DueTick: nextWakeAt,
-				Reason: wakeReasonEvidenceWait, Status: wakeStatusPending,
-				Generation: head.Head.Binding.Generation,
-			}
-			if err := s.store.insertReconcileWakeTx(ctx, tx, prepared.record, wake); err != nil {
-				return err
-			}
-			next := ReconcileNextSettled
-			if nextWakeAt <= head.Head.Clock.Tick {
-				next = ReconcileNextObserve
-			}
-			result = ReconcileResult{Task: prepared.record, Next: next}
-			return nil
-		}
-
-		updated.State = StateRunning
-		updated.NextWakeAt = nil
-		updated.Result = nil
-		if progress, found := selectProgressEvidence(pending); found {
-			updated.Progress = append(json.RawMessage(nil), progress.Details...)
 		}
 		prepared, err := s.store.prepareReconcileMutation(current, updated)
 		if err != nil {
@@ -167,9 +89,27 @@ func (s *Service) Reconcile(ctx context.Context, exec ExecutionContext) (Reconci
 		if err := s.store.consumeReconcileWakesTx(ctx, tx, current.record); err != nil {
 			return err
 		}
-		next := ReconcileNextDecide
-		if head.Head.Clock.Tick >= updated.Spec.DeadlineAt {
-			next = ReconcileNextObserve
+		next := ReconcileNextSettled
+		switch updated.State {
+		case StateWaiting:
+			nextWakeAt := *updated.NextWakeAt
+			wake := Wake{
+				ID: candidateWakeID, TaskID: updated.ID, Owner: updated.Owner,
+				ExpectedRevision: updated.Revision, DueTick: nextWakeAt,
+				Reason: wakeReasonEvidenceWait, Status: wakeStatusPending,
+				Generation: head.Head.Binding.Generation,
+			}
+			if err := s.store.insertReconcileWakeTx(ctx, tx, prepared.record, wake); err != nil {
+				return err
+			}
+			if nextWakeAt <= head.Head.Clock.Tick {
+				next = ReconcileNextObserve
+			}
+		case StateRunning:
+			next = ReconcileNextDecide
+			if head.Head.Clock.Tick >= updated.Spec.DeadlineAt {
+				next = ReconcileNextObserve
+			}
 		}
 		result = ReconcileResult{Task: prepared.record, Next: next}
 		return nil
@@ -178,6 +118,46 @@ func (s *Service) Reconcile(ctx context.Context, exec ExecutionContext) (Reconci
 		return ReconcileResult{}, err
 	}
 	return result, nil
+}
+
+// reconciledRecord derives the same deterministic candidate for admission and
+// execution. It reads typed evidence fields and preserves opaque payload bytes.
+func reconciledRecord(record Record, pending []Evidence, resultID string) (Record, error) {
+	nextRevision, err := NextDurableCounter(record.Revision)
+	if err != nil {
+		return Record{}, err
+	}
+	updated := record
+	updated.Revision = nextRevision
+	updated.Evidence = cloneEvidenceSlice(record.Evidence)
+	for index := range updated.Evidence {
+		updated.Evidence[index].Applied = true
+	}
+	updated.NeedsReconcile = false
+	updated.PauseReason = ""
+	updated.NoProgressAttempts = 0
+	updated.ReconcileAttempts = 0
+	updated.NextWakeAt = nil
+	updated.Result = nil
+	if terminal, found := selectTerminalEvidence(pending); found {
+		updated.State = terminalResultState(terminal.Kind)
+		updated.Result = &Result{
+			ID: resultID, TaskID: updated.ID, Revision: updated.Revision,
+			State: updated.State, Reason: terminal.Kind, OccurredAt: terminal.OccurredAt,
+			EvidenceRefs: []string{terminal.FactID}, Source: terminal.Source,
+		}
+		return updated, nil
+	}
+	updated.State = StateRunning
+	if wait, found := selectWaitEvidence(pending); found {
+		updated.State = StateWaiting
+		nextWakeAt := *wait.WaitUntil
+		updated.NextWakeAt = &nextWakeAt
+	}
+	if progress, found := selectProgressEvidence(pending); found {
+		updated.Progress = append(json.RawMessage(nil), progress.Details...)
+	}
+	return updated, nil
 }
 
 func validateReconcileExecution(exec ExecutionContext) error {
