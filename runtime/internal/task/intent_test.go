@@ -972,7 +972,10 @@ func loadTaskWakes(t *testing.T, store *SQLiteStore, owner session.AgentSessionK
 
 func setWorldClockForIntentTest(t *testing.T, store *SQLiteStore, head Head, clock Clock) {
 	t.Helper()
-	row := worldHeadRow{Head: head}
+	row, err := store.loadWorldHead(context.Background(), head.Binding.World)
+	if err != nil {
+		t.Fatal(err)
+	}
 	row.Head.Clock = clock
 	data := mustJSONBytes(t, row)
 	if _, err := store.db.Exec(`UPDATE task_world_heads SET clock_id = ?, clock_tick = ?, clock_sequence = ?, head_json = ?
@@ -984,7 +987,11 @@ func setWorldClockForIntentTest(t *testing.T, store *SQLiteStore, head Head, clo
 
 func setWorldHeadStateForIntentTest(t *testing.T, store *SQLiteStore, head Head, status, reason, saveRequestID, barrierStatus string) {
 	t.Helper()
-	row := worldHeadRow{Head: head, SaveRequestID: saveRequestID, BarrierStatus: barrierStatus}
+	row, err := store.loadWorldHead(context.Background(), head.Binding.World)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.SaveRequestID, row.BarrierStatus = saveRequestID, barrierStatus
 	row.Head.Status = status
 	row.Head.Reason = reason
 	data := mustJSONBytes(t, row)

@@ -219,6 +219,34 @@ func TestRestartRecoveryIsAtomicAndIdempotent(t *testing.T) {
 		}
 		assertD2Rows(t, fixture.store, created.Task, before)
 	})
+
+	t.Run("head marker rolls back with batch", func(t *testing.T) {
+		fixture, created, _, _, _, clock := runningWakeForRestart(t, 200)
+		before := snapshotD2Rows(t, fixture.store, created.Task)
+		beforeInstance := runtimeInstanceIDForRestart(t, fixture.store, fixture.world)
+		restarted := deterministicRestartService(fixture.store)
+		fixture.store.testAfterWakeStage = func(_ context.Context, stage string) error {
+			if stage == "restart_head_rebound" {
+				return errors.New("head marker fault")
+			}
+			return nil
+		}
+		_, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+		fixture.store.testAfterWakeStage = nil
+		if err == nil {
+			t.Fatal("head marker fault returned nil")
+		}
+		assertD2Rows(t, fixture.store, created.Task, before)
+		if afterInstance := runtimeInstanceIDForRestart(t, fixture.store, fixture.world); afterInstance != beforeInstance {
+			t.Fatalf("runtime instance = %q, want rolled-back %q", afterInstance, beforeInstance)
+		}
+		if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, "run-a", clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+			t.Fatalf("prior active Service retry error = %v", err)
+		}
+		assertD2Rows(t, fixture.store, created.Task, before)
+	})
 }
 
 func TestRestartRecoveryRejectsUnsafeStateWithoutPartialWrite(t *testing.T) {
@@ -327,6 +355,178 @@ func TestRestartFailsClosedOnCanonicalIndexOrWakeGraphCorruption(t *testing.T) {
 	}
 }
 
+func TestRestartRejectsNonCanonicalWorldHeadBeforeRecovery(t *testing.T) {
+	tests := []struct {
+		name   string
+		poison func(*testing.T, []byte) []byte
+	}{
+		{name: "tail whitespace", poison: func(_ *testing.T, raw []byte) []byte {
+			return append(append([]byte(nil), raw...), ' ')
+		}},
+		{name: "key reorder", poison: func(t *testing.T, raw []byte) []byte {
+			var decoded map[string]any
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			return mustJSONBytes(t, decoded)
+		}},
+		{name: "unknown field", poison: func(_ *testing.T, raw []byte) []byte {
+			return append([]byte(`{"unknown":true,`), raw[1:]...)
+		}},
+		{name: "duplicate field", poison: func(_ *testing.T, raw []byte) []byte {
+			return append(append([]byte(nil), raw[:len(raw)-1]...), []byte(`,"barrier_status":""}`)...)
+		}},
+		{name: "malformed json", poison: func(_ *testing.T, _ []byte) []byte {
+			return []byte(`{"head"`)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture, created, _, _, _, clock := runningWakeForRestart(t, 200)
+			before := snapshotD2Rows(t, fixture.store, created.Task)
+			raw := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world)
+			poisoned := tt.poison(t, raw)
+			if _, err := fixture.store.db.Exec(`UPDATE task_world_heads SET head_json = ? WHERE game_id = ? AND world_id = ?`,
+				poisoned, fixture.world.GameID, fixture.world.WorldID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := deterministicRestartService(fixture.store).ActivateWorld(context.Background(), fixture.world, "run-a", clock,
+				CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); !errors.Is(err, ErrInvalidTaskSpec) {
+				t.Fatalf("ActivateWorld error = %v, want invalid_task_spec", err)
+			}
+			assertD2Rows(t, fixture.store, created.Task, before)
+			if after := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(after, poisoned) {
+				t.Fatal("failed recovery changed poisoned world head")
+			}
+		})
+	}
+
+	t.Run("runtime marker index mismatch", func(t *testing.T) {
+		fixture, created, _, _, _, clock := runningWakeForRestart(t, 200)
+		before := snapshotD2Rows(t, fixture.store, created.Task)
+		beforeHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world)
+		if _, err := fixture.store.db.Exec(`UPDATE task_world_heads SET runtime_instance_id = ? WHERE game_id = ? AND world_id = ?`,
+			"runtime-index-poison", fixture.world.GameID, fixture.world.WorldID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := deterministicRestartService(fixture.store).ActivateWorld(context.Background(), fixture.world, "run-a", clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); !errors.Is(err, ErrInvalidTaskSpec) {
+			t.Fatalf("ActivateWorld error = %v, want invalid_task_spec", err)
+		}
+		assertD2Rows(t, fixture.store, created.Task, before)
+		if afterHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(afterHead, beforeHead) {
+			t.Fatal("failed recovery changed world head JSON")
+		}
+		if afterInstance := runtimeInstanceIDForRestart(t, fixture.store, fixture.world); afterInstance != "runtime-index-poison" {
+			t.Fatalf("failed recovery changed runtime instance to %q", afterInstance)
+		}
+	})
+}
+
+func TestRestartRecoversRunningTaskWithoutExecutableWake(t *testing.T) {
+	fixture, created, initialWake := newIntentFixture(t, StoreOptions{})
+	progress := taskEvidence(fixture.head.Binding, created.Task, "fact-restart-no-wake", EvidenceKindProgress)
+	progress.Details = json.RawMessage(`{"progress":"ordinary"}`)
+	if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, progress); err != nil || !added {
+		t.Fatalf("AdmitEvidence = (%v, %v)", added, err)
+	}
+	reconciled, err := fixture.svc.Reconcile(context.Background(), reconcileExecution(fixture, created.Task, created.Task.Revision))
+	if err != nil || reconciled.Next != ReconcileNextDecide || reconciled.Task.State != StateRunning {
+		t.Fatalf("Reconcile = (%+v, %v)", reconciled, err)
+	}
+	oldWake, err := fixture.store.loadWake(context.Background(), created.Task.Owner, initialWake.ID)
+	if err != nil || oldWake.Status != wakeStatusConsumed {
+		t.Fatalf("old wake = (%+v, %v)", oldWake, err)
+	}
+
+	beforeSame := snapshotD2Rows(t, fixture.store, created.Task)
+	beforeSameHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world)
+	if active := runtimeInstanceIDForRestart(t, fixture.store, fixture.world); active != fixture.svc.claimantID {
+		t.Fatalf("fresh runtime instance = %q, want %q", active, fixture.svc.claimantID)
+	}
+	if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+		t.Fatalf("same-service ActivateWorld error = %v", err)
+	}
+	assertD2Rows(t, fixture.store, created.Task, beforeSame)
+	if afterSameHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(afterSameHead, beforeSameHead) {
+		t.Fatal("same-service activation changed world head")
+	}
+
+	restarted := deterministicRestartService(fixture.store)
+	if _, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+		t.Fatalf("new-service ActivateWorld error = %v", err)
+	}
+	recovered, err := restarted.Read(context.Background(), created.Task.Owner, created.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Revision != reconciled.Task.Revision+1 || recovered.State != StateWaiting || !recovered.NeedsReconcile ||
+		recovered.NextWakeAt == nil || *recovered.NextWakeAt != fixture.clock.Tick {
+		t.Fatalf("recovered Task = %+v", recovered)
+	}
+	wakes := loadTaskWakes(t, fixture.store, created.Task.Owner, created.Task.ID)
+	if len(wakes) != 2 {
+		t.Fatalf("wake count = %d, want consumed audit plus replacement", len(wakes))
+	}
+	var replacement Wake
+	for _, wake := range wakes {
+		if wake.Status == wakeStatusPending {
+			replacement = wake
+		}
+	}
+	if replacement.ID == "" || replacement.Reason != wakeReasonRestartReconcile || replacement.ExpectedRevision != recovered.Revision {
+		t.Fatalf("replacement Wake = %+v", replacement)
+	}
+	if active := runtimeInstanceIDForRestart(t, fixture.store, fixture.world); active != restarted.claimantID {
+		t.Fatalf("recovered runtime instance = %q, want %q", active, restarted.claimantID)
+	}
+
+	beforeRetry := snapshotD2Rows(t, fixture.store, created.Task)
+	beforeRetryHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world)
+	if _, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+		t.Fatalf("response-loss activation retry error = %v", err)
+	}
+	assertD2Rows(t, fixture.store, created.Task, beforeRetry)
+	if afterRetryHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(afterRetryHead, beforeRetryHead) {
+		t.Fatal("response-loss retry changed world head")
+	}
+	if claimed, err := fixture.svc.ClaimDue(context.Background(), fixture.head.Binding, fixture.clock, 1); !errors.Is(err, ErrTaskChanged) || len(claimed) != 0 {
+		t.Fatalf("stale Service ClaimDue = (%+v, %v), want task_changed", claimed, err)
+	}
+	if claimed, err := restarted.ClaimDue(context.Background(), fixture.head.Binding, fixture.clock, 1); err != nil || len(claimed) != 1 || claimed[0].ID != replacement.ID {
+		t.Fatalf("active Service ClaimDue = (%+v, %v)", claimed, err)
+	}
+}
+
+func TestRestartRejectsInvalidExecutableTopologyAndPriorClaimant(t *testing.T) {
+	t.Run("waiting without executable wake", func(t *testing.T) {
+		fixture, created, wake := newIntentFixture(t, StoreOptions{})
+		wake.Status = wakeStatusConsumed
+		setWakeForTest(t, fixture.store, wake)
+		before := snapshotD2Rows(t, fixture.store, created.Task)
+		if _, err := deterministicRestartService(fixture.store).ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); !errors.Is(err, ErrInvalidTaskSpec) {
+			t.Fatalf("ActivateWorld error = %v, want invalid_task_spec", err)
+		}
+		assertD2Rows(t, fixture.store, created.Task, before)
+	})
+
+	t.Run("claimant differs from prior active instance", func(t *testing.T) {
+		fixture, created, wake, clock := claimedWakeForRestart(t, wakeStatusClaimed)
+		wake.ClaimedBy = "runtime-rogue"
+		setWakeForTest(t, fixture.store, wake)
+		before := snapshotD2Rows(t, fixture.store, created.Task)
+		if _, err := deterministicRestartService(fixture.store).ActivateWorld(context.Background(), fixture.world, "run-a", clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); !errors.Is(err, ErrInvalidTaskSpec) {
+			t.Fatalf("ActivateWorld error = %v, want invalid_task_spec", err)
+		}
+		assertD2Rows(t, fixture.store, created.Task, before)
+	})
+}
+
 func claimedWakeForRestart(t *testing.T, status string) (createFixture, CreateResult, Wake, Clock) {
 	t.Helper()
 	fixture := newCreateFixture(t, StoreOptions{})
@@ -412,4 +612,24 @@ func insertD2WakeRaw(t *testing.T, db *sql.DB, clockID string, wake Wake) {
 		wake.ClaimID, wake.ClaimedBy, int64(wake.Generation), wake.Attempt, wake.RetryAfterUnixMS, raw); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func rawWorldHeadJSONForRestart(t *testing.T, store *SQLiteStore, world WorldKey) []byte {
+	t.Helper()
+	var raw []byte
+	if err := store.db.QueryRow(`SELECT head_json FROM task_world_heads WHERE game_id = ? AND world_id = ?`,
+		world.GameID, world.WorldID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	return append([]byte(nil), raw...)
+}
+
+func runtimeInstanceIDForRestart(t *testing.T, store *SQLiteStore, world WorldKey) string {
+	t.Helper()
+	var instance string
+	if err := store.db.QueryRow(`SELECT runtime_instance_id FROM task_world_heads WHERE game_id = ? AND world_id = ?`,
+		world.GameID, world.WorldID).Scan(&instance); err != nil {
+		t.Fatal(err)
+	}
+	return instance
 }

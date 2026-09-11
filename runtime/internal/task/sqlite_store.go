@@ -52,9 +52,10 @@ type SQLiteStore struct {
 }
 
 type worldHeadRow struct {
-	Head          Head   `json:"head"`
-	SaveRequestID string `json:"save_request_id"`
-	BarrierStatus string `json:"barrier_status"`
+	Head              Head   `json:"head"`
+	SaveRequestID     string `json:"save_request_id"`
+	BarrierStatus     string `json:"barrier_status"`
+	RuntimeInstanceID string `json:"runtime_instance_id"`
 }
 
 type checkpointRow struct {
@@ -126,6 +127,7 @@ var taskSQLiteSchema = []struct {
 			checkpoint_id TEXT NOT NULL,
 			save_request_id TEXT NOT NULL,
 			barrier_status TEXT NOT NULL,
+			runtime_instance_id TEXT NOT NULL,
 			status TEXT NOT NULL,
 			reason TEXT NOT NULL,
 			head_json BLOB NOT NULL,
@@ -629,8 +631,8 @@ func (s *SQLiteStore) putWorldHead(ctx context.Context, row worldHeadRow) error 
 	return s.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO task_world_heads (
 			game_id, world_id, run_id, generation, clock_id, clock_tick, clock_sequence,
-			checkpoint_id, save_request_id, barrier_status, status, reason, head_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			checkpoint_id, save_request_id, barrier_status, runtime_instance_id, status, reason, head_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (game_id, world_id) DO UPDATE SET
 			run_id = excluded.run_id,
 			generation = excluded.generation,
@@ -640,13 +642,14 @@ func (s *SQLiteStore) putWorldHead(ctx context.Context, row worldHeadRow) error 
 			checkpoint_id = excluded.checkpoint_id,
 			save_request_id = excluded.save_request_id,
 			barrier_status = excluded.barrier_status,
+			runtime_instance_id = excluded.runtime_instance_id,
 			status = excluded.status,
 			reason = excluded.reason,
 			head_json = excluded.head_json`,
 			row.Head.Binding.World.GameID, row.Head.Binding.World.WorldID, row.Head.Binding.RunID,
 			int64(row.Head.Binding.Generation), row.Head.Clock.ID, row.Head.Clock.Tick,
 			int64(row.Head.Clock.Sequence), row.Head.CheckpointID, row.SaveRequestID,
-			row.BarrierStatus, row.Head.Status, row.Head.Reason, headJSON,
+			row.BarrierStatus, row.RuntimeInstanceID, row.Head.Status, row.Head.Reason, headJSON,
 		)
 		return err
 	})
@@ -696,7 +699,7 @@ func (s *SQLiteStore) worldHasDurableStateTx(ctx context.Context, tx *sql.Tx, wo
 
 const worldHeadSelectSQL = `SELECT game_id, world_id, run_id, generation,
 	clock_id, clock_tick, clock_sequence, checkpoint_id, save_request_id,
-	barrier_status, status, reason, head_json
+	barrier_status, runtime_instance_id, status, reason, head_json
 	FROM task_world_heads WHERE game_id = ? AND world_id = ?`
 
 func scanWorldHeadRow(scanner rowScanner) (worldHeadRow, error) {
@@ -709,7 +712,7 @@ func scanWorldHeadRow(scanner rowScanner) (worldHeadRow, error) {
 	)
 	err := scanner.Scan(
 		&gameID, &worldID, &runID, &generation, &clockID, &clockTick, &clockSequence,
-		&checkpointID, &row.SaveRequestID, &row.BarrierStatus, &status, &reason, &headJSON,
+		&checkpointID, &row.SaveRequestID, &row.BarrierStatus, &row.RuntimeInstanceID, &status, &reason, &headJSON,
 	)
 	if err != nil {
 		return worldHeadRow{}, err
@@ -721,6 +724,10 @@ func scanWorldHeadRow(scanner rowScanner) (worldHeadRow, error) {
 	if err := json.Unmarshal(headJSON, &stored); err != nil {
 		return worldHeadRow{}, ErrInvalidTaskSpec
 	}
+	canonicalHeadJSON, err := json.Marshal(stored)
+	if err != nil || !bytes.Equal(headJSON, canonicalHeadJSON) {
+		return worldHeadRow{}, ErrInvalidTaskSpec
+	}
 	indexed := worldHeadRow{
 		Head: Head{
 			Binding:      Binding{World: WorldKey{GameID: gameID, WorldID: worldID}, RunID: runID, Generation: uint64(generation)},
@@ -729,8 +736,9 @@ func scanWorldHeadRow(scanner rowScanner) (worldHeadRow, error) {
 			Status:       status,
 			Reason:       reason,
 		},
-		SaveRequestID: row.SaveRequestID,
-		BarrierStatus: row.BarrierStatus,
+		SaveRequestID:     row.SaveRequestID,
+		BarrierStatus:     row.BarrierStatus,
+		RuntimeInstanceID: row.RuntimeInstanceID,
 	}
 	if stored != indexed || stored.validate() != nil {
 		return worldHeadRow{}, ErrInvalidTaskSpec
@@ -741,12 +749,12 @@ func scanWorldHeadRow(scanner rowScanner) (worldHeadRow, error) {
 func (s *SQLiteStore) insertWorldHeadTx(ctx context.Context, tx *sql.Tx, row worldHeadRow, headJSON []byte) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO task_world_heads (
 		game_id, world_id, run_id, generation, clock_id, clock_tick, clock_sequence,
-		checkpoint_id, save_request_id, barrier_status, status, reason, head_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		checkpoint_id, save_request_id, barrier_status, runtime_instance_id, status, reason, head_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.Head.Binding.World.GameID, row.Head.Binding.World.WorldID, row.Head.Binding.RunID,
 		int64(row.Head.Binding.Generation), row.Head.Clock.ID, row.Head.Clock.Tick,
 		int64(row.Head.Clock.Sequence), row.Head.CheckpointID, row.SaveRequestID,
-		row.BarrierStatus, row.Head.Status, row.Head.Reason, headJSON,
+		row.BarrierStatus, row.RuntimeInstanceID, row.Head.Status, row.Head.Reason, headJSON,
 	)
 	return err
 }
@@ -1034,7 +1042,7 @@ func (r worldHeadRow) validate() error {
 	if r.Head.Clock.Sequence > uint64(math.MaxInt64) ||
 		!optionalIdentity(r.Head.CheckpointID) || !requiredIdentity(r.Head.Status) ||
 		!optionalIdentity(r.Head.Reason) || !optionalIdentity(r.SaveRequestID) ||
-		!optionalIdentity(r.BarrierStatus) {
+		!optionalIdentity(r.BarrierStatus) || !requiredIdentity(r.RuntimeInstanceID) {
 		return ErrInvalidTaskSpec
 	}
 	return nil

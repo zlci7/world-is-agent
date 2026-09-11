@@ -5,17 +5,24 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 )
 
 const wakeReasonRestartReconcile = "restart_reconcile"
 
 type restartRecoveryPlan struct {
 	deliveries []durableWake
-	running    []durableWake
+	running    []restartRunningTask
+}
+
+type restartRunningTask struct {
+	record  storedIntentTask
+	wake    durableWake
+	hasWake bool
 }
 
 type preparedRestartRecovery struct {
-	current     durableWake
+	current     restartRunningTask
 	mutation    preparedReconcileMutation
 	replacement Wake
 }
@@ -39,25 +46,65 @@ func (s *SQLiteStore) planRestartRecoveryTx(ctx context.Context, tx *sql.Tx, hea
 		return restartRecoveryPlan{}, err
 	}
 
-	plan := restartRecoveryPlan{}
-	executable := make(map[worldTaskIdentity]int)
+	executable := make(map[worldTaskIdentity][]durableWake)
 	for _, current := range wakes {
 		switch current.wake.Status {
 		case wakeStatusPending, wakeStatusClaimed, wakeStatusEnqueued, wakeStatusRunning:
 			identity := worldTaskIdentity{owner: current.wake.Owner, taskID: current.wake.TaskID}
-			executable[identity]++
-			if executable[identity] > 1 {
+			executable[identity] = append(executable[identity], current)
+			if current.wake.Status != wakeStatusPending && current.wake.ClaimedBy != head.RuntimeInstanceID {
 				return restartRecoveryPlan{}, ErrInvalidTaskSpec
 			}
 		}
-		if current.wake.ClaimedBy == claimantID {
-			continue
+	}
+	identities := make([]worldTaskIdentity, 0, len(graph.tasks))
+	for identity := range graph.tasks {
+		identities = append(identities, identity)
+	}
+	sort.Slice(identities, func(i, j int) bool {
+		left, right := identities[i], identities[j]
+		if left.owner.GameID != right.owner.GameID {
+			return left.owner.GameID < right.owner.GameID
 		}
-		switch current.wake.Status {
-		case wakeStatusClaimed, wakeStatusEnqueued:
-			plan.deliveries = append(plan.deliveries, current)
-		case wakeStatusRunning:
-			plan.running = append(plan.running, current)
+		if left.owner.WorldID != right.owner.WorldID {
+			return left.owner.WorldID < right.owner.WorldID
+		}
+		if left.owner.EntityID != right.owner.EntityID {
+			return left.owner.EntityID < right.owner.EntityID
+		}
+		return left.taskID < right.taskID
+	})
+
+	plan := restartRecoveryPlan{}
+	recoverPriorInstance := head.RuntimeInstanceID != claimantID
+	for _, identity := range identities {
+		record := graph.tasks[identity]
+		active := executable[identity]
+		switch record.record.State {
+		case StateWaiting:
+			if len(active) != 1 || active[0].wake.Status == wakeStatusRunning {
+				return restartRecoveryPlan{}, ErrInvalidTaskSpec
+			}
+			if recoverPriorInstance && (active[0].wake.Status == wakeStatusClaimed || active[0].wake.Status == wakeStatusEnqueued) {
+				plan.deliveries = append(plan.deliveries, active[0])
+			}
+		case StateRunning:
+			if len(active) > 1 || len(active) == 1 && active[0].wake.Status != wakeStatusRunning {
+				return restartRecoveryPlan{}, ErrInvalidTaskSpec
+			}
+			if recoverPriorInstance {
+				running := restartRunningTask{record: record}
+				if len(active) == 1 {
+					running.wake, running.hasWake = active[0], true
+				}
+				plan.running = append(plan.running, running)
+			}
+		case StatePaused, StateSucceeded, StateFailed, StateCancelled:
+			if len(active) != 0 {
+				return restartRecoveryPlan{}, ErrInvalidTaskSpec
+			}
+		default:
+			return restartRecoveryPlan{}, ErrInvalidTaskSpec
 		}
 	}
 	return plan, nil
@@ -92,7 +139,10 @@ func (s *SQLiteStore) loadWorldDurableWakesTx(ctx context.Context, tx *sql.Tx, h
 	return wakes, nil
 }
 
-func (s *SQLiteStore) applyRestartRecoveryTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, plan restartRecoveryPlan, candidateWakeIDs []string) error {
+func (s *SQLiteStore) applyRestartRecoveryTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, plan restartRecoveryPlan, candidateWakeIDs []string, runtimeInstanceID string) error {
+	if !requiredIdentity(runtimeInstanceID) || runtimeInstanceID == head.RuntimeInstanceID {
+		return ErrTaskChanged
+	}
 	prepared := make([]preparedRestartRecovery, len(plan.running))
 	for index, current := range plan.running {
 		if index >= len(candidateWakeIDs) {
@@ -139,11 +189,13 @@ func (s *SQLiteStore) applyRestartRecoveryTx(ctx context.Context, tx *sql.Tx, he
 		if err := s.updateRestartRecordTx(ctx, tx, recovery.current.record.record, recovery.mutation); err != nil {
 			return err
 		}
-		consumed := recovery.current.wake
-		consumed.Status = wakeStatusConsumed
-		consumed.RetryAfterUnixMS = 0
-		if err := s.updateWakeCASTx(ctx, tx, recovery.current, consumed, "restart_running_consumed"); err != nil {
-			return err
+		if recovery.current.hasWake {
+			consumed := recovery.current.wake.wake
+			consumed.Status = wakeStatusConsumed
+			consumed.RetryAfterUnixMS = 0
+			if err := s.updateWakeCASTx(ctx, tx, recovery.current.wake, consumed, "restart_running_consumed"); err != nil {
+				return err
+			}
 		}
 		if err := s.insertWakeTx(ctx, tx, recovery.mutation.record, recovery.replacement); err != nil {
 			return err
@@ -152,7 +204,7 @@ func (s *SQLiteStore) applyRestartRecoveryTx(ctx context.Context, tx *sql.Tx, he
 			return err
 		}
 	}
-	return ctx.Err()
+	return s.updateWorldRuntimeInstanceTx(ctx, tx, head, runtimeInstanceID)
 }
 
 func recoveredRunningRecord(current Record, nowTick int64) (Record, error) {
@@ -201,6 +253,37 @@ func (s *SQLiteStore) updateRestartRecordTx(ctx context.Context, tx *sql.Tx, bef
 		return ErrTaskChanged
 	}
 	return s.afterWakeMutationStage(ctx, "restart_record_updated")
+}
+
+func (s *SQLiteStore) updateWorldRuntimeInstanceTx(ctx context.Context, tx *sql.Tx, before worldHeadRow, runtimeInstanceID string) error {
+	beforeJSON, err := json.Marshal(before)
+	if err != nil {
+		return ErrInvalidTaskSpec
+	}
+	updated := before
+	updated.RuntimeInstanceID = runtimeInstanceID
+	if err := updated.validate(); err != nil {
+		return err
+	}
+	updatedJSON, err := json.Marshal(updated)
+	if err != nil {
+		return ErrInvalidTaskSpec
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE task_world_heads SET runtime_instance_id = ?, head_json = ?
+		WHERE game_id = ? AND world_id = ? AND runtime_instance_id = ? AND head_json = ?`,
+		updated.RuntimeInstanceID, updatedJSON, before.Head.Binding.World.GameID, before.Head.Binding.World.WorldID,
+		before.RuntimeInstanceID, beforeJSON)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrTaskChanged
+	}
+	return s.afterWakeMutationStage(ctx, "restart_head_rebound")
 }
 
 func (s *SQLiteStore) afterWakeMutationStage(ctx context.Context, stage string) error {

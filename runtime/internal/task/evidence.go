@@ -150,13 +150,16 @@ func validateNewEvidence(head Head, record Record, evidence Evidence) error {
 	}
 
 	operation, found := findRecordOperation(record, evidence.OperationID)
-	if !found || operation.Status != OperationStatusRegistered {
+	if !found {
 		return ErrEvidenceConflict
 	}
 	if evidence.StartRevision != operation.StartRevision {
 		return ErrTaskChanged
 	}
 	if evidence.RevalidatedIn == nil {
+		if operation.Status != OperationStatusRegistered {
+			return ErrEvidenceConflict
+		}
 		if err := validateCurrentEvidenceBinding(evidence.Binding, head.Binding); err != nil {
 			return err
 		}
@@ -178,7 +181,8 @@ func validateNewEvidence(head Head, record Record, evidence Evidence) error {
 	if evidence.Binding.RunID != head.Binding.RunID {
 		return ErrGenerationStale
 	}
-	if evidence.Binding.Generation >= head.Binding.Generation {
+	if evidence.Binding.Generation > head.Binding.Generation ||
+		evidence.Binding.Generation == head.Binding.Generation && operation.Status != OperationStatusUncertain {
 		return ErrEvidenceConflict
 	}
 	if operation.Binding != evidence.Binding {

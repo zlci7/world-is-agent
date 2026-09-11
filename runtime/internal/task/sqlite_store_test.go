@@ -67,6 +67,10 @@ func TestSQLiteStoreSchemaAndPragmas(t *testing.T) {
 			t.Errorf("tasks columns %v missing %q", columns, name)
 		}
 	}
+	headColumns := sqliteTableColumnNames(t, store.db, "task_world_heads")
+	if !containsString(headColumns, "runtime_instance_id") {
+		t.Errorf("task_world_heads columns %v missing runtime_instance_id", headColumns)
+	}
 	var equivalenceIndexSQL string
 	if err := store.db.QueryRow(`SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = 'idx_tasks_active_equivalence'`).Scan(&equivalenceIndexSQL); err != nil {
 		t.Fatal(err)
@@ -529,8 +533,9 @@ func TestSQLiteStoreWorldHeadAndCheckpointRoundTripByWorld(t *testing.T) {
 			Status:       "ready",
 			Reason:       "activated",
 		},
-		SaveRequestID: "save-a",
-		BarrierStatus: "confirmed",
+		SaveRequestID:     "save-a",
+		BarrierStatus:     "confirmed",
+		RuntimeInstanceID: "runtime-test",
 	}
 	if err := store.putWorldHead(context.Background(), head); err != nil {
 		t.Fatal(err)

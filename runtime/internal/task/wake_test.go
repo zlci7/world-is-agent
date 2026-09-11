@@ -237,7 +237,7 @@ func TestWakeClaimDueAtomicConcurrencyAndRollback(t *testing.T) {
 		created := createWakeTask(t, fixture, "one", "actor", 200, 300)
 		clock := Clock{ID: fixture.clock.ID, Tick: 200, Sequence: 2}
 		setWorldClockForIntentTest(t, fixture.store, fixture.head, clock)
-		services := []*Service{NewService(fixture.store), NewService(fixture.store)}
+		services := []*Service{fixture.svc, fixture.svc}
 		var wg sync.WaitGroup
 		results := make(chan []Wake, len(services))
 		errs := make(chan error, len(services))

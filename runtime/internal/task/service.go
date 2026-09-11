@@ -48,13 +48,14 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 		Clock:   clock,
 		Status:  worldHeadStatusReady,
 	}
-	row := worldHeadRow{Head: head}
+	row := worldHeadRow{Head: head, RuntimeInstanceID: s.claimantID}
 	headJSON, err := json.Marshal(row)
 	if err != nil {
 		return Head{}, ErrInvalidTaskSpec
 	}
 	var result Head
 	var retryNeedsRecovery bool
+	var recoveryFromInstance string
 	var recoveryWakeCount int
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
 		current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
@@ -69,7 +70,8 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 			if err != nil {
 				return err
 			}
-			retryNeedsRecovery = len(plan.deliveries) != 0 || len(plan.running) != 0
+			retryNeedsRecovery = current.RuntimeInstanceID != s.claimantID
+			recoveryFromInstance = current.RuntimeInstanceID
 			recoveryWakeCount = len(plan.running)
 			result = current.Head
 			return nil
@@ -108,6 +110,13 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 		if err := validateActivationRetry(current, runID, clock); err != nil {
 			return err
 		}
+		if current.RuntimeInstanceID == s.claimantID {
+			result = current.Head
+			return nil
+		}
+		if current.RuntimeInstanceID != recoveryFromInstance {
+			return ErrTaskChanged
+		}
 		plan, err := s.store.planRestartRecoveryTx(ctx, tx, current, s.claimantID)
 		if err != nil {
 			return err
@@ -115,7 +124,7 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 		if len(plan.running) > len(candidateWakeIDs) {
 			return ErrTaskChanged
 		}
-		if err := s.store.applyRestartRecoveryTx(ctx, tx, current, plan, candidateWakeIDs); err != nil {
+		if err := s.store.applyRestartRecoveryTx(ctx, tx, current, plan, candidateWakeIDs, s.claimantID); err != nil {
 			return err
 		}
 		result = current.Head

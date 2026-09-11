@@ -387,9 +387,13 @@ func (r Record) Validate() error {
 		if !found || evidence.StartRevision != operation.StartRevision || evidence.Binding != operation.Binding {
 			return ErrInvalidTaskSpec
 		}
-		if evidence.RevalidatedIn != nil &&
-			(evidence.Binding.RunID != evidence.RevalidatedIn.RunID || evidence.Binding.Generation >= evidence.RevalidatedIn.Generation) {
-			return ErrInvalidTaskSpec
+		if evidence.RevalidatedIn != nil {
+			olderGeneration := evidence.Binding.RunID == evidence.RevalidatedIn.RunID &&
+				evidence.Binding.Generation < evidence.RevalidatedIn.Generation
+			uncertainActiveQuery := operation.Status == OperationStatusUncertain && evidence.Binding == *evidence.RevalidatedIn
+			if !olderGeneration && !uncertainActiveQuery {
+				return ErrInvalidTaskSpec
+			}
 		}
 	}
 	if hasUnappliedEvidence && !r.NeedsReconcile {

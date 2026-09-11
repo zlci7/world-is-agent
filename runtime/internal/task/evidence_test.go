@@ -623,6 +623,49 @@ func TestAdmitEvidenceAllowsOnlyExplicitSameRunOperationRevalidation(t *testing.
 	}
 }
 
+func TestAdmitEvidenceRevalidatesUncertainOperationOnlyByActiveQuery(t *testing.T) {
+	newFixture := func(t *testing.T) (createFixture, CreateResult, Operation) {
+		t.Helper()
+		fixture, created, _ := newIntentFixture(t, StoreOptions{})
+		exec := operationExecution(fixture, created.Task, "uncertain-active-query")
+		operation := registeredOperation(exec, "operation-uncertain-active-query")
+		if _, err := fixture.svc.RegisterOperation(context.Background(), exec, operation); err != nil {
+			t.Fatal(err)
+		}
+		current, err := fixture.svc.Read(context.Background(), created.Task.Owner, created.Task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current.Operations[0].Status = OperationStatusUncertain
+		setRecordForIntentTest(t, fixture.store, current)
+		return fixture, created, operation
+	}
+
+	t.Run("same binding active query", func(t *testing.T) {
+		fixture, created, operation := newFixture(t)
+		evidence := operationEvidence(operation, created.Task.ID, "fact-uncertain-active-query", EvidenceKindProgress)
+		evidence.RevalidatedIn = &fixture.head.Binding
+		if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, evidence); err != nil || !added {
+			t.Fatalf("AdmitEvidence() = (%v, %v), want true/nil", added, err)
+		}
+		stored, err := fixture.svc.Read(context.Background(), created.Task.Owner, created.Task.ID)
+		if err != nil || len(stored.Evidence) != 1 || stored.Evidence[0].RevalidatedIn == nil || *stored.Evidence[0].RevalidatedIn != fixture.head.Binding {
+			t.Fatalf("stored Evidence = (%+v, %v)", stored.Evidence, err)
+		}
+	})
+
+	t.Run("late message without active query", func(t *testing.T) {
+		fixture, created, operation := newFixture(t)
+		evidence := operationEvidence(operation, created.Task.ID, "fact-uncertain-late", EvidenceKindProgress)
+		evidence.Source = SourceRef{Kind: SourceKindEnvironment, EventID: "fresh-event", TurnID: "fresh-turn", CallID: "fresh-call"}
+		before := snapshotD2Rows(t, fixture.store, created.Task)
+		if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, evidence); !errors.Is(err, ErrEvidenceConflict) || added {
+			t.Fatalf("AdmitEvidence() = (%v, %v), want false/evidence_conflict", added, err)
+		}
+		assertD2Rows(t, fixture.store, created.Task, before)
+	})
+}
+
 func TestAdmitEvidenceEnforcesTimeWaitAndInputApplicationBoundaries(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1058,7 +1101,10 @@ func crossTaskSourceCorruptionFixture(t *testing.T) (createFixture, Record) {
 
 func setWorldBindingForEvidenceTest(t *testing.T, store *SQLiteStore, head Head, binding Binding) {
 	t.Helper()
-	row := worldHeadRow{Head: head}
+	row, err := store.loadWorldHead(context.Background(), head.Binding.World)
+	if err != nil {
+		t.Fatal(err)
+	}
 	row.Head.Binding = binding
 	data := mustJSONBytes(t, row)
 	if _, err := store.db.Exec(`UPDATE task_world_heads SET run_id = ?, generation = ?, head_json = ?

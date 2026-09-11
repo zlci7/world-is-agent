@@ -82,7 +82,7 @@ func (s *Service) ClaimDue(ctx context.Context, binding Binding, clock Clock, li
 		if !found {
 			return ErrWorldNotReady
 		}
-		if err := validateWakeWorldAuthority(head, binding); err != nil {
+		if err := validateWakeWorldAuthority(head, binding, s.claimantID); err != nil {
 			return err
 		}
 		if err := validateExactWakeClock(head.Head.Clock, clock); err != nil {
@@ -137,7 +137,7 @@ func (s *Service) MarkEnqueued(ctx context.Context, binding Binding, wakeID, cla
 		if !found {
 			return ErrWorldNotReady
 		}
-		if err := validateWakeWorldAuthority(head, binding); err != nil {
+		if err := validateWakeWorldAuthority(head, binding, s.claimantID); err != nil {
 			return err
 		}
 		current, err := s.store.findStrictWorldWakeTx(ctx, tx, head, wakeID)
@@ -178,7 +178,7 @@ func (s *Service) ReleaseClaim(ctx context.Context, binding Binding, wakeID, cla
 		if !found {
 			return ErrWorldNotReady
 		}
-		if err := validateWakeWorldAuthority(head, binding); err != nil {
+		if err := validateWakeWorldAuthority(head, binding, s.claimantID); err != nil {
 			return err
 		}
 		current, err := s.store.findStrictWorldWakeTx(ctx, tx, head, wakeID)
@@ -214,7 +214,7 @@ func (s *Service) BeginWake(ctx context.Context, binding Binding, wakeID, claimI
 		if !found {
 			return ErrWorldNotReady
 		}
-		if err := validateWakeWorldAuthority(head, binding); err != nil {
+		if err := validateWakeWorldAuthority(head, binding, s.claimantID); err != nil {
 			return err
 		}
 		current, err := s.store.findStrictWorldWakeTx(ctx, tx, head, wakeID)
@@ -342,7 +342,7 @@ func checkedUnixMilli(value time.Time) (int64, error) {
 	return base + milliseconds, nil
 }
 
-func validateWakeWorldAuthority(head worldHeadRow, binding Binding) error {
+func validateWakeWorldAuthority(head worldHeadRow, binding Binding, claimantID string) error {
 	if head.Head.Status != worldHeadStatusReady {
 		return ErrWorldNotReady
 	}
@@ -351,6 +351,9 @@ func validateWakeWorldAuthority(head worldHeadRow, binding Binding) error {
 	}
 	if head.Head.Binding != binding {
 		return ErrGenerationStale
+	}
+	if head.RuntimeInstanceID != claimantID {
+		return ErrTaskChanged
 	}
 	return nil
 }
