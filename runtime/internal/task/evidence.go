@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 )
 
 const noRevisionStageEvidenceMerged = "evidence_merged"
@@ -13,13 +14,6 @@ type evidenceSourceIdentity struct {
 	eventID string
 	turnID  string
 	callID  string
-}
-
-type worldEvidenceIdentityLookup struct {
-	fact        Evidence
-	factRecord  Record
-	factFound   bool
-	sourceFound bool
 }
 
 func (s *Service) AdmitEvidence(ctx context.Context, binding Binding, evidence Evidence) (bool, error) {
@@ -63,20 +57,25 @@ func (s *Service) AdmitEvidence(ctx context.Context, binding Binding, evidence E
 		if current.record.Spec.ClockID != head.Head.Clock.ID {
 			return ErrClockMismatch
 		}
-		identity, err := s.store.loadWorldEvidenceIdentityTx(ctx, tx, binding.World, cloned.FactID, cloned.Source)
+		graph, err := s.store.loadWorldTaskIdentityGraphTx(ctx, tx, binding.World)
+		if errors.Is(err, errAmbiguousWorldTaskIdentityGraph) {
+			return ErrEvidenceConflict
+		}
 		if err != nil {
 			return err
 		}
-		if identity.factFound {
-			if identity.factRecord.Owner != current.record.Owner || identity.factRecord.ID != current.record.ID ||
-				!evidenceEqualIgnoringApplied(identity.fact, cloned) {
+		if identity, found := graph.facts[cloned.FactID]; found {
+			if identity.owner != current.record.Owner || identity.taskID != current.record.ID ||
+				!evidenceEqualIgnoringApplied(identity.evidence, cloned) {
 				return ErrEvidenceConflict
 			}
 			added = false
 			return nil
 		}
-		if identity.sourceFound {
-			return ErrEvidenceConflict
+		if source, complete := completeEvidenceSourceIdentity(cloned.Source); complete {
+			if _, found := graph.sources[source]; found {
+				return ErrEvidenceConflict
+			}
 		}
 
 		if err := validateNewEvidence(head.Head, current.record, cloned); err != nil {
@@ -276,97 +275,6 @@ func (s *SQLiteStore) loadWorldTaskByIDTx(ctx context.Context, tx *sql.Tx, world
 		return storedIntentTask{}, ErrEvidenceConflict
 	}
 	return match, nil
-}
-
-func (s *SQLiteStore) loadWorldEvidenceIdentityTx(ctx context.Context, tx *sql.Tx, world WorldKey, factID string, source SourceRef) (worldEvidenceIdentityLookup, error) {
-	rows, err := tx.QueryContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? ORDER BY entity_id, task_id`,
-		world.GameID, world.WorldID)
-	if err != nil {
-		return worldEvidenceIdentityLookup{}, err
-	}
-	defer rows.Close()
-
-	var (
-		lookup      worldEvidenceIdentityLookup
-		factMatches int
-	)
-	incomingSource, sourceComplete := completeEvidenceSourceIdentity(source)
-	seenSources := make(map[evidenceSourceIdentity]struct{})
-	for rows.Next() {
-		record, err := scanTaskRow(rows)
-		if err != nil {
-			return worldEvidenceIdentityLookup{}, err
-		}
-		for _, evidence := range record.Evidence {
-			if evidence.FactID == factID {
-				factMatches++
-				lookup.fact, lookup.factRecord = evidence, record
-			}
-			if storedSource, complete := completeEvidenceSourceIdentity(evidence.Source); complete {
-				if _, duplicate := seenSources[storedSource]; duplicate {
-					return worldEvidenceIdentityLookup{}, ErrEvidenceConflict
-				}
-				seenSources[storedSource] = struct{}{}
-				if sourceComplete && storedSource == incomingSource {
-					lookup.sourceFound = true
-				}
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return worldEvidenceIdentityLookup{}, err
-	}
-	if factMatches > 1 {
-		return worldEvidenceIdentityLookup{}, ErrEvidenceConflict
-	}
-	lookup.factFound = factMatches == 1
-	return lookup, nil
-}
-
-func (s *SQLiteStore) validateWorldTaskIdentityGraph(ctx context.Context, world WorldKey) error {
-	if err := world.Validate(); err != nil {
-		return err
-	}
-	rows, err := s.db.QueryContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? ORDER BY entity_id, task_id`,
-		world.GameID, world.WorldID)
-	if err != nil {
-		return classifyStoreError(err)
-	}
-	defer rows.Close()
-
-	seenOperations := make(map[string]struct{})
-	seenFacts := make(map[string]struct{})
-	seenSources := make(map[evidenceSourceIdentity]struct{})
-	for rows.Next() {
-		record, err := scanTaskRow(rows)
-		if err != nil {
-			return classifyStoreError(err)
-		}
-		for _, operation := range record.Operations {
-			if _, duplicate := seenOperations[operation.ID]; duplicate {
-				return ErrInvalidTaskSpec
-			}
-			seenOperations[operation.ID] = struct{}{}
-		}
-		for _, evidence := range record.Evidence {
-			if _, duplicate := seenFacts[evidence.FactID]; duplicate {
-				return ErrInvalidTaskSpec
-			}
-			seenFacts[evidence.FactID] = struct{}{}
-			key, complete := completeEvidenceSourceIdentity(evidence.Source)
-			if !complete {
-				continue
-			}
-			if _, duplicate := seenSources[key]; duplicate {
-				return ErrInvalidTaskSpec
-			}
-			seenSources[key] = struct{}{}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return classifyStoreError(err)
-	}
-	return nil
 }
 
 func recordEvidenceSourceIdentityValid(record Record) bool {
