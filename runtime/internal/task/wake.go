@@ -75,7 +75,7 @@ func (s *Service) ClaimDue(ctx context.Context, binding Binding, clock Clock, li
 
 	var claimed []Wake
 	err := s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -130,7 +130,7 @@ func (s *Service) MarkEnqueued(ctx context.Context, binding Binding, wakeID, cla
 		return err
 	}
 	return s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func (s *Service) ReleaseClaim(ctx context.Context, binding Binding, wakeID, cla
 		return err
 	}
 	return s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -207,7 +207,7 @@ func (s *Service) BeginWake(ctx context.Context, binding Binding, wakeID, claimI
 	var resultExec ExecutionContext
 	var resultRecord Record
 	err := s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -540,18 +540,23 @@ func (s *SQLiteStore) updateWakeCASTx(ctx context.Context, tx *sql.Tx, before du
 	if err := updated.Validate(); err != nil {
 		return err
 	}
+	if updated.ID != before.wake.ID || updated.TaskID != before.wake.TaskID || updated.Owner != before.wake.Owner ||
+		updated.ExpectedRevision != before.wake.ExpectedRevision || updated.DueTick != before.wake.DueTick ||
+		updated.Reason != before.wake.Reason {
+		return ErrInvalidTaskSpec
+	}
 	raw, err := json.Marshal(updated)
 	if err != nil {
 		return ErrInvalidTaskSpec
 	}
 	wake := before.wake
 	result, err := tx.ExecContext(ctx, `UPDATE task_wakeups SET
-		status = ?, claim_id = ?, claimed_by = ?, attempt = ?, retry_after_unix_ms = ?, wake_json = ?
+		status = ?, claim_id = ?, claimed_by = ?, generation = ?, attempt = ?, retry_after_unix_ms = ?, wake_json = ?
 		WHERE wake_id = ? AND game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ?
 			AND clock_id = ? AND expected_revision = ? AND due_tick = ? AND reason = ? AND status = ?
 			AND claim_id = ? AND claimed_by = ? AND generation = ? AND attempt = ?
 			AND retry_after_unix_ms = ? AND wake_json = ?`,
-		updated.Status, updated.ClaimID, updated.ClaimedBy, updated.Attempt, updated.RetryAfterUnixMS, raw,
+		updated.Status, updated.ClaimID, updated.ClaimedBy, int64(updated.Generation), updated.Attempt, updated.RetryAfterUnixMS, raw,
 		wake.ID, wake.Owner.GameID, wake.Owner.WorldID, wake.Owner.EntityID, wake.TaskID,
 		before.record.record.Spec.ClockID, int64(wake.ExpectedRevision), wake.DueTick, wake.Reason, wake.Status,
 		wake.ClaimID, wake.ClaimedBy, int64(wake.Generation), wake.Attempt,

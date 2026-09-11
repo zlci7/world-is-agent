@@ -22,7 +22,7 @@ func (s *Service) FinishAttempt(ctx context.Context, exec ExecutionContext, outc
 
 	var result Record
 	err := s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, exec.Binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, exec.Binding.World)
 		if err != nil {
 			return err
 		}

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"sort"
 )
 
 const wakeReasonRestartReconcile = "restart_reconcile"
@@ -38,9 +37,6 @@ func (s *SQLiteStore) planRestartRecoveryTx(ctx context.Context, tx *sql.Tx, hea
 		}
 		return restartRecoveryPlan{}, err
 	}
-	if len(graph.tasks) > s.options.MaxTasksPerWorld {
-		return restartRecoveryPlan{}, ErrTaskCapacityExceeded
-	}
 	wakes, err := s.loadWorldDurableWakesTx(ctx, tx, head, graph)
 	if err != nil {
 		return restartRecoveryPlan{}, err
@@ -57,23 +53,7 @@ func (s *SQLiteStore) planRestartRecoveryTx(ctx context.Context, tx *sql.Tx, hea
 			}
 		}
 	}
-	identities := make([]worldTaskIdentity, 0, len(graph.tasks))
-	for identity := range graph.tasks {
-		identities = append(identities, identity)
-	}
-	sort.Slice(identities, func(i, j int) bool {
-		left, right := identities[i], identities[j]
-		if left.owner.GameID != right.owner.GameID {
-			return left.owner.GameID < right.owner.GameID
-		}
-		if left.owner.WorldID != right.owner.WorldID {
-			return left.owner.WorldID < right.owner.WorldID
-		}
-		if left.owner.EntityID != right.owner.EntityID {
-			return left.owner.EntityID < right.owner.EntityID
-		}
-		return left.taskID < right.taskID
-	})
+	identities := sortedWorldTaskIdentities(graph.tasks)
 
 	plan := restartRecoveryPlan{}
 	recoverPriorInstance := head.RuntimeInstanceID != claimantID
@@ -85,7 +65,7 @@ func (s *SQLiteStore) planRestartRecoveryTx(ctx context.Context, tx *sql.Tx, hea
 			if len(active) != 1 || active[0].wake.Status == wakeStatusRunning {
 				return restartRecoveryPlan{}, ErrInvalidTaskSpec
 			}
-			if recoverPriorInstance && (active[0].wake.Status == wakeStatusClaimed || active[0].wake.Status == wakeStatusEnqueued) {
+			if recoverPriorInstance {
 				plan.deliveries = append(plan.deliveries, active[0])
 			}
 		case StateRunning:
@@ -139,38 +119,48 @@ func (s *SQLiteStore) loadWorldDurableWakesTx(ctx context.Context, tx *sql.Tx, h
 	return wakes, nil
 }
 
-func (s *SQLiteStore) applyRestartRecoveryTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, plan restartRecoveryPlan, candidateWakeIDs []string, runtimeInstanceID string) error {
+func (s *SQLiteStore) applyRestartRecoveryTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, plan restartRecoveryPlan, candidateWakeIDs []string, clock Clock, runtimeInstanceID string) (Head, error) {
 	if !requiredIdentity(runtimeInstanceID) || runtimeInstanceID == head.RuntimeInstanceID {
-		return ErrTaskChanged
+		return Head{}, ErrTaskChanged
+	}
+	if err := validateRestartActivation(head, head.Head.Binding.RunID, clock); err != nil {
+		return Head{}, err
+	}
+	if err := s.validateRestartBarrierTx(ctx, tx, head); err != nil {
+		return Head{}, err
+	}
+	generation, err := NextDurableCounter(head.Head.Binding.Generation)
+	if err != nil {
+		return Head{}, err
 	}
 	prepared := make([]preparedRestartRecovery, len(plan.running))
 	for index, current := range plan.running {
 		if index >= len(candidateWakeIDs) {
-			return ErrTaskChanged
+			return Head{}, ErrTaskChanged
 		}
-		updated, err := recoveredRunningRecord(current.record.record, head.Head.Clock.Tick)
+		updated, err := recoveredRunningRecord(current.record.record, clock.Tick)
 		if err != nil {
-			return err
+			return Head{}, err
 		}
 		mutation, err := s.prepareReconcileMutation(current.record, updated)
 		if err != nil {
-			return err
+			return Head{}, err
 		}
 		replacement := Wake{
 			ID: candidateWakeIDs[index], TaskID: updated.ID, Owner: updated.Owner,
 			ExpectedRevision: updated.Revision, DueTick: *updated.NextWakeAt,
 			Reason: wakeReasonRestartReconcile, Status: wakeStatusPending,
-			Generation: head.Head.Binding.Generation,
+			Generation: generation,
 		}
 		if err := validateTaskWakePair(updated, replacement); err != nil {
-			return err
+			return Head{}, err
 		}
 		var exists int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM task_wakeups WHERE wake_id = ?)`, replacement.ID).Scan(&exists); err != nil {
-			return err
+			return Head{}, err
 		}
 		if exists != 0 {
-			return ErrTaskConflict
+			return Head{}, ErrTaskConflict
 		}
 		prepared[index] = preparedRestartRecovery{current: current, mutation: mutation, replacement: replacement}
 	}
@@ -180,31 +170,42 @@ func (s *SQLiteStore) applyRestartRecoveryTx(ctx context.Context, tx *sql.Tx, he
 		updated.Status = wakeStatusPending
 		updated.ClaimID = ""
 		updated.ClaimedBy = ""
+		updated.Generation = generation
 		updated.RetryAfterUnixMS = 0
 		if err := s.updateWakeCASTx(ctx, tx, current, updated, "restart_delivery_reset"); err != nil {
-			return err
+			return Head{}, err
 		}
 	}
 	for _, recovery := range prepared {
 		if err := s.updateRestartRecordTx(ctx, tx, recovery.current.record.record, recovery.mutation); err != nil {
-			return err
+			return Head{}, err
 		}
 		if recovery.current.hasWake {
 			consumed := recovery.current.wake.wake
 			consumed.Status = wakeStatusConsumed
 			consumed.RetryAfterUnixMS = 0
 			if err := s.updateWakeCASTx(ctx, tx, recovery.current.wake, consumed, "restart_running_consumed"); err != nil {
-				return err
+				return Head{}, err
 			}
 		}
 		if err := s.insertWakeTx(ctx, tx, recovery.mutation.record, recovery.replacement); err != nil {
-			return err
+			return Head{}, err
 		}
 		if err := s.afterWakeMutationStage(ctx, "restart_reconcile_inserted"); err != nil {
-			return err
+			return Head{}, err
 		}
 	}
-	return s.updateWorldRuntimeInstanceTx(ctx, tx, head, runtimeInstanceID)
+	updatedHead := head
+	updatedHead.Head.Binding.Generation = generation
+	updatedHead.Head.Clock = clock
+	updatedHead.SaveRequestID = ""
+	updatedHead.BarrierStatus = ""
+	updatedHead.BarrierPreparedAtUnixMS = 0
+	updatedHead.RuntimeInstanceID = runtimeInstanceID
+	if err := s.updateWorldRestartHeadTx(ctx, tx, head, updatedHead); err != nil {
+		return Head{}, err
+	}
+	return updatedHead.Head, nil
 }
 
 func recoveredRunningRecord(current Record, nowTick int64) (Record, error) {
@@ -255,23 +256,36 @@ func (s *SQLiteStore) updateRestartRecordTx(ctx context.Context, tx *sql.Tx, bef
 	return s.afterWakeMutationStage(ctx, "restart_record_updated")
 }
 
-func (s *SQLiteStore) updateWorldRuntimeInstanceTx(ctx context.Context, tx *sql.Tx, before worldHeadRow, runtimeInstanceID string) error {
+func (s *SQLiteStore) updateWorldRestartHeadTx(ctx context.Context, tx *sql.Tx, before, updated worldHeadRow) error {
 	beforeJSON, err := json.Marshal(before)
 	if err != nil {
 		return ErrInvalidTaskSpec
 	}
-	updated := before
-	updated.RuntimeInstanceID = runtimeInstanceID
 	if err := updated.validate(); err != nil {
 		return err
+	}
+	expected := before
+	expected.Head.Binding.Generation = updated.Head.Binding.Generation
+	expected.Head.Clock = updated.Head.Clock
+	expected.SaveRequestID = updated.SaveRequestID
+	expected.BarrierStatus = updated.BarrierStatus
+	expected.BarrierPreparedAtUnixMS = updated.BarrierPreparedAtUnixMS
+	expected.RuntimeInstanceID = updated.RuntimeInstanceID
+	if updated != expected {
+		return ErrInvalidTaskSpec
 	}
 	updatedJSON, err := json.Marshal(updated)
 	if err != nil {
 		return ErrInvalidTaskSpec
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE task_world_heads SET runtime_instance_id = ?, head_json = ?
+	result, err := tx.ExecContext(ctx, `UPDATE task_world_heads SET
+		generation = ?, clock_id = ?, clock_tick = ?, clock_sequence = ?,
+		save_request_id = ?, barrier_status = ?, runtime_instance_id = ?, head_json = ?
 		WHERE game_id = ? AND world_id = ? AND runtime_instance_id = ? AND head_json = ?`,
-		updated.RuntimeInstanceID, updatedJSON, before.Head.Binding.World.GameID, before.Head.Binding.World.WorldID,
+		int64(updated.Head.Binding.Generation), updated.Head.Clock.ID, updated.Head.Clock.Tick,
+		int64(updated.Head.Clock.Sequence), updated.SaveRequestID, updated.BarrierStatus,
+		updated.RuntimeInstanceID, updatedJSON,
+		before.Head.Binding.World.GameID, before.Head.Binding.World.WorldID,
 		before.RuntimeInstanceID, beforeJSON)
 	if err != nil {
 		return err

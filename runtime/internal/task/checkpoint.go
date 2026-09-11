@@ -16,6 +16,7 @@ const (
 	checkpointStatusConfirmed   = "confirmed"
 	checkpointStatusUnconfirmed = "unconfirmed"
 	checkpointBarrierPrepared   = "prepared"
+	checkpointBarrierTimeoutMS  = int64(10_000)
 	worldHeadStatusPaused       = "paused"
 )
 
@@ -68,6 +69,43 @@ type checkpointSnapshot struct {
 	Wakes         []checkpointWakeSnapshot `json:"wakes"`
 }
 
+func (s *Service) loadWorldHeadForMutationTx(ctx context.Context, tx *sql.Tx, world WorldKey) (worldHeadRow, bool, error) {
+	current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
+	if err != nil || !found {
+		return current, found, err
+	}
+	current, err = s.releaseExpiredCheckpointBarrierTx(ctx, tx, current)
+	if err != nil {
+		return worldHeadRow{}, false, err
+	}
+	return current, true, nil
+}
+
+func (s *Service) releaseExpiredCheckpointBarrierTx(ctx context.Context, tx *sql.Tx, current worldHeadRow) (worldHeadRow, error) {
+	if current.BarrierStatus != checkpointBarrierPrepared || current.SaveRequestID == "" ||
+		current.BarrierPreparedAtUnixMS <= 0 || current.RuntimeInstanceID != s.claimantID {
+		return current, nil
+	}
+	now := s.nowUnixMS()
+	if now <= 0 {
+		return worldHeadRow{}, ErrInvalidTaskSpec
+	}
+	if now < current.BarrierPreparedAtUnixMS || now-current.BarrierPreparedAtUnixMS < checkpointBarrierTimeoutMS {
+		return current, nil
+	}
+	if err := s.store.validateRestartBarrierTx(ctx, tx, current); err != nil {
+		return worldHeadRow{}, err
+	}
+	updated := current
+	updated.SaveRequestID = ""
+	updated.BarrierStatus = ""
+	updated.BarrierPreparedAtUnixMS = 0
+	if err := s.store.updateWorldHeadCASTx(ctx, tx, current, updated, "checkpoint_barrier_expired"); err != nil {
+		return worldHeadRow{}, err
+	}
+	return updated, nil
+}
+
 func (s *Service) UpdateClock(ctx context.Context, binding Binding, clock Clock) (Head, error) {
 	if err := validateService(s, ctx); err != nil {
 		return Head{}, err
@@ -81,7 +119,7 @@ func (s *Service) UpdateClock(ctx context.Context, binding Binding, clock Clock)
 
 	var result Head
 	err := s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		current, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -94,15 +132,12 @@ func (s *Service) UpdateClock(ctx context.Context, binding Binding, clock Clock)
 		if current.Head.Clock.ID != clock.ID {
 			return ErrClockMismatch
 		}
-		if clock.Tick < current.Head.Clock.Tick || clock.Sequence < current.Head.Clock.Sequence {
-			return ErrClockRewound
+		if err := validateMonotonicClock(current.Head.Clock, clock); err != nil {
+			return err
 		}
 		if clock == current.Head.Clock {
 			result = current.Head
 			return nil
-		}
-		if clock.Sequence == current.Head.Clock.Sequence {
-			return ErrClockMismatch
 		}
 		updated := current
 		updated.Head.Clock = clock
@@ -126,7 +161,7 @@ func (s *Service) DeactivateWorld(ctx context.Context, binding Binding, reason s
 		return ErrInvalidTaskSpec
 	}
 	return s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		current, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -163,7 +198,6 @@ func (s *Service) PrepareCheckpoint(ctx context.Context, binding Binding, clock 
 	if err != nil {
 		return Prepared{}, err
 	}
-
 	checkpointID := s.newID("checkpoint")
 	if !requiredIdentity(checkpointID) {
 		return Prepared{}, ErrInvalidTaskSpec
@@ -179,7 +213,7 @@ func (s *Service) PrepareCheckpoint(ctx context.Context, binding Binding, clock 
 
 	var prepared Prepared
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		current, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -240,10 +274,15 @@ func (s *Service) PrepareCheckpoint(ctx context.Context, binding Binding, clock 
 			return err
 		}
 
+		barrierPreparedAt := s.nowUnixMS()
+		if barrierPreparedAt <= 0 {
+			return ErrInvalidTaskSpec
+		}
 		updated := current
 		updated.Head = preparedHead
 		updated.SaveRequestID = saveRequestID
 		updated.BarrierStatus = checkpointBarrierPrepared
+		updated.BarrierPreparedAtUnixMS = barrierPreparedAt
 		if err := s.store.updateWorldHeadCASTx(ctx, tx, current, updated, "checkpoint_prepared"); err != nil {
 			return err
 		}
@@ -265,7 +304,7 @@ func (s *Service) FinishCheckpoint(ctx context.Context, binding Binding, saveReq
 	}
 	_ = saved
 	return s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		current, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
@@ -294,6 +333,7 @@ func (s *Service) FinishCheckpoint(ctx context.Context, binding Binding, saveReq
 		updated := current
 		updated.SaveRequestID = ""
 		updated.BarrierStatus = ""
+		updated.BarrierPreparedAtUnixMS = 0
 		return s.store.updateWorldHeadCASTx(ctx, tx, current, updated, "checkpoint_finished")
 	})
 }
@@ -323,7 +363,17 @@ func prepareCheckpointRequest(binding Binding, clock Clock, saveRequestID string
 		cloned[index] = copyItem
 	}
 	sort.Slice(cloned, func(i, j int) bool { return cloned[i].FactID < cloned[j].FactID })
-	return checkpointPrepareRequest{Binding: binding, Clock: clock, SaveRequestID: saveRequestID, Evidence: cloned}, nil
+	normalized := cloned[:0]
+	for _, item := range cloned {
+		if len(normalized) > 0 && normalized[len(normalized)-1].FactID == item.FactID {
+			if !evidenceEqualIgnoringApplied(normalized[len(normalized)-1], item) {
+				return checkpointPrepareRequest{}, ErrEvidenceConflict
+			}
+			continue
+		}
+		normalized = append(normalized, item)
+	}
+	return checkpointPrepareRequest{Binding: binding, Clock: clock, SaveRequestID: saveRequestID, Evidence: normalized}, nil
 }
 
 func prepareCheckpointRetry(current worldHeadRow, row checkpointRow, request checkpointPrepareRequest, result *Prepared) error {
@@ -466,27 +516,69 @@ func (s *Service) activateCheckpoint(ctx context.Context, world WorldKey, runID 
 	return result, nil
 }
 
-func (s *Service) pauseWorldForCheckpointFailure(ctx context.Context, world WorldKey, runID string, failure error) error {
-	if failure == nil {
-		return nil
+func (s *Service) pauseWorldForCheckpointFailure(ctx context.Context, world WorldKey, runID string, clock Clock, failure error) error {
+	code, ok := checkpointRecoveryCode(failure)
+	if !ok {
+		return ErrCheckpointInvalid
 	}
 	return s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
 		current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
-		if err != nil || !found {
+		if err != nil {
 			return err
 		}
-		if current.Head.Binding.RunID == runID {
+		if !found {
+			head := Head{
+				Binding: Binding{World: world, RunID: runID, Generation: 1},
+				Clock:   clock, Status: worldHeadStatusPaused, Reason: string(code),
+			}
+			row := worldHeadRow{
+				Head: head, RuntimeInstanceID: s.claimantID,
+				RecoveryRunID: runID, RecoveryError: code,
+			}
+			if err := row.validate(); err != nil {
+				return err
+			}
+			raw, err := json.Marshal(row)
+			if err != nil {
+				return ErrCheckpointInvalid
+			}
+			if err := s.store.insertWorldHeadTx(ctx, tx, row, raw); err != nil {
+				return err
+			}
+			return s.store.afterCheckpointStage(ctx, "checkpoint_restore_paused")
+		}
+		if current.RecoveryRunID == "" && current.Head.Binding.RunID == runID {
 			return nil
 		}
-		reason := failure.Error()
-		if current.Head.Status == worldHeadStatusPaused && current.Head.Reason == reason {
+		if current.Head.Status == worldHeadStatusPaused && current.Head.Reason == string(code) &&
+			current.RecoveryRunID == runID && current.RecoveryError == code {
 			return nil
 		}
 		updated := current
 		updated.Head.Status = worldHeadStatusPaused
-		updated.Head.Reason = reason
+		updated.Head.Reason = string(code)
+		updated.SaveRequestID = ""
+		updated.BarrierStatus = ""
+		updated.BarrierPreparedAtUnixMS = 0
+		updated.RecoveryRunID = runID
+		updated.RecoveryError = code
 		return s.store.updateWorldHeadCASTx(ctx, tx, current, updated, "checkpoint_restore_paused")
 	})
+}
+
+func checkpointRecoveryCode(failure error) (Code, bool) {
+	var taskErr *Error
+	if !errors.As(failure, &taskErr) || taskErr == nil || !taskErr.Code.Valid() {
+		return "", false
+	}
+	return taskErr.Code, true
+}
+
+func checkpointRecoveryError(head worldHeadRow) error {
+	if head.RecoveryRunID == "" || !head.RecoveryError.Valid() {
+		return ErrCheckpointInvalid
+	}
+	return &Error{Code: head.RecoveryError}
 }
 
 func (s *Service) activatePausedWorkingHead(ctx context.Context, world WorldKey, runID string, clock Clock) (Head, error) {
@@ -501,7 +593,7 @@ func (s *Service) activatePausedWorkingHead(ctx context.Context, world WorldKey,
 
 	var result Head
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, world)
 		if err != nil {
 			return err
 		}
@@ -514,20 +606,25 @@ func (s *Service) activatePausedWorkingHead(ctx context.Context, world WorldKey,
 		if current.Head.Status != worldHeadStatusPaused {
 			return ErrTaskChanged
 		}
+		if current.RecoveryRunID != "" {
+			return checkpointRecoveryError(current)
+		}
 		if current.BarrierStatus != "" || current.SaveRequestID != "" {
 			return ErrSaveInProgress
 		}
-		if err := validateExactWakeClock(current.Head.Clock, clock); err != nil {
+		if err := validateMonotonicClock(current.Head.Clock, clock); err != nil {
 			return err
 		}
 		generation, err := NextDurableCounter(current.Head.Binding.Generation)
 		if err != nil {
 			return err
 		}
-		if err := s.store.normalizeCheckpointWorkingSetTx(ctx, tx, current, generation, wakeIDs); err != nil {
+		normalizationHead := current
+		normalizationHead.Head.Clock = clock
+		if err := s.store.normalizeCheckpointWorkingSetTx(ctx, tx, normalizationHead, generation, wakeIDs); err != nil {
 			return err
 		}
-		updated := current
+		updated := normalizationHead
 		updated.Head.Binding.Generation = generation
 		updated.Head.Clock = clock
 		updated.Head.Status = worldHeadStatusReady
@@ -1163,6 +1260,28 @@ func (s *SQLiteStore) loadCheckpointTx(ctx context.Context, tx *sql.Tx, world Wo
 		return checkpointRow{}, false, err
 	}
 	return row, true, nil
+}
+
+func (s *SQLiteStore) validateRestartBarrierTx(ctx context.Context, tx *sql.Tx, head worldHeadRow) error {
+	if head.SaveRequestID == "" && head.BarrierStatus == "" {
+		return nil
+	}
+	if head.BarrierStatus != checkpointBarrierPrepared || !requiredIdentity(head.SaveRequestID) ||
+		!requiredIdentity(head.Head.CheckpointID) {
+		return ErrCheckpointInvalid
+	}
+	row, found, err := s.loadCheckpointBySaveRequestTx(ctx, tx, head.Head.Binding.World, head.SaveRequestID)
+	if err != nil {
+		return err
+	}
+	if !found || row.ID != head.Head.CheckpointID {
+		return ErrCheckpointInvalid
+	}
+	snapshot, err := decodeCheckpointRow(row)
+	if err != nil || snapshot.PreparedHead != head.Head {
+		return ErrCheckpointInvalid
+	}
+	return nil
 }
 
 func scanCheckpointRow(scanner rowScanner) (checkpointRow, error) {

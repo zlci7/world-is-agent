@@ -87,6 +87,53 @@ func TestWakeTargetLookupIgnoresHistoryAndValidatesTarget(t *testing.T) {
 	})
 }
 
+func TestIntentConsumptionIgnoresConsumedWakeHistory(t *testing.T) {
+	fixture, created, wake := newIntentFixture(t, StoreOptions{})
+	insertPoisonedConsumedWakeHistory(t, fixture.store, created.Task, 256)
+	nextWake := int64(250)
+	exec := intentExecution(fixture, created.Task, wake.ID, created.Task.Revision, "bounded-history")
+	got, err := fixture.svc.ApplyIntent(context.Background(), exec, Intent{Kind: "wait", NextWakeAt: &nextWake})
+	if err != nil {
+		t.Fatalf("ApplyIntent with consumed history error = %v", err)
+	}
+	if got.State != StateWaiting || got.Revision != created.Task.Revision+1 || got.NextWakeAt == nil || *got.NextWakeAt != nextWake {
+		t.Fatalf("ApplyIntent with consumed history = %+v", got)
+	}
+}
+
+func TestIntentConsumptionRejectsWakeTaskRelationCorruption(t *testing.T) {
+	fixture, created, wake := newIntentFixture(t, StoreOptions{})
+	corrupt := wake
+	corrupt.ExpectedRevision++
+	setWakeForTest(t, fixture.store, corrupt)
+	beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	exec := intentExecution(fixture, created.Task, wake.ID, created.Task.Revision, "corrupt-wake-relation")
+	if got, err := fixture.svc.ApplyIntent(context.Background(), exec, Intent{Kind: "cancel", Reason: "stop"}); !errors.Is(err, ErrInvalidTaskSpec) || got.ID != "" {
+		t.Fatalf("ApplyIntent with corrupt wake relation = (%+v, %v), want invalid_task_spec", got, err)
+	}
+	assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "corrupt wake relation")
+}
+
+func TestReconcileConsumptionRejectsWakeTaskRelationCorruption(t *testing.T) {
+	fixture, created, wake := newIntentFixture(t, StoreOptions{})
+	evidence := taskEvidence(fixture.head.Binding, created.Task, "fact-corrupt-wake-relation", EvidenceKindSatisfied)
+	if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, evidence); err != nil || !added {
+		t.Fatalf("AdmitEvidence = (%v, %v)", added, err)
+	}
+	current, err := fixture.svc.Read(context.Background(), created.Task.Owner, created.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := wake
+	corrupt.ExpectedRevision++
+	setWakeForTest(t, fixture.store, corrupt)
+	beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	if got, err := fixture.svc.Reconcile(context.Background(), reconcileExecution(fixture, current, current.Revision)); !errors.Is(err, ErrInvalidTaskSpec) || got.Task.ID != "" {
+		t.Fatalf("Reconcile with corrupt wake relation = (%+v, %v), want invalid_task_spec", got, err)
+	}
+	assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "reconcile corrupt wake relation")
+}
+
 func claimedWakeForQueryTest(t *testing.T) (createFixture, CreateResult, Wake, Clock) {
 	t.Helper()
 	fixture := newCreateFixture(t, StoreOptions{})

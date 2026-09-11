@@ -53,6 +53,7 @@ func TestSQLiteStoreSchemaAndPragmas(t *testing.T) {
 	for _, name := range []string{
 		"idx_task_wakeups_claim_due",
 		"idx_task_wakeups_due",
+		"idx_task_wakeups_unconsumed_task",
 		"idx_tasks_active_equivalence",
 		"idx_tasks_create_call",
 		"idx_tasks_owner_state",

@@ -25,8 +25,9 @@ func TestRestartRecoversForeignDeliveryWithoutStealingOwnClaim(t *testing.T) {
 			assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "same-service activation")
 
 			restarted := deterministicRestartService(fixture.store)
-			if _, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", clock,
-				CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+			head, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", clock,
+				CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+			if err != nil {
 				t.Fatalf("new-service ActivateWorld error = %v", err)
 			}
 			afterTask, _, afterHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
@@ -39,37 +40,160 @@ func TestRestartRecoversForeignDeliveryWithoutStealingOwnClaim(t *testing.T) {
 			}
 			want := wake
 			want.Status, want.ClaimID, want.ClaimedBy, want.RetryAfterUnixMS = wakeStatusPending, "", "", 0
+			want.Generation = head.Binding.Generation
 			if stored != want {
 				t.Fatalf("recovered wake = %+v, want %+v", stored, want)
 			}
-			if err := fixture.svc.MarkEnqueued(context.Background(), fixture.head.Binding, wake.ID, wake.ClaimID); !errors.Is(err, ErrTaskChanged) {
-				t.Fatalf("old claim MarkEnqueued error = %v, want task_changed", err)
+			if err := fixture.svc.MarkEnqueued(context.Background(), fixture.head.Binding, wake.ID, wake.ClaimID); !errors.Is(err, ErrGenerationStale) {
+				t.Fatalf("old claim MarkEnqueued error = %v, want generation_stale", err)
 			}
 		})
 	}
 }
 
-func TestRestartLeavesPendingAndConsumedWakesByteIdentical(t *testing.T) {
+func TestRestartRebindsPendingWakeToFreshGenerationAndLatestClock(t *testing.T) {
 	fixture := newCreateFixture(t, StoreOptions{})
-	created := createWakeTask(t, fixture, "unchanged", "actor", 200, 300)
-	beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	created := createWakeTask(t, fixture, "restart-pending-generation", "actor", 200, 400)
+	advanced := Clock{ID: fixture.clock.ID, Tick: 150, Sequence: fixture.clock.Sequence + 1}
 	restarted := deterministicRestartService(fixture.store)
-	if _, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
-		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+
+	head, err := restarted.ActivateWorld(context.Background(), fixture.world, fixture.head.Binding.RunID, advanced,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+	if err != nil {
+		t.Fatalf("ActivateWorld at latest Clock error = %v", err)
+	}
+	if head.Clock != advanced || head.Binding.Generation != fixture.head.Binding.Generation+1 {
+		t.Fatalf("rebound Head = %+v, want Clock %+v and generation %d", head, advanced, fixture.head.Binding.Generation+1)
+	}
+	wakes := loadTaskWakes(t, fixture.store, created.Task.Owner, created.Task.ID)
+	if len(wakes) != 1 || wakes[0].Status != wakeStatusPending || wakes[0].Generation != head.Binding.Generation {
+		t.Fatalf("rebound pending wakes = %+v, want generation %d", wakes, head.Binding.Generation)
+	}
+	if claimed, err := restarted.ClaimDue(context.Background(), fixture.head.Binding, advanced, 1); !errors.Is(err, ErrGenerationStale) || len(claimed) != 0 {
+		t.Fatalf("old generation ClaimDue = (%+v, %v), want generation_stale", claimed, err)
+	}
+}
+
+func TestRestartRecoversRunningAtLatestReconnectClock(t *testing.T) {
+	fixture, created, _, _, running, clock := runningWakeForRestart(t, 200)
+	advanced := Clock{ID: clock.ID, Tick: 250, Sequence: clock.Sequence + 1}
+	restarted := deterministicRestartService(fixture.store)
+
+	head, err := restarted.ActivateWorld(context.Background(), fixture.world, fixture.head.Binding.RunID, advanced,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+	if err != nil {
+		t.Fatalf("ActivateWorld at latest Clock error = %v", err)
+	}
+	recovered, err := restarted.Read(context.Background(), created.Task.Owner, created.Task.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "pending activation")
+	if recovered.Revision != running.Revision+1 || recovered.NextWakeAt == nil || *recovered.NextWakeAt != advanced.Tick {
+		t.Fatalf("recovered Task = %+v, want immediate reconciliation at %d", recovered, advanced.Tick)
+	}
+	wakes := loadTaskWakes(t, fixture.store, created.Task.Owner, created.Task.ID)
+	var replacement Wake
+	for _, wake := range wakes {
+		if wake.Status == wakeStatusPending {
+			replacement = wake
+		}
+	}
+	if replacement.ID == "" || replacement.Generation != head.Binding.Generation || replacement.DueTick != advanced.Tick {
+		t.Fatalf("replacement Wake = %+v, want generation %d and due tick %d", replacement, head.Binding.Generation, advanced.Tick)
+	}
+}
+
+func TestRestartRecoversExistingWorkingSetAboveCurrentCreateLimit(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{MaxTasksPerWorld: 2})
+	created := []CreateResult{
+		createWakeTask(t, fixture, "restart-over-limit-a", "actor-a", 200, 400),
+		createWakeTask(t, fixture, "restart-over-limit-b", "actor-b", 200, 400),
+	}
+	clock := Clock{ID: fixture.clock.ID, Tick: 200, Sequence: fixture.clock.Sequence + 1}
+	setWorldClockForIntentTest(t, fixture.store, fixture.head, clock)
+	claimed, err := fixture.svc.ClaimDue(context.Background(), fixture.head.Binding, clock, len(created))
+	if err != nil || len(claimed) != len(created) {
+		t.Fatalf("ClaimDue = (%+v, %v), want %d", claimed, err, len(created))
+	}
+	for _, wake := range claimed {
+		if err := fixture.svc.MarkEnqueued(context.Background(), fixture.head.Binding, wake.ID, wake.ClaimID); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := fixture.svc.BeginWake(context.Background(), fixture.head.Binding, wake.ID, wake.ClaimID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	path := fixture.store.options.Path
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fixture.store = openTaskTestStore(t, StoreOptions{Path: path, MaxTasksPerWorld: 1})
+	restarted := deterministicRestartService(fixture.store)
+	advanced := Clock{ID: clock.ID, Tick: 250, Sequence: clock.Sequence + 1}
+	head, err := restarted.ActivateWorld(context.Background(), fixture.world, fixture.head.Binding.RunID, advanced,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+	if err != nil {
+		t.Fatalf("ActivateWorld above current creation limit error = %v", err)
+	}
+	if head.Binding.Generation != fixture.head.Binding.Generation+1 || head.Clock != advanced {
+		t.Fatalf("restarted Head = %+v", head)
+	}
+	for _, result := range created {
+		recovered, err := restarted.Read(context.Background(), result.Task.Owner, result.Task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if recovered.State != StateWaiting || !recovered.NeedsReconcile || recovered.NextWakeAt == nil || *recovered.NextWakeAt != advanced.Tick {
+			t.Fatalf("recovered Task = %+v", recovered)
+		}
+		wakes := loadTaskWakes(t, fixture.store, result.Task.Owner, result.Task.ID)
+		active := 0
+		for _, wake := range wakes {
+			if wake.Status == wakeStatusPending {
+				active++
+				if wake.Generation != head.Binding.Generation {
+					t.Fatalf("replacement Wake = %+v, want generation %d", wake, head.Binding.Generation)
+				}
+			}
+		}
+		if active != 1 {
+			t.Fatalf("active wakes for %s = %d, all = %+v", result.Task.ID, active, wakes)
+		}
+	}
+
+	exec, spec := createInputs(head, advanced, testOwner(), "event-over-limit", "turn-over-limit", "call-over-limit", "eq-over-limit")
+	spec.WakeAt, spec.DeadlineAt = 300, 400
+	if _, err := restarted.Create(context.Background(), exec, spec, Admission{}); !errors.Is(err, ErrTaskCapacityExceeded) {
+		t.Fatalf("Create above current limit error = %v, want task_capacity_exceeded", err)
+	}
+}
+
+func TestRestartRebindsPendingAndPreservesTaskHistory(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	created := createWakeTask(t, fixture, "unchanged", "actor", 200, 300)
+	beforeTask, _, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	restarted := deterministicRestartService(fixture.store)
+	head, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterTask, _, afterHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	if !bytes.Equal(afterTask, beforeTask) || !bytes.Equal(afterHistory, beforeHistory) {
+		t.Fatal("pending activation changed Task or intent history")
+	}
 
 	clock := Clock{ID: fixture.clock.ID, Tick: 200, Sequence: 2}
-	setWorldClockForIntentTest(t, fixture.store, fixture.head, clock)
-	claimed, err := restarted.ClaimDue(context.Background(), fixture.head.Binding, clock, 1)
+	setWorldClockForIntentTest(t, fixture.store, head, clock)
+	claimed, err := restarted.ClaimDue(context.Background(), head.Binding, clock, 1)
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("ClaimDue = (%+v, %v)", claimed, err)
 	}
-	if err := restarted.MarkEnqueued(context.Background(), fixture.head.Binding, claimed[0].ID, claimed[0].ClaimID); err != nil {
+	if err := restarted.MarkEnqueued(context.Background(), head.Binding, claimed[0].ID, claimed[0].ClaimID); err != nil {
 		t.Fatal(err)
 	}
-	exec, running, err := restarted.BeginWake(context.Background(), fixture.head.Binding, claimed[0].ID, claimed[0].ClaimID)
+	exec, running, err := restarted.BeginWake(context.Background(), head.Binding, claimed[0].ID, claimed[0].ClaimID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,13 +203,36 @@ func TestRestartLeavesPendingAndConsumedWakesByteIdentical(t *testing.T) {
 	if err != nil || waiting.Revision != running.Revision+1 {
 		t.Fatalf("ApplyIntent = (%+v, %v)", waiting, err)
 	}
-	beforeTask, beforeWakes, beforeHistory = snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
 	secondRestart := deterministicRestartService(fixture.store)
-	if _, err := secondRestart.ActivateWorld(context.Background(), fixture.world, "run-a", clock,
-		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+	secondHead, err := secondRestart.ActivateWorld(context.Background(), fixture.world, "run-a", clock,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "consumed and pending activation")
+	afterTask, afterWakes, afterHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+	if !bytes.Equal(afterTask, beforeTask) || !bytes.Equal(afterHistory, beforeHistory) {
+		t.Fatal("second activation changed Task or intent history")
+	}
+	if bytes.Equal(afterWakes, beforeWakes) {
+		t.Fatal("second activation did not rebind the pending wake")
+	}
+	wakes := loadTaskWakes(t, fixture.store, created.Task.Owner, created.Task.ID)
+	var consumed, pending int
+	for _, wake := range wakes {
+		switch wake.Status {
+		case wakeStatusConsumed:
+			consumed++
+		case wakeStatusPending:
+			pending++
+			if wake.Generation != secondHead.Binding.Generation {
+				t.Fatalf("pending wake generation = %d, want %d", wake.Generation, secondHead.Binding.Generation)
+			}
+		}
+	}
+	if len(wakes) != 2 || consumed != 1 || pending != 1 {
+		t.Fatalf("second activation wakes = %+v", wakes)
+	}
 }
 
 func TestRestartRunningAttemptBecomesImmediateReconciliation(t *testing.T) {
@@ -113,7 +260,8 @@ func TestRestartRunningAttemptBecomesImmediateReconciliation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ActivateWorld error = %v", err)
 			}
-			if head != (Head{Binding: fixture.head.Binding, Clock: clock, Status: worldHeadStatusReady}) {
+			if head.Binding.World != fixture.head.Binding.World || head.Binding.RunID != fixture.head.Binding.RunID ||
+				head.Binding.Generation != fixture.head.Binding.Generation+1 || head.Clock != clock || head.Status != worldHeadStatusReady {
 				t.Fatalf("returned head = %+v", head)
 			}
 			recovered, err := restarted.Read(context.Background(), created.Task.Owner, created.Task.ID)
@@ -146,19 +294,19 @@ func TestRestartRunningAttemptBecomesImmediateReconciliation(t *testing.T) {
 			}
 			if replacement.Status != wakeStatusPending || replacement.Reason != "restart_reconcile" ||
 				replacement.ExpectedRevision != recovered.Revision || replacement.DueTick != wantDue ||
-				replacement.Generation != fixture.head.Binding.Generation || replacement.Attempt != 0 ||
+				replacement.Generation != head.Binding.Generation || replacement.Attempt != 0 ||
 				replacement.ClaimID != "" || replacement.ClaimedBy != "" || replacement.RetryAfterUnixMS != 0 {
 				t.Fatalf("replacement wake = %+v", replacement)
 			}
 
-			claimed, err := restarted.ClaimDue(context.Background(), fixture.head.Binding, clock, 2)
+			claimed, err := restarted.ClaimDue(context.Background(), head.Binding, clock, 2)
 			if err != nil || len(claimed) != 1 || claimed[0].ID != replacement.ID {
 				t.Fatalf("ClaimDue replacement = (%+v, %v)", claimed, err)
 			}
-			if err := restarted.MarkEnqueued(context.Background(), fixture.head.Binding, claimed[0].ID, claimed[0].ClaimID); err != nil {
+			if err := restarted.MarkEnqueued(context.Background(), head.Binding, claimed[0].ID, claimed[0].ClaimID); err != nil {
 				t.Fatal(err)
 			}
-			reconcileExec, admitted, err := restarted.BeginWake(context.Background(), fixture.head.Binding, claimed[0].ID, claimed[0].ClaimID)
+			reconcileExec, admitted, err := restarted.BeginWake(context.Background(), head.Binding, claimed[0].ID, claimed[0].ClaimID)
 			if err != nil || admitted.Revision != recovered.Revision+1 {
 				t.Fatalf("BeginWake replacement = (%+v, %+v, %v)", reconcileExec, admitted, err)
 			}
@@ -166,8 +314,8 @@ func TestRestartRunningAttemptBecomesImmediateReconciliation(t *testing.T) {
 			if err != nil || routed.Next != ReconcileNextObserve || routed.Task.Revision != admitted.Revision {
 				t.Fatalf("Reconcile replacement = (%+v, %v)", routed, err)
 			}
-			if _, _, err := fixture.svc.BeginWake(context.Background(), fixture.head.Binding, oldWake.ID, oldWake.ClaimID); !errors.Is(err, ErrTaskChanged) {
-				t.Fatalf("old BeginWake error = %v", err)
+			if _, _, err := fixture.svc.BeginWake(context.Background(), fixture.head.Binding, oldWake.ID, oldWake.ClaimID); !errors.Is(err, ErrGenerationStale) {
+				t.Fatalf("old BeginWake error = %v, want generation_stale", err)
 			}
 		})
 	}
@@ -454,8 +602,9 @@ func TestRestartRecoversRunningTaskWithoutExecutableWake(t *testing.T) {
 	}
 
 	restarted := deterministicRestartService(fixture.store)
-	if _, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
-		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); err != nil {
+	head, err := restarted.ActivateWorld(context.Background(), fixture.world, "run-a", fixture.clock,
+		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world})
+	if err != nil {
 		t.Fatalf("new-service ActivateWorld error = %v", err)
 	}
 	recovered, err := restarted.Read(context.Background(), created.Task.Owner, created.Task.ID)
@@ -493,10 +642,10 @@ func TestRestartRecoversRunningTaskWithoutExecutableWake(t *testing.T) {
 	if afterRetryHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(afterRetryHead, beforeRetryHead) {
 		t.Fatal("response-loss retry changed world head")
 	}
-	if claimed, err := fixture.svc.ClaimDue(context.Background(), fixture.head.Binding, fixture.clock, 1); !errors.Is(err, ErrTaskChanged) || len(claimed) != 0 {
-		t.Fatalf("stale Service ClaimDue = (%+v, %v), want task_changed", claimed, err)
+	if claimed, err := fixture.svc.ClaimDue(context.Background(), fixture.head.Binding, fixture.clock, 1); !errors.Is(err, ErrGenerationStale) || len(claimed) != 0 {
+		t.Fatalf("stale Service ClaimDue = (%+v, %v), want generation_stale", claimed, err)
 	}
-	if claimed, err := restarted.ClaimDue(context.Background(), fixture.head.Binding, fixture.clock, 1); err != nil || len(claimed) != 1 || claimed[0].ID != replacement.ID {
+	if claimed, err := restarted.ClaimDue(context.Background(), head.Binding, fixture.clock, 1); err != nil || len(claimed) != 1 || claimed[0].ID != replacement.ID {
 		t.Fatalf("active Service ClaimDue = (%+v, %v)", claimed, err)
 	}
 }

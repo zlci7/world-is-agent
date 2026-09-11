@@ -55,10 +55,13 @@ type SQLiteStore struct {
 }
 
 type worldHeadRow struct {
-	Head              Head   `json:"head"`
-	SaveRequestID     string `json:"save_request_id"`
-	BarrierStatus     string `json:"barrier_status"`
-	RuntimeInstanceID string `json:"runtime_instance_id"`
+	Head                    Head   `json:"head"`
+	SaveRequestID           string `json:"save_request_id"`
+	BarrierStatus           string `json:"barrier_status"`
+	BarrierPreparedAtUnixMS int64  `json:"barrier_prepared_at_unix_ms,omitempty"`
+	RuntimeInstanceID       string `json:"runtime_instance_id"`
+	RecoveryRunID           string `json:"recovery_run_id,omitempty"`
+	RecoveryError           Code   `json:"recovery_error,omitempty"`
 }
 
 type checkpointRow struct {
@@ -231,6 +234,12 @@ var taskSQLiteSchema = []struct {
 		statement: `CREATE UNIQUE INDEX idx_task_wakeups_executable_task
 			ON task_wakeups (game_id, world_id, entity_id, task_id)
 			WHERE status IN ('pending', 'claimed', 'enqueued', 'running')`,
+	},
+	{
+		name: "idx_task_wakeups_unconsumed_task",
+		statement: `CREATE INDEX idx_task_wakeups_unconsumed_task
+			ON task_wakeups (game_id, world_id, entity_id, task_id, wake_id)
+			WHERE status <> 'consumed'`,
 	},
 }
 
@@ -739,9 +748,12 @@ func scanWorldHeadRow(scanner rowScanner) (worldHeadRow, error) {
 			Status:       status,
 			Reason:       reason,
 		},
-		SaveRequestID:     row.SaveRequestID,
-		BarrierStatus:     row.BarrierStatus,
-		RuntimeInstanceID: row.RuntimeInstanceID,
+		SaveRequestID:           row.SaveRequestID,
+		BarrierStatus:           row.BarrierStatus,
+		RuntimeInstanceID:       row.RuntimeInstanceID,
+		BarrierPreparedAtUnixMS: stored.BarrierPreparedAtUnixMS,
+		RecoveryRunID:           stored.RecoveryRunID,
+		RecoveryError:           stored.RecoveryError,
 	}
 	if stored != indexed || stored.validate() != nil {
 		return worldHeadRow{}, ErrInvalidTaskSpec
@@ -1057,7 +1069,18 @@ func (r worldHeadRow) validate() error {
 	if r.Head.Clock.Sequence > uint64(math.MaxInt64) ||
 		!optionalIdentity(r.Head.CheckpointID) || !requiredIdentity(r.Head.Status) ||
 		!optionalIdentity(r.Head.Reason) || !optionalIdentity(r.SaveRequestID) ||
-		!optionalIdentity(r.BarrierStatus) || !requiredIdentity(r.RuntimeInstanceID) {
+		!optionalIdentity(r.BarrierStatus) || r.BarrierPreparedAtUnixMS < 0 || !requiredIdentity(r.RuntimeInstanceID) {
+		return ErrInvalidTaskSpec
+	}
+	if r.BarrierPreparedAtUnixMS != 0 && (r.BarrierStatus != checkpointBarrierPrepared || r.SaveRequestID == "") {
+		return ErrInvalidTaskSpec
+	}
+	if (r.RecoveryRunID == "") != (r.RecoveryError == "") {
+		return ErrInvalidTaskSpec
+	}
+	if r.RecoveryRunID != "" && (!requiredIdentity(r.RecoveryRunID) || !r.RecoveryError.Valid() ||
+		r.Head.Status != worldHeadStatusPaused || r.Head.Reason != string(r.RecoveryError) ||
+		r.SaveRequestID != "" || r.BarrierStatus != "" || r.BarrierPreparedAtUnixMS != 0) {
 		return ErrInvalidTaskSpec
 	}
 	return nil

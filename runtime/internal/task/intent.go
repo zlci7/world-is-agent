@@ -338,18 +338,20 @@ func (s *SQLiteStore) updateIntentRecordTx(ctx context.Context, tx *sql.Tx, befo
 	return s.afterIntentStage(ctx, intentStageTaskUpdated)
 }
 
-func (s *SQLiteStore) consumeIntentWakesTx(ctx context.Context, tx *sql.Tx, record Record) error {
-	if err := s.consumeExecutableWakesTx(ctx, tx, record); err != nil {
+func (s *SQLiteStore) consumeIntentWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, record Record) error {
+	if err := s.consumeExecutableWakesTx(ctx, tx, head, record); err != nil {
 		return err
 	}
 	return s.afterIntentStage(ctx, intentStageWakesConsumed)
 }
 
-func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, record Record) error {
+func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, record Record) error {
 	rows, err := tx.QueryContext(ctx, `SELECT wake_id, game_id, world_id, entity_id, task_id, clock_id,
 		expected_revision, due_tick, reason, status, claim_id, claimed_by, generation, attempt,
 		retry_after_unix_ms, wake_json FROM task_wakeups
-		WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ? ORDER BY wake_id`,
+		WHERE game_id = ? AND world_id = ? AND entity_id = ? AND task_id = ?
+			AND status <> 'consumed'
+		ORDER BY wake_id LIMIT 2`,
 		record.Owner.GameID, record.Owner.WorldID, record.Owner.EntityID, record.ID)
 	if err != nil {
 		return err
@@ -382,6 +384,12 @@ func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, 
 			!wakeIndexedValuesEqual(stored, indexed) || clockID != record.Spec.ClockID {
 			_ = rows.Close()
 			return ErrInvalidTaskSpec
+		}
+		if err := validateDurableWakeRelation(head, durableWake{
+			wake: stored, record: storedIntentTask{record: record}, clock: clockID,
+		}); err != nil {
+			_ = rows.Close()
+			return err
 		}
 		switch stored.Status {
 		case wakeStatusPending, wakeStatusClaimed, wakeStatusEnqueued, wakeStatusRunning:

@@ -215,11 +215,159 @@ func TestCheckpointSameRunRestartUsesWorkingHead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if head != prepared.Head {
-		t.Fatalf("same-run Head = %+v, want working %+v", head, prepared.Head)
+	if head.Binding.World != prepared.Head.Binding.World || head.Binding.RunID != prepared.Head.Binding.RunID ||
+		head.Binding.Generation != prepared.Head.Binding.Generation+1 || head.Clock != prepared.Head.Clock ||
+		head.CheckpointID != prepared.Head.CheckpointID || head.Status != worldHeadStatusReady {
+		t.Fatalf("same-run rebound Head = %+v, prior working Head %+v", head, prepared.Head)
 	}
 	if _, err := restarted.Read(context.Background(), postSave.Task.Owner, postSave.Task.ID); err != nil {
 		t.Fatalf("same-run restart rewound post-save Task: %v", err)
+	}
+}
+
+func TestCheckpointSameRunRestartReleasesPreparedBarrier(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	created := createWakeTask(t, fixture, "checkpoint-restart-barrier", "actor", 200, 400)
+	prepared, err := fixture.svc.PrepareCheckpoint(context.Background(), fixture.head.Binding, fixture.clock, "save-restart-barrier", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := deterministicRestartService(fixture.store)
+	head, err := restarted.ActivateWorld(context.Background(), fixture.world, fixture.head.Binding.RunID, fixture.clock, prepared.Reference)
+	if err != nil {
+		t.Fatalf("ActivateWorld with persisted prepared barrier error = %v", err)
+	}
+	if head.Binding.Generation != prepared.Head.Binding.Generation+1 || head.CheckpointID != prepared.Reference.ID {
+		t.Fatalf("restarted Head = %+v, prepared = %+v", head, prepared)
+	}
+	storedHead, err := fixture.store.loadWorldHead(context.Background(), fixture.world)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedHead.SaveRequestID != "" || storedHead.BarrierStatus != "" {
+		t.Fatalf("restarted barrier = (%q, %q), want cleared", storedHead.SaveRequestID, storedHead.BarrierStatus)
+	}
+	wakes := loadTaskWakes(t, fixture.store, created.Task.Owner, created.Task.ID)
+	if len(wakes) != 1 || wakes[0].Generation != head.Binding.Generation || wakes[0].Status != wakeStatusPending {
+		t.Fatalf("restarted wakes = %+v", wakes)
+	}
+	if err := fixture.svc.FinishCheckpoint(context.Background(), prepared.Head.Binding, prepared.SaveRequestID, true); !errors.Is(err, ErrGenerationStale) {
+		t.Fatalf("old FinishCheckpoint error = %v, want generation_stale", err)
+	}
+}
+
+func TestCheckpointSameRunRestartRejectsInvalidPreparedBarrier(t *testing.T) {
+	tests := []struct {
+		name   string
+		poison func(*testing.T, *SQLiteStore, Prepared)
+	}{
+		{name: "missing checkpoint", poison: func(t *testing.T, store *SQLiteStore, prepared Prepared) {
+			if _, err := store.db.Exec(`DELETE FROM task_checkpoints WHERE checkpoint_id = ?`, prepared.Reference.ID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "corrupt checkpoint", poison: func(t *testing.T, store *SQLiteStore, prepared Prepared) {
+			if _, err := store.db.Exec(`UPDATE task_checkpoints SET snapshot_json = ? WHERE checkpoint_id = ?`,
+				[]byte(`{"corrupt":`), prepared.Reference.ID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newCreateFixture(t, StoreOptions{})
+			created := createWakeTask(t, fixture, "checkpoint-invalid-restart-"+tt.name, "actor", 200, 400)
+			prepared, err := fixture.svc.PrepareCheckpoint(context.Background(), fixture.head.Binding, fixture.clock, "save-invalid-restart", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.poison(t, fixture.store, prepared)
+			beforeHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world)
+			beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+
+			_, err = deterministicRestartService(fixture.store).ActivateWorld(
+				context.Background(), fixture.world, fixture.head.Binding.RunID, fixture.clock, prepared.Reference,
+			)
+			if !errors.Is(err, ErrCheckpointInvalid) {
+				t.Fatalf("ActivateWorld with invalid prepared barrier error = %v, want checkpoint_invalid", err)
+			}
+			if afterHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(afterHead, beforeHead) {
+				t.Fatal("failed barrier takeover changed world head")
+			}
+			assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "failed barrier takeover")
+		})
+	}
+}
+
+func TestCheckpointPreparedBarrierExpiresForLiveRuntime(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	created := createWakeTask(t, fixture, "checkpoint-barrier-expiry", "actor", 200, 400)
+	preparedAt := fixture.svc.nowUnixMS()
+	prepared, err := fixture.svc.PrepareCheckpoint(
+		context.Background(), fixture.head.Binding, fixture.clock, "save-barrier-expiry", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+
+	fixture.svc.nowUnixMS = func() int64 { return preparedAt + checkpointBarrierTimeoutMS - 1 }
+	if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, fixture.head.Binding.RunID, fixture.clock, prepared.Reference); !errors.Is(err, ErrSaveInProgress) {
+		t.Fatalf("activation before barrier expiry error = %v, want save_in_progress", err)
+	}
+	fixture.svc.nowUnixMS = func() int64 { return preparedAt + 5_000 }
+	if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, fixture.head.Binding.RunID, fixture.clock, prepared.Reference); !errors.Is(err, ErrSaveInProgress) {
+		t.Fatalf("activation at adapter timeout boundary error = %v, want save_in_progress", err)
+	}
+	fixture.svc.nowUnixMS = func() int64 { return preparedAt + checkpointBarrierTimeoutMS }
+	head, err := fixture.svc.ActivateWorld(
+		context.Background(), fixture.world, fixture.head.Binding.RunID, fixture.clock, prepared.Reference,
+	)
+	if err != nil {
+		t.Fatalf("activation at barrier expiry error = %v", err)
+	}
+	if head != prepared.Head {
+		t.Fatalf("Head after barrier expiry = %+v, want %+v", head, prepared.Head)
+	}
+	storedHead, err := fixture.store.loadWorldHead(context.Background(), fixture.world)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedHead.SaveRequestID != "" || storedHead.BarrierStatus != "" || storedHead.BarrierPreparedAtUnixMS != 0 {
+		t.Fatalf("expired barrier = %+v", storedHead)
+	}
+	if _, err := fixture.store.loadCheckpoint(context.Background(), fixture.world, prepared.Reference.ID); err != nil {
+		t.Fatalf("expired barrier removed checkpoint: %v", err)
+	}
+	assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "barrier expiry")
+	if err := fixture.svc.FinishCheckpoint(context.Background(), prepared.Head.Binding, prepared.SaveRequestID, true); err != nil {
+		t.Fatalf("FinishCheckpoint after expiry error = %v", err)
+	}
+}
+
+func TestCheckpointPreparedBarrierExpiryFailsClosedOnCorruptSnapshot(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	preparedAt := fixture.svc.nowUnixMS()
+	prepared, err := fixture.svc.PrepareCheckpoint(
+		context.Background(), fixture.head.Binding, fixture.clock, "save-corrupt-barrier-expiry", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.db.Exec(`UPDATE task_checkpoints SET snapshot_json = ? WHERE checkpoint_id = ?`,
+		[]byte(`{"corrupt":`), prepared.Reference.ID); err != nil {
+		t.Fatal(err)
+	}
+	beforeHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world)
+	fixture.svc.nowUnixMS = func() int64 { return preparedAt + checkpointBarrierTimeoutMS }
+	if _, err := fixture.svc.ActivateWorld(
+		context.Background(), fixture.world, fixture.head.Binding.RunID, fixture.clock, prepared.Reference,
+	); !errors.Is(err, ErrCheckpointInvalid) {
+		t.Fatalf("corrupt barrier expiry error = %v, want checkpoint_invalid", err)
+	}
+	if afterHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(afterHead, beforeHead) {
+		t.Fatal("corrupt barrier expiry cleared persistent barrier")
 	}
 }
 
@@ -259,15 +407,16 @@ func TestWorldClockAndDeactivationLifecycle(t *testing.T) {
 	}
 
 	restarted := deterministicRestartService(fixture.store)
+	reconnectClock := Clock{ID: advanced.ID, Tick: advanced.Tick + 25, Sequence: advanced.Sequence + 1}
 	reactivated, err := restarted.ActivateWorld(
-		context.Background(), fixture.world, fixture.head.Binding.RunID, advanced,
+		context.Background(), fixture.world, fixture.head.Binding.RunID, reconnectClock,
 		CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world},
 	)
 	if err != nil {
 		t.Fatalf("ActivateWorld after deactivation error = %v", err)
 	}
 	if reactivated.Status != worldHeadStatusReady || reactivated.Reason != "" ||
-		reactivated.Binding.Generation != fixture.head.Binding.Generation+1 {
+		reactivated.Binding.Generation != fixture.head.Binding.Generation+1 || reactivated.Clock != reconnectClock {
 		t.Fatalf("reactivated Head = %+v", reactivated)
 	}
 	wakes := loadTaskWakes(t, fixture.store, created.Task.Owner, created.Task.ID)
@@ -483,6 +632,87 @@ func TestCheckpointInvalidNewRunPreservesTasksAndPauses(t *testing.T) {
 				t.Fatalf("invalid reference lost Task: %v", err)
 			}
 		})
+	}
+}
+
+func TestCheckpointRecoveryFailureCannotBeBypassedByAbsentActivation(t *testing.T) {
+	t.Run("first activation", func(t *testing.T) {
+		store := openTaskTestStore(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite")})
+		svc := deterministicTaskService(store)
+		world := testWorld()
+		clock := Clock{ID: "fake.minute.v1", Tick: 100, Sequence: 1}
+		missing := CheckpointRef{
+			Status: checkpointStatusConfirmed, ID: "checkpoint-missing", Checksum: sha256Hex([]byte("missing")),
+			SchemaVersion: checkpointSchemaVersion, World: world,
+		}
+		if _, err := svc.ActivateWorld(context.Background(), world, "run-a", clock, missing); !errors.Is(err, ErrCheckpointMissing) {
+			t.Fatalf("missing checkpoint activation error = %v", err)
+		}
+		if _, err := svc.ActivateWorld(context.Background(), world, "run-a", clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: world}); !errors.Is(err, ErrCheckpointMissing) {
+			t.Fatalf("absent activation after recovery failure error = %v, want checkpoint_missing", err)
+		}
+		row, err := store.loadWorldHead(context.Background(), world)
+		if err != nil || row.Head.Status != worldHeadStatusPaused {
+			t.Fatalf("latched recovery Head = (%+v, %v)", row, err)
+		}
+	})
+
+	t.Run("prior run", func(t *testing.T) {
+		fixture := newCreateFixture(t, StoreOptions{})
+		created := createWakeTask(t, fixture, "recovery-latch-prior-run", "actor", 200, 400)
+		if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, "run-new", fixture.clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); !errors.Is(err, ErrCheckpointMissing) {
+			t.Fatalf("new run absent activation error = %v", err)
+		}
+		beforeHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world)
+		beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, fixture.store, created.Task.Owner, created.Task.ID)
+		if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, fixture.head.Binding.RunID, fixture.clock,
+			CheckpointRef{Status: checkpointStatusAbsent, World: fixture.world}); !errors.Is(err, ErrCheckpointMissing) {
+			t.Fatalf("prior run absent activation error = %v, want checkpoint_missing", err)
+		}
+		if afterHead := rawWorldHeadJSONForRestart(t, fixture.store, fixture.world); !bytes.Equal(afterHead, beforeHead) {
+			t.Fatal("prior run activation cleared recovery latch")
+		}
+		assertTaskSnapshotEqual(t, fixture.store, created.Task, beforeTask, beforeWakes, beforeHistory, "prior run recovery bypass")
+	})
+}
+
+func TestCheckpointValidConfirmedRecoveryClearsFailureLatch(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	created := createWakeTask(t, fixture, "recovery-latch-cleared", "actor", 200, 400)
+	prepared, err := fixture.svc.PrepareCheckpoint(
+		context.Background(), fixture.head.Binding, fixture.clock, "save-recovery-latch", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.svc.FinishCheckpoint(context.Background(), prepared.Head.Binding, prepared.SaveRequestID, true); err != nil {
+		t.Fatal(err)
+	}
+	bad := prepared.Reference
+	bad.Checksum = "f" + bad.Checksum[1:]
+	if bad.Checksum == prepared.Reference.Checksum {
+		bad.Checksum = "e" + bad.Checksum[1:]
+	}
+	if _, err := fixture.svc.ActivateWorld(context.Background(), fixture.world, "run-recovered", fixture.clock, bad); !errors.Is(err, ErrCheckpointInvalid) {
+		t.Fatalf("invalid recovery error = %v", err)
+	}
+	head, err := fixture.svc.ActivateWorld(
+		context.Background(), fixture.world, "run-recovered", fixture.clock, prepared.Reference,
+	)
+	if err != nil {
+		t.Fatalf("valid recovery after failure error = %v", err)
+	}
+	if head.Binding.RunID != "run-recovered" || head.Status != worldHeadStatusReady {
+		t.Fatalf("recovered Head = %+v", head)
+	}
+	row, err := fixture.store.loadWorldHead(context.Background(), fixture.world)
+	if err != nil || row.RecoveryRunID != "" || row.RecoveryError != "" {
+		t.Fatalf("recovery latch after valid restore = (%+v, %v)", row, err)
+	}
+	if _, err := fixture.svc.Read(context.Background(), created.Task.Owner, created.Task.ID); err != nil {
+		t.Fatalf("restored Task missing: %v", err)
 	}
 }
 
@@ -727,6 +957,33 @@ func TestCheckpointFinalEvidenceBatchIsAtomic(t *testing.T) {
 	}
 	if got := totalRows(t, fixture.store.db, "task_checkpoints"); got != 0 {
 		t.Fatalf("checkpoint count = %d, want 0", got)
+	}
+}
+
+func TestCheckpointFinalEvidenceBatchDeduplicatesExactFacts(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	created := createWakeTask(t, fixture, "evidence-batch-retry", "actor", 200, 400)
+	evidence := Evidence{
+		FactID: "fact-retried", TaskID: created.Task.ID, Binding: fixture.head.Binding,
+		StartRevision: created.Task.Revision, OccurredAt: fixture.clock.Tick, Kind: EvidenceKindProgress,
+		Source: SourceRef{Kind: SourceKindEnvironment, EventID: "event-retried", TurnID: "turn-retried", CallID: "call-retried"},
+	}
+	prepared, err := fixture.svc.PrepareCheckpoint(
+		context.Background(), fixture.head.Binding, fixture.clock, "save-evidence-retried", []Evidence{evidence, evidence},
+	)
+	if err != nil {
+		t.Fatalf("PrepareCheckpoint with exact duplicate Evidence error = %v", err)
+	}
+	row, err := fixture.store.loadCheckpoint(context.Background(), fixture.world, prepared.Reference.ID)
+	if err != nil {
+		t.Fatalf("loadCheckpoint = (%+v, %v)", row, err)
+	}
+	snapshot, err := decodeCheckpointRow(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Request.Evidence) != 1 || len(snapshot.Tasks) != 1 || len(snapshot.Tasks[0].Record.Evidence) != 1 {
+		t.Fatalf("deduplicated snapshot = %+v", snapshot)
 	}
 }
 

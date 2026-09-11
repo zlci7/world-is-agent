@@ -33,7 +33,7 @@ func (s *Service) Reconcile(ctx context.Context, exec ExecutionContext) (Reconci
 
 	var result ReconcileResult
 	err := s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, exec.Binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, exec.Binding.World)
 		if err != nil {
 			return err
 		}
@@ -86,7 +86,7 @@ func (s *Service) Reconcile(ctx context.Context, exec ExecutionContext) (Reconci
 		if err := s.store.updateReconcileRecordTx(ctx, tx, current.record, prepared); err != nil {
 			return err
 		}
-		if err := s.store.consumeReconcileWakesTx(ctx, tx, current.record); err != nil {
+		if err := s.store.consumeReconcileWakesTx(ctx, tx, head, current.record); err != nil {
 			return err
 		}
 		next := ReconcileNextSettled
@@ -364,8 +364,8 @@ func (s *SQLiteStore) updateReconcileRecordTx(ctx context.Context, tx *sql.Tx, b
 	return s.afterReconcileStage(ctx, reconcileStageRecordUpdated)
 }
 
-func (s *SQLiteStore) consumeReconcileWakesTx(ctx context.Context, tx *sql.Tx, record Record) error {
-	if err := s.consumeExecutableWakesTx(ctx, tx, record); err != nil {
+func (s *SQLiteStore) consumeReconcileWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, record Record) error {
+	if err := s.consumeExecutableWakesTx(ctx, tx, head, record); err != nil {
 		return err
 	}
 	return s.afterReconcileStage(ctx, reconcileStageWakesConsumed)

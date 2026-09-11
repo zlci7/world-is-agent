@@ -45,32 +45,49 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 		return Head{}, err
 	}
 	if err := validateCheckpointReference(world, ref); err != nil {
-		if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, err); pauseErr != nil {
+		if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, clock, err); pauseErr != nil {
 			return Head{}, pauseErr
 		}
 		return Head{}, err
 	}
 	current, err := s.store.loadWorldHead(ctx, world)
 	switch {
+	case err == nil && current.RecoveryRunID != "":
+		if ref.Status != checkpointStatusConfirmed {
+			return Head{}, checkpointRecoveryError(current)
+		}
+		restored, restoreErr := s.activateCheckpoint(ctx, world, runID, clock, ref)
+		if restoreErr != nil {
+			if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, clock, restoreErr); pauseErr != nil {
+				return Head{}, pauseErr
+			}
+		}
+		return restored, restoreErr
 	case err == nil && current.Head.Binding.RunID == runID && current.Head.Status == worldHeadStatusPaused:
 		return s.activatePausedWorkingHead(ctx, world, runID, clock)
 	case err == nil && current.Head.Binding.RunID != runID:
 		if ref.Status != checkpointStatusConfirmed {
-			if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, ErrCheckpointMissing); pauseErr != nil {
+			if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, clock, ErrCheckpointMissing); pauseErr != nil {
 				return Head{}, pauseErr
 			}
 			return Head{}, ErrCheckpointMissing
 		}
 		restored, restoreErr := s.activateCheckpoint(ctx, world, runID, clock, ref)
 		if restoreErr != nil {
-			if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, restoreErr); pauseErr != nil {
+			if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, clock, restoreErr); pauseErr != nil {
 				return Head{}, pauseErr
 			}
 		}
 		return restored, restoreErr
 	case errors.Is(err, ErrTaskNotFound):
 		if ref.Status == checkpointStatusConfirmed {
-			return s.activateCheckpoint(ctx, world, runID, clock, ref)
+			restored, restoreErr := s.activateCheckpoint(ctx, world, runID, clock, ref)
+			if restoreErr != nil {
+				if pauseErr := s.pauseWorldForCheckpointFailure(ctx, world, runID, clock, restoreErr); pauseErr != nil {
+					return Head{}, pauseErr
+				}
+			}
+			return restored, restoreErr
 		}
 	case err != nil:
 		return Head{}, err
@@ -91,19 +108,27 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 	var recoveryFromInstance string
 	var recoveryWakeCount int
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, world)
 		if err != nil {
 			return err
 		}
 		if found {
-			if err := validateActivationRetry(current, runID, clock); err != nil {
+			recoverPriorInstance := current.RuntimeInstanceID != s.claimantID
+			if recoverPriorInstance {
+				if err := validateRestartActivation(current, runID, clock); err != nil {
+					return err
+				}
+				if err := s.store.validateRestartBarrierTx(ctx, tx, current); err != nil {
+					return err
+				}
+			} else if err := validateActivationRetry(current, runID, clock); err != nil {
 				return err
 			}
 			plan, err := s.store.planRestartRecoveryTx(ctx, tx, current, s.claimantID)
 			if err != nil {
 				return err
 			}
-			retryNeedsRecovery = current.RuntimeInstanceID != s.claimantID
+			retryNeedsRecovery = recoverPriorInstance
 			recoveryFromInstance = current.RuntimeInstanceID
 			recoveryWakeCount = len(plan.running)
 			result = current.Head
@@ -133,19 +158,25 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 		return Head{}, err
 	}
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		current, found, err := s.store.loadWorldHeadTx(ctx, tx, world)
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, world)
 		if err != nil {
 			return err
 		}
 		if !found {
 			return ErrWorldNotReady
 		}
-		if err := validateActivationRetry(current, runID, clock); err != nil {
-			return err
-		}
 		if current.RuntimeInstanceID == s.claimantID {
+			if err := validateActivationRetry(current, runID, clock); err != nil {
+				return err
+			}
 			result = current.Head
 			return nil
+		}
+		if err := validateRestartActivation(current, runID, clock); err != nil {
+			return err
+		}
+		if err := s.store.validateRestartBarrierTx(ctx, tx, current); err != nil {
+			return err
 		}
 		if current.RuntimeInstanceID != recoveryFromInstance {
 			return ErrTaskChanged
@@ -157,10 +188,11 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 		if len(plan.running) > len(candidateWakeIDs) {
 			return ErrTaskChanged
 		}
-		if err := s.store.applyRestartRecoveryTx(ctx, tx, current, plan, candidateWakeIDs, s.claimantID); err != nil {
+		rebound, err := s.store.applyRestartRecoveryTx(ctx, tx, current, plan, candidateWakeIDs, clock, s.claimantID)
+		if err != nil {
 			return err
 		}
-		result = current.Head
+		result = rebound
 		return nil
 	})
 	if err != nil {
@@ -170,8 +202,8 @@ func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID strin
 }
 
 func (s *Service) recoveryWakeIDs(count int) ([]string, error) {
-	if count < 0 || count > s.store.options.MaxTasksPerWorld {
-		return nil, ErrTaskCapacityExceeded
+	if count < 0 {
+		return nil, ErrInvalidTaskSpec
 	}
 	ids := make([]string, count)
 	seen := make(map[string]struct{}, count)
@@ -238,7 +270,7 @@ func (s *Service) Create(ctx context.Context, exec ExecutionContext, spec TaskSp
 
 	var result CreateResult
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, exec.Binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, exec.Binding.World)
 		if err != nil {
 			return err
 		}
@@ -334,7 +366,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 
 	var result Record
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, exec.Binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, exec.Binding.World)
 		if err != nil {
 			return err
 		}
@@ -422,7 +454,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 		if err := s.store.updateIntentRecordTx(ctx, tx, current.record, prepared); err != nil {
 			return err
 		}
-		if err := s.store.consumeIntentWakesTx(ctx, tx, current.record); err != nil {
+		if err := s.store.consumeIntentWakesTx(ctx, tx, head, current.record); err != nil {
 			return err
 		}
 		if clonedIntent.Kind == "wait" {
@@ -540,6 +572,29 @@ func validateActivationRetry(current worldHeadRow, runID string, clock Clock) er
 		return ErrClockRewound
 	}
 	if current.Head.Clock != clock {
+		return ErrClockMismatch
+	}
+	return nil
+}
+
+func validateRestartActivation(current worldHeadRow, runID string, clock Clock) error {
+	if current.Head.Status != worldHeadStatusReady {
+		return ErrWorldNotReady
+	}
+	if current.Head.Binding.RunID != runID {
+		return ErrTaskChanged
+	}
+	return validateMonotonicClock(current.Head.Clock, clock)
+}
+
+func validateMonotonicClock(current, supplied Clock) error {
+	if current.ID != supplied.ID {
+		return ErrClockMismatch
+	}
+	if supplied.Tick < current.Tick || supplied.Sequence < current.Sequence {
+		return ErrClockRewound
+	}
+	if supplied != current && supplied.Sequence == current.Sequence {
 		return ErrClockMismatch
 	}
 	return nil

@@ -29,7 +29,7 @@ func (s *Service) RecordCleanup(ctx context.Context, binding Binding, taskID str
 	}
 
 	return s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
-		head, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+		head, found, err := s.loadWorldHeadForMutationTx(ctx, tx, binding.World)
 		if err != nil {
 			return err
 		}
