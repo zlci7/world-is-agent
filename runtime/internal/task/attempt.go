@@ -32,6 +32,9 @@ func (s *Service) FinishAttempt(ctx context.Context, exec ExecutionContext, outc
 		if err := validateCreateAuthority(head, exec); err != nil {
 			return err
 		}
+		if err := validateWakeWorldAuthority(head, exec.Binding, s.claimantID); err != nil {
+			return err
+		}
 		current, err := s.store.findStrictWorldWakeTx(ctx, tx, head, exec.WakeID)
 		if err != nil {
 			return err
@@ -52,11 +55,12 @@ func (s *Service) FinishAttempt(ctx context.Context, exec ExecutionContext, outc
 		if record.State != StateRunning || record.Result != nil || record.NextWakeAt != nil || record.PauseReason != "" {
 			return ErrTaskChanged
 		}
-		if current.wake.Status != wakeStatusRunning || current.wake.ClaimedBy != s.claimantID ||
-			current.wake.Generation != exec.Binding.Generation || current.wake.ExpectedRevision >= record.Revision {
+		if current.wake.ClaimedBy != s.claimantID || current.wake.Generation != exec.Binding.Generation ||
+			current.wake.ExpectedRevision >= record.Revision ||
+			current.wake.Status != wakeStatusRunning && current.wake.Status != wakeStatusConsumed {
 			return ErrTaskChanged
 		}
-		if err := s.store.requireOnlyRunningWakeTx(ctx, tx, head, current); err != nil {
+		if err := s.store.requireAttemptWakeTopologyTx(ctx, tx, head, current); err != nil {
 			return err
 		}
 
@@ -71,7 +75,7 @@ func (s *Service) FinishAttempt(ctx context.Context, exec ExecutionContext, outc
 		if err := s.store.updateAttemptRecordTx(ctx, tx, record, prepared); err != nil {
 			return err
 		}
-		if pause {
+		if pause && current.wake.Status == wakeStatusRunning {
 			consumed := current.wake
 			consumed.Status = wakeStatusConsumed
 			consumed.RetryAfterUnixMS = 0
@@ -169,7 +173,7 @@ func applyAttemptOutcome(current Record, outcome AttemptOutcome) (Record, bool, 
 	return updated, pause, nil
 }
 
-func (s *SQLiteStore) requireOnlyRunningWakeTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, selected durableWake) error {
+func (s *SQLiteStore) requireAttemptWakeTopologyTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, selected durableWake) error {
 	rows, err := tx.QueryContext(ctx, admissionWakeSelectSQL+` WHERE w.game_id = ? AND w.world_id = ?
 		AND w.entity_id = ? AND w.task_id = ? AND w.status IN ('pending', 'claimed', 'enqueued', 'running')
 		ORDER BY w.wake_id LIMIT 2`, selected.wake.Owner.GameID, selected.wake.Owner.WorldID,
@@ -196,7 +200,11 @@ func (s *SQLiteStore) requireOnlyRunningWakeTx(ctx context.Context, tx *sql.Tx, 
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if count != 1 {
+	want := 1
+	if selected.wake.Status == wakeStatusConsumed {
+		want = 0
+	}
+	if count != want {
 		return ErrInvalidTaskSpec
 	}
 	return nil

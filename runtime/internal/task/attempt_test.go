@@ -81,6 +81,44 @@ func TestFinishAttemptPropagatesRevisionAndAcceptsBothWakeSources(t *testing.T) 
 	}
 }
 
+func TestFinishAttemptContinuesAfterReconcileConsumesRunningWake(t *testing.T) {
+	fixture := newRunningAttemptFixture(t)
+	evidence := taskEvidence(fixture.head.Binding, fixture.running, "fact-attempt-continuation", EvidenceKindProgress)
+	evidence.OccurredAt = fixture.clock.Tick
+	evidence.Details = json.RawMessage(`{"step":"observed-before-decision"}`)
+	if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, evidence); err != nil || !added {
+		t.Fatalf("AdmitEvidence = (%v, %v), want true/nil", added, err)
+	}
+
+	reconciled, err := fixture.svc.Reconcile(context.Background(), fixture.exec)
+	if err != nil || reconciled.Next != ReconcileNextDecide || reconciled.Task.State != StateRunning ||
+		reconciled.Task.Revision != fixture.running.Revision+1 {
+		t.Fatalf("Reconcile = (%+v, %v), want running decision continuation", reconciled, err)
+	}
+	wakeBeforeFinish := rawOnlyWakeJSON(t, fixture.store, reconciled.Task)
+	wake, err := fixture.store.loadWake(context.Background(), reconciled.Task.Owner, fixture.wake.ID)
+	if err != nil || wake.Status != wakeStatusConsumed || wake.ClaimedBy != fixture.svc.claimantID {
+		t.Fatalf("reconciled Wake = (%+v, %v), want consumed by current Runtime", wake, err)
+	}
+
+	exec := fixture.exec
+	exec.ExpectedRevision = reconciled.Task.Revision
+	got, err := fixture.svc.FinishAttempt(context.Background(), exec, AttemptOutcome{Kind: AttemptOutcomeKindNoProgress})
+	if err != nil {
+		t.Fatalf("FinishAttempt error = %v", err)
+	}
+	if got.State != StateRunning || got.Revision != reconciled.Task.Revision+1 || got.NoProgressAttempts != 1 ||
+		!got.NeedsReconcile || got.NextWakeAt != nil || got.Result != nil {
+		t.Fatalf("FinishAttempt = %+v", got)
+	}
+	if wakeAfterFinish := rawOnlyWakeJSON(t, fixture.store, got); !bytes.Equal(wakeAfterFinish, wakeBeforeFinish) {
+		t.Fatal("FinishAttempt changed the already-consumed execution Wake")
+	}
+	if _, err := fixture.svc.FinishAttempt(context.Background(), exec, AttemptOutcome{Kind: AttemptOutcomeKindNoProgress}); !errors.Is(err, ErrTaskChanged) {
+		t.Fatalf("response-loss retry error = %v, want task_changed", err)
+	}
+}
+
 func TestFinishAttemptRejectsInvalidTransitionAndFencesWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name    string
