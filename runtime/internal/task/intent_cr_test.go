@@ -364,6 +364,60 @@ func TestApplyIntentGeneratesCandidateIDsBeforeImmediateTransaction(t *testing.T
 	}
 }
 
+func TestApplyIntentUsesClonedIntentAfterRequestPreparation(t *testing.T) {
+	fixture, created, wake := newIntentFixture(t, StoreOptions{})
+	originalWakeAt := int64(240)
+	intentExec := intentExecution(fixture, created.Task, wake.ID, 1, "cloned-request")
+	intent := Intent{Kind: "wait", NextWakeAt: &originalWakeAt, ProgressNote: "original note"}
+	originalExec := cloneExecutionContextForTest(t, intentExec)
+	originalIntent := cloneIntentForTest(t, intent)
+
+	mutatedWakeAt := int64(260)
+	fixture.svc.newID = func(prefix string) string {
+		if prefix == "wake" {
+			*intent.NextWakeAt = mutatedWakeAt
+			intent.ProgressNote = "mutated note"
+			intentExec.Source.GameTime[0] = '['
+		}
+		return prefix + "_candidate"
+	}
+
+	got, err := fixture.svc.ApplyIntent(context.Background(), intentExec, intent)
+	if err != nil {
+		t.Fatalf("ApplyIntent() error = %v", err)
+	}
+	if *intent.NextWakeAt != mutatedWakeAt {
+		t.Fatal("controlled callback did not mutate the caller-owned intent")
+	}
+	if got.NextWakeAt == nil || *got.NextWakeAt != *originalIntent.NextWakeAt ||
+		!reflect.DeepEqual(got.Progress, json.RawMessage(`{"author":"model","kind":"explanation","note":"original note"}`)) {
+		t.Fatalf("ApplyIntent() used caller mutation after request preparation: %+v", got)
+	}
+	pending := onlyPendingWakeForTask(t, fixture.store, got)
+	if pending.DueTick != *originalIntent.NextWakeAt || pending.ExpectedRevision != got.Revision {
+		t.Fatalf("replacement Wake = %+v, want original cloned wake %d/revision %d", pending, *originalIntent.NextWakeAt, got.Revision)
+	}
+
+	again, err := fixture.svc.ApplyIntent(context.Background(), originalExec, originalIntent)
+	if err != nil || !reflect.DeepEqual(again, got) {
+		t.Fatalf("exact retry after caller mutation = (%+v, %v), want %+v", again, err, got)
+	}
+
+	path := fixture.store.path
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenSQLiteStore(context.Background(), StoreOptions{Path: path, MaxTaskBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	reopenedResult, err := deterministicTaskService(reopened).ApplyIntent(context.Background(), originalExec, originalIntent)
+	if err != nil || !reflect.DeepEqual(reopenedResult, got) {
+		t.Fatalf("exact retry after reopen = (%+v, %v), want %+v", reopenedResult, err, got)
+	}
+}
+
 func onlyPendingWakeForTask(t *testing.T, store *SQLiteStore, task Record) Wake {
 	t.Helper()
 	var found *Wake

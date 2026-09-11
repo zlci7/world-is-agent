@@ -189,6 +189,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 	if err != nil {
 		return Record{}, err
 	}
+	clonedIntent := request.request.Intent
 	candidateResultID := s.newID("result")
 	candidateWakeID := s.newID("wake")
 
@@ -248,17 +249,17 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 		updated.NoProgressAttempts = 0
 		updated.ReconcileAttempts = 0
 		reserveTerminal := false
-		switch intent.Kind {
+		switch clonedIntent.Kind {
 		case "wait":
-			if intent.NextWakeAt == nil || exec.Clock.Tick >= *intent.NextWakeAt || *intent.NextWakeAt > current.record.Spec.DeadlineAt {
+			if clonedIntent.NextWakeAt == nil || exec.Clock.Tick >= *clonedIntent.NextWakeAt || *clonedIntent.NextWakeAt > current.record.Spec.DeadlineAt {
 				return ErrInvalidTaskSpec
 			}
 			updated.State = StateWaiting
-			nextWake := *intent.NextWakeAt
+			nextWake := *clonedIntent.NextWakeAt
 			updated.NextWakeAt = &nextWake
 			updated.Result = nil
-			if intent.ProgressNote != "" {
-				progress, err := modelProgressJSON(intent.ProgressNote)
+			if clonedIntent.ProgressNote != "" {
+				progress, err := modelProgressJSON(clonedIntent.ProgressNote)
 				if err != nil {
 					return ErrInvalidTaskSpec
 				}
@@ -270,7 +271,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 			updated.NextWakeAt = nil
 			updated.Result = &Result{
 				ID: candidateResultID, TaskID: updated.ID, Revision: nextRevision,
-				State: StateCancelled, Reason: intent.Reason, OccurredAt: exec.Clock.Tick,
+				State: StateCancelled, Reason: clonedIntent.Reason, OccurredAt: exec.Clock.Tick,
 				EvidenceRefs: []string{}, Source: request.request.Source,
 			}
 		default:
@@ -287,7 +288,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 		if err := s.store.consumeIntentWakesTx(ctx, tx, current.record); err != nil {
 			return err
 		}
-		if intent.Kind == "wait" {
+		if clonedIntent.Kind == "wait" {
 			wake := Wake{
 				ID: candidateWakeID, TaskID: updated.ID, Owner: updated.Owner,
 				ExpectedRevision: updated.Revision, DueTick: *updated.NextWakeAt,
