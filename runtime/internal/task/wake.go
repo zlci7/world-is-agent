@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
-	"sort"
 	"time"
 )
 
@@ -77,7 +76,7 @@ func (s *Service) ClaimDue(ctx context.Context, binding Binding, clock Clock, li
 		if err := validateExactWakeClock(head.Head.Clock, clock); err != nil {
 			return err
 		}
-		wakes, err := s.store.loadStrictWorldWakesTx(ctx, tx, head)
+		wakes, err := s.store.loadDueWakeCandidatesTx(ctx, tx, head, clock, nowUnixMS, batchLimit)
 		if err != nil {
 			return err
 		}
@@ -85,31 +84,8 @@ func (s *Service) ClaimDue(ctx context.Context, binding Binding, clock Clock, li
 			claimed = []Wake{}
 			return nil
 		}
-		candidates := make([]durableWake, 0, len(wakes))
-		for _, candidate := range wakes {
-			wake := candidate.wake
-			if wake.Status == wakeStatusPending && wake.DueTick <= clock.Tick && wake.RetryAfterUnixMS <= nowUnixMS {
-				candidates = append(candidates, candidate)
-			}
-		}
-		sort.Slice(candidates, func(i, j int) bool {
-			left, right := candidates[i].wake, candidates[j].wake
-			if left.DueTick != right.DueTick {
-				return left.DueTick < right.DueTick
-			}
-			if left.Owner.EntityID != right.Owner.EntityID {
-				return left.Owner.EntityID < right.Owner.EntityID
-			}
-			if left.TaskID != right.TaskID {
-				return left.TaskID < right.TaskID
-			}
-			return left.ID < right.ID
-		})
-		if len(candidates) > batchLimit {
-			candidates = candidates[:batchLimit]
-		}
-		claimed = make([]Wake, 0, len(candidates))
-		for index, candidate := range candidates {
+		claimed = make([]Wake, 0, len(wakes))
+		for index, candidate := range wakes {
 			if candidate.wake.Attempt >= math.MaxInt64 {
 				return ErrInvalidTaskSpec
 			}
@@ -380,26 +356,42 @@ func validateExactWakeClock(current, supplied Clock) error {
 	return nil
 }
 
-func (s *SQLiteStore) loadStrictWorldWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow) ([]durableWake, error) {
-	if _, err := s.loadWorldTaskIdentityGraphTx(ctx, tx, head.Head.Binding.World); err != nil {
+func (s *SQLiteStore) loadWorldTaskGraphForWakeTx(ctx context.Context, tx *sql.Tx, world WorldKey) (worldTaskIdentityGraph, error) {
+	graph, err := s.loadWorldTaskIdentityGraphTx(ctx, tx, world)
+	if err != nil {
 		if errors.Is(err, errAmbiguousWorldTaskIdentityGraph) {
-			return nil, ErrInvalidTaskSpec
+			return worldTaskIdentityGraph{}, ErrInvalidTaskSpec
 		}
-		return nil, err
+		return worldTaskIdentityGraph{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT wake_id FROM task_wakeups WHERE game_id = ? AND world_id = ? ORDER BY wake_id`,
-		head.Head.Binding.World.GameID, head.Head.Binding.World.WorldID)
+	return graph, nil
+}
+
+func (s *SQLiteStore) loadDueWakeCandidatesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, clock Clock, nowUnixMS int64, limit int) ([]durableWake, error) {
+	graph, err := s.loadWorldTaskGraphForWakeTx(ctx, tx, head.Head.Binding.World)
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
+	if limit == 0 {
+		return []durableWake{}, nil
+	}
+	rows, err := tx.QueryContext(ctx, wakeSelectSQL+` WHERE
+		w.game_id = ? AND w.world_id = ? AND w.clock_id = ? AND w.status = ?
+		AND w.generation = ? AND w.due_tick <= ? AND w.retry_after_unix_ms <= ?
+		ORDER BY w.due_tick, w.entity_id, w.task_id, w.wake_id LIMIT ?`,
+		head.Head.Binding.World.GameID, head.Head.Binding.World.WorldID, clock.ID, wakeStatusPending,
+		int64(head.Head.Binding.Generation), clock.Tick, nowUnixMS, limit)
+	if err != nil {
+		return nil, err
+	}
+	var wakes []durableWake
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		wake, raw, err := scanWakeRow(rows)
+		if err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		ids = append(ids, id)
+		wakes = append(wakes, durableWake{wake: wake, raw: raw})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -408,40 +400,42 @@ func (s *SQLiteStore) loadStrictWorldWakesTx(ctx context.Context, tx *sql.Tx, he
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	wakes := make([]durableWake, 0, len(ids))
-	for _, id := range ids {
-		wake, raw, err := scanWakeRow(tx.QueryRowContext(ctx, wakeSelectSQL+` WHERE w.game_id = ? AND w.world_id = ? AND w.wake_id = ?`,
-			head.Head.Binding.World.GameID, head.Head.Binding.World.WorldID, id))
-		if errors.Is(err, sql.ErrNoRows) {
+	for index := range wakes {
+		key := worldTaskIdentity{owner: wakes[index].wake.Owner, taskID: wakes[index].wake.TaskID}
+		record, found := graph.tasks[key]
+		if !found {
 			return nil, ErrInvalidTaskSpec
 		}
-		if err != nil {
+		wakes[index].record = record
+		if err := validateDurableWakeRelation(head, wakes[index]); err != nil {
 			return nil, err
 		}
-		record, err := s.loadIntentTaskTx(ctx, tx, wake.Owner, wake.TaskID)
-		if err != nil {
-			return nil, err
-		}
-		candidate := durableWake{wake: wake, record: record, raw: raw}
-		if err := validateDurableWakeRelation(head, candidate); err != nil {
-			return nil, err
-		}
-		wakes = append(wakes, candidate)
 	}
 	return wakes, nil
 }
 
 func (s *SQLiteStore) findStrictWorldWakeTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, wakeID string) (durableWake, error) {
-	wakes, err := s.loadStrictWorldWakesTx(ctx, tx, head)
+	graph, err := s.loadWorldTaskGraphForWakeTx(ctx, tx, head.Head.Binding.World)
 	if err != nil {
 		return durableWake{}, err
 	}
-	for _, wake := range wakes {
-		if wake.wake.ID == wakeID {
-			return wake, nil
-		}
+	wake, raw, err := scanWakeRow(tx.QueryRowContext(ctx, wakeSelectSQL+` WHERE w.game_id = ? AND w.world_id = ? AND w.wake_id = ?`,
+		head.Head.Binding.World.GameID, head.Head.Binding.World.WorldID, wakeID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return durableWake{}, ErrTaskNotFound
 	}
-	return durableWake{}, ErrTaskNotFound
+	if err != nil {
+		return durableWake{}, err
+	}
+	record, found := graph.tasks[worldTaskIdentity{owner: wake.Owner, taskID: wake.TaskID}]
+	if !found {
+		return durableWake{}, ErrInvalidTaskSpec
+	}
+	candidate := durableWake{wake: wake, record: record, raw: raw}
+	if err := validateDurableWakeRelation(head, candidate); err != nil {
+		return durableWake{}, err
+	}
+	return candidate, nil
 }
 
 func scanWakeRow(scanner rowScanner) (Wake, []byte, error) {

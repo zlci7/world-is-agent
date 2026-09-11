@@ -168,10 +168,15 @@ func validateReconcileExecution(exec ExecutionContext) error {
 		return ErrInvalidTaskSpec
 	}
 	if exec.Source.Kind == SourceKindTaskWake {
-		if !requiredIdentity(exec.WakeID) || exec.Source.CallID != exec.WakeID {
+		if !requiredIdentity(exec.WakeID) {
 			return ErrSourceInvalid
 		}
-		return nil
+		if exec.Source.EventID == "" && exec.Source.TurnID == "" {
+			if exec.Source.CallID != exec.WakeID {
+				return ErrSourceInvalid
+			}
+			return nil
+		}
 	}
 	if !requiredIdentity(exec.Source.EventID) || !requiredIdentity(exec.Source.TurnID) || !requiredIdentity(exec.Source.CallID) {
 		return ErrSourceInvalid

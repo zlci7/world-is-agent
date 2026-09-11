@@ -23,7 +23,13 @@ type worldEvidenceIdentity struct {
 	taskID   string
 }
 
+type worldTaskIdentity struct {
+	owner  session.AgentSessionKey
+	taskID string
+}
+
 type worldTaskIdentityGraph struct {
+	tasks      map[worldTaskIdentity]storedIntentTask
 	operations map[string]worldOperationIdentity
 	facts      map[string]worldEvidenceIdentity
 	sources    map[evidenceSourceIdentity]struct{}
@@ -48,15 +54,21 @@ func loadWorldTaskIdentityGraph(ctx context.Context, queryer worldTaskQueryer, w
 	defer rows.Close()
 
 	graph := worldTaskIdentityGraph{
+		tasks:      make(map[worldTaskIdentity]storedIntentTask),
 		operations: make(map[string]worldOperationIdentity),
 		facts:      make(map[string]worldEvidenceIdentity),
 		sources:    make(map[evidenceSourceIdentity]struct{}),
 	}
 	for rows.Next() {
-		record, err := scanTaskRow(rows)
+		record, _, _, history, err := scanTaskRowWithMetadata(rows)
 		if err != nil {
 			return worldTaskIdentityGraph{}, err
 		}
+		identity := worldTaskIdentity{owner: record.Owner, taskID: record.ID}
+		if _, duplicate := graph.tasks[identity]; duplicate {
+			return worldTaskIdentityGraph{}, errAmbiguousWorldTaskIdentityGraph
+		}
+		graph.tasks[identity] = storedIntentTask{record: record, history: history}
 		for _, operation := range record.Operations {
 			if _, duplicate := graph.operations[operation.ID]; duplicate {
 				return worldTaskIdentityGraph{}, errAmbiguousWorldTaskIdentityGraph
