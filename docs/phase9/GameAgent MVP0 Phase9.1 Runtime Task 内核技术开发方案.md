@@ -1,8 +1,8 @@
 # GameAgent MVP0 Phase9.1 Runtime Task 内核技术开发方案
 
-> **Status:** Implementation Plan Draft
-> **Date:** 2026-09-10
-> **执行方式:** 每个独立审查单元先完成测试、聚焦验证、阶段回归和 `git diff --check`，再以实现及其测试创建一个本地提交并交由独立任务 CR；CR 修正使用独立 `fix:` 本地提交，通过后自动继续。Phase9.5 保留最终整分支/系统 review。
+> **Status:** Accepted
+> **Date:** 2026-09-11
+> **执行方式:** 本阶段按独立审查单元完成测试、聚焦验证、阶段回归、`git diff --check`、本地提交与独立 CR；CR 修正使用独立 `fix:` 本地提交收口。Phase9.5 保留最终整分支/系统 review。
 > **Goal:** 建立支持跨天、可靠唤醒、权威结果和完整快照恢复的 Runtime 任务内核。
 > **Architecture:** TaskService 是进程内模块，SQLite 是状态权威；模型工具、连接和游戏 API 均在模块之外接入。
 > **Tech Stack:** Go 1.25、modernc.org/sqlite；复用仓库现有依赖，不引入调度框架。
@@ -136,11 +136,11 @@ SQLite 使用外键校验、WAL、`synchronous=FULL`、有限 busy timeout。数
 
 提交边界：先提交模型、错误和 Store 合同；再提交 SQLite、事务和文件锁及其测试。
 
-- [ ] 定义第 3 节类型与 StoreOptions；为状态、时间范围、空身份、JSON 数字精度编写失败测试。
-- [ ] 创建四张表和索引，保存完整 owner；所有读写包含 game/world/entity 条件。
-- [ ] 实现文件锁、事务取消和 Close 幂等；不在事务中做外部 I/O。
-- [ ] 使用故障注入验证插入 Task 后、插入 wake 前失败时两者都不存在。
-- [ ] 运行该单元测试，失败修复后继续 9.1-B。
+- [x] 定义第 3 节类型与 StoreOptions；为状态、时间范围、空身份、JSON 数字精度编写失败测试。
+- [x] 创建四张表和索引，保存完整 owner；所有读写包含 game/world/entity 条件。
+- [x] 实现文件锁、事务取消和 Close 幂等；不在事务中做外部 I/O。
+- [x] 使用故障注入验证插入 Task 后、插入 wake 前失败时两者都不存在。
+- [x] 运行该单元测试，失败修复后继续 9.1-B。
 
 ```powershell
 go test ./runtime/internal/task -run 'TestStore|TestTaskValidation|TestTaskIsolation' -count=1
@@ -163,10 +163,10 @@ ApplyIntent 只接受：
 
 最终成功/失败不通过 ApplyIntent 写入。对终态任务的重复同调用重试返回原响应，新的修改请求返回 task_terminal。Exact retry 凭据及响应随 Task 快照保存。
 
-- [ ] 写创建重复、不同约定冲突、旧 revision、空原因、越过 deadline 的失败测试。
-- [ ] 实现 Create / ApplyIntent；在事务内检查已接纳但未处理的 Evidence。
-- [ ] 若新事实需要协调，先阻止过期认知覆盖它；返回 task_changed 或由当前 lane 先 Reconcile。
-- [ ] 运行测试后进入 9.1-C。
+- [x] 写创建重复、不同约定冲突、旧 revision、空原因、越过 deadline 的失败测试。
+- [x] 实现 Create / ApplyIntent；在事务内检查已接纳但未处理的 Evidence。
+- [x] 若新事实需要协调，先阻止过期认知覆盖它；返回 task_changed 或由当前 lane 先 Reconcile。
+- [x] 运行测试后进入 9.1-C。
 
 完整最小内核测试，不依赖任何 Adapter：
 
@@ -231,10 +231,10 @@ Reconcile 在 NPC lane 内执行：
 
 一个 Task 每次进入终态只产生一个不可变 Result。RecordCleanup 单独更新租约收尾状态，不改变 Result 指纹。控制权交接成功记录 handed_off；无法确认记录 unconfirmed。
 
-- [ ] 写证据重复/冲突、错误 operation、旧代次、启动 revision 与当前 revision 不同的测试。
-- [ ] 写“satisfied 已接纳后 deadline 不得覆盖”的竞争测试。
-- [ ] 实现确定性映射和 BeginWake / Reconcile 的 CAS，不根据 opaque 中的 met/expired 字符串分支。
-- [ ] 验证上述路径没有 model/provider 依赖。
+- [x] 写证据重复/冲突、错误 operation、旧代次、启动 revision 与当前 revision 不同的测试。
+- [x] 写“satisfied 已接纳后 deadline 不得覆盖”的竞争测试。
+- [x] 实现确定性映射和 BeginWake / Reconcile 的 CAS，不根据 opaque 中的 met/expired 字符串分支。
+- [x] 验证上述路径没有 model/provider 依赖。
 
 ```powershell
 go test ./runtime/internal/task -run 'TestEvidence|TestOperation|TestReconcile|TestCleanup' -count=1
@@ -250,12 +250,12 @@ go test ./runtime/internal/task -run 'TestEvidence|TestOperation|TestReconcile|T
 
 同 owner/task 的未消费 wake 使用 partial unique 约束，保证最多一份可执行资格。新 Evidence 提前已有 pending wake；若 wake 正在执行则只登记 inbox/needs_reconcile，由当前执行收敛后产生下次 wake。Wake.ExpectedRevision 用于 admission，当前执行自己的状态推进不使自己的消费资格失效；消费仍校验 wake_id/claim_id/绑定。
 
-- [ ] ClaimDue 原子认领、递增 attempt，生成独立 claim_id；不把 attempt 当业务 revision。
-- [ ] MarkEnqueued 在 lane admission 打开前持久提交；失败通过 ReleaseClaim 退回 pending。
-- [ ] BeginWake 再校验绑定、claim、revision、deadline；过期队列项失去执行资格。
-- [ ] Task 进展事务消费当前 wake 并产生后续 wake；同 Task 同 revision 同原因不重复创建。
-- [ ] 重启把 claimed/enqueued 变回可投递项；running 变 needs_reconcile，不恢复旧函数栈。
-- [ ] FinishAttempt 区分认知无进展与技术观察失败，分别计数，连续三次进入明确暂停。
+- [x] ClaimDue 原子认领、递增 attempt，生成独立 claim_id；不把 attempt 当业务 revision。
+- [x] MarkEnqueued 在 lane admission 打开前持久提交；失败通过 ReleaseClaim 退回 pending。
+- [x] BeginWake 再校验绑定、claim、revision、deadline；过期队列项失去执行资格。
+- [x] Task 进展事务消费当前 wake 并产生后续 wake；同 Task 同 revision 同原因不重复创建。
+- [x] 重启把 claimed/enqueued 变回可投递项；running 变 needs_reconcile，不恢复旧函数栈。
+- [x] FinishAttempt 区分认知无进展与技术观察失败，分别计数，连续三次进入明确暂停。
 
 ```text
 TestWakeAdmission
@@ -277,12 +277,12 @@ go test ./runtime/internal/task -run 'TestWake|TestNoProgress|TestRestart' -coun
 
 快照包含完整 Record、Result、幂等凭据和 wake；序列化前稳定排序，checksum 为规范化快照字节的 SHA-256。保留 Source.GameTime 的 presence 和原始 JSON 数值，不把它转为浮点数。运行态只保留 needs_reconcile 与关联，不保存 queue、goroutine 或 controller。
 
-- [ ] PrepareCheckpoint 先校验/接纳本次保存附带的最终 Evidence，再 fence 旧 generation，并在同一数据库事务保存完整快照和屏障状态。
-- [ ] 同 save_request_id 重试返回同一 Prepared；不同内容使用同 ID 时冲突。
-- [ ] ActivateWorld 在同 run 中使用 working head；新 run 中严格按 ref 恢复 tasks 与 wakeups 集合，快照本身不可修改。
-- [ ] 新 run 的 absent 引用仅在无既有世界任务状态时初始化空集合；unconfirmed、缺失、损坏、错误 world 引用暂停，不选择其他快照。
-- [ ] 重新分配 generation，恢复旧版本 Task 的时候只保留快照事实；旧回调不能提交。
-- [ ] FinishCheckpoint 及屏障有界解除保持幂等，游戏保存成功与否不决定下次加载选择哪个引用。
+- [x] PrepareCheckpoint 先校验/接纳本次保存附带的最终 Evidence，再 fence 旧 generation，并在同一数据库事务保存完整快照和屏障状态。
+- [x] 同 save_request_id 重试返回同一 Prepared；不同内容使用同 ID 时冲突。
+- [x] ActivateWorld 在同 run 中使用 working head；新 run 中严格按 ref 恢复 tasks 与 wakeups 集合，快照本身不可修改。
+- [x] 新 run 的 absent 引用仅在无既有世界任务状态时初始化空集合；unconfirmed、缺失、损坏、错误 world 引用暂停，不选择其他快照。
+- [x] 重新分配 generation，恢复旧版本 Task 的时候只保留快照事实；旧回调不能提交。
+- [x] FinishCheckpoint 及屏障有界解除保持幂等，游戏保存成功与否不决定下次加载选择哪个引用。
 
 ```text
 TestCheckpointRestoresPriorState
@@ -302,9 +302,9 @@ go test ./runtime/internal/task ./runtime/internal/session -count=1
 
 ## 6. 交接条件
 
-- [ ] 第 3.1 节公开接口存在，全部上述测试通过；缺少实现不能通过空返回、跳过或只测 mock 代替。
-- [ ] task 包不依赖 LLM/gateway/game；内部 TaskSpec 用例没有 Proposal 和玩家来源。
-- [ ] 创建、结果、后续 wake 与快照有故障窗口测试；任务库重开后能够复现。
-- [ ] 在验收记录填写命令、输出摘要、阻断和未执行项；完成最后一个本阶段提交及其独立任务 CR 后自动进入 Phase9.2。
+- [x] 第 3.1 节公开接口存在，全部上述测试通过；缺少实现不能通过空返回、跳过或只测 mock 代替。
+- [x] task 包不依赖 LLM/gateway/game；内部 TaskSpec 用例没有 Proposal 和玩家来源。
+- [x] 创建、结果、后续 wake 与快照有故障窗口测试；任务库重开后能够复现。
+- [x] 在验收记录填写命令、输出摘要、阻断和未执行项；完成最后一个本阶段提交及其独立任务 CR，Phase9.2 另行开始。
 
 仅本阶段通过表示 Task 内核可用，不表示游戏预约、实机存档或 Phase9 整体已验收。

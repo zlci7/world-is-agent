@@ -93,3 +93,40 @@ Phase9.0 前置可行性门通过：当前游戏版本支持玩家不跟随时�
 - Phase9.3 使用原生 schedule path controller、显式控制权租约、180 秒有限预算和 `Mountain → Beach` 的 240 游戏分钟出发预留。
 - Phase9.4 必须实现真实 Runtime 快照、持久化确认与精确恢复协议；不得复用诊断 marker 充当生产证据。
 - 所有实机存档测试采用完整全局 `Saves` 目录交换，并在结束后执行文件级校验。
+
+## 7. Phase9.1 Runtime Task 内核验收
+
+Phase9.1 在 `codex/phase9-durable-task` 上完成，代码范围为 `runtime/internal/task/`，实现从领域合同、SQLite 权威状态、创建与意图，到证据收敛、可靠 wake、重启恢复和精确 checkpoint 的最小持久任务闭环。
+
+| 审查单元 | 本地提交范围 | 结果 |
+| --- | --- | --- |
+| 9.1-A 模型、隔离与 SQLite | `1ba06df`–`3fde5f8` | 通过 |
+| 9.1-B 创建与模型意图 | `8d5b347`–`37415b6` | 通过 |
+| 9.1-C operation、证据与确定性收敛 | `47d94bc`–`dd22599` | 通过 |
+| 9.1-D 可靠 wake 与不确定执行 | `a5cba6e`–`2b2bc78` | 通过 |
+| 9.1-E 完整快照与 working head | `0b32564` | 通过 |
+| 阶段整体 CR 修正 | `4563eb7` | 通过；最终对抗复核无剩余 Critical |
+
+阶段整体 CR 验证了同 run Runtime 接管的 generation fencing 和最新单调 Clock、恢复时不受较小新建容量配置阻断、保存失败锁存、孤儿保存屏障、checkpoint Evidence 幂等去重，以及 Intent/Reconcile 消费 wake 前的持久关系校验。Runtime 保存屏障兜底为 10 秒；Adapter 的单次保存交接初始为 5 秒，在 5 秒边界仍保持 `save_in_progress`，到 10 秒才允许校验快照后解除。
+
+### 7.1 自动化结果
+
+| 验证项 | 结果 |
+| --- | --- |
+| `go test ./runtime/internal/task -run 'TestStore\|TestTaskValidation\|TestTaskIsolation' -count=1` | passed |
+| `go test ./runtime/internal/task -run 'TestCreate\|TestIntent\|TestAdmission' -count=1` | passed |
+| `go test ./runtime/internal/task -run 'TestEvidence\|TestOperation\|TestReconcile\|TestCleanup' -count=1` | passed |
+| `go test ./runtime/internal/task -run 'TestWake\|TestNoProgress\|TestWorldClock\|TestRestart\|TestRecovery' -count=1` | passed |
+| `go test ./runtime/internal/task -run 'TestCheckpoint\|TestWorldHead\|TestSaveBarrier' -count=1` | passed |
+| `go test ./runtime/internal/task ./runtime/internal/session -count=1` | passed |
+| `go test ./... -count=1` | 全部 Go 测试包通过 |
+| `go test ./runtime/internal/task -run 'TestCheckpoint\|TestWorldClock\|TestRestart' -count=20` | passed |
+| `go vet ./runtime/internal/task ./runtime/internal/session` | passed |
+| `go list -deps ./runtime/internal/task` 禁止 agent / gateway / llm / model / tool 依赖 | passed |
+| `git diff --check` | passed |
+
+本机 `go test -race` 受当前 C 编译器不支持 64 位 cgo 阻断，未形成 race 通过结论。全仓 `go vet ./...` 仍报告 `runtime/internal/agent/loop.go:1189` 复制含锁 protobuf 值；该文件不在 Phase9.1 代码差异中，Phase9.1 范围内 vet 已通过。
+
+### 7.2 阶段边界
+
+Phase9.1 通过表示 Runtime Task 内核及其故障恢复边界可用。该阶段不接入 LLM、gRPC、Stardew API 或真实地图坐标，也不包含游戏预约、跨地图动作和实机存档联调；这些分别属于 Phase9.2–9.5，不能由本阶段自动化结果替代。
