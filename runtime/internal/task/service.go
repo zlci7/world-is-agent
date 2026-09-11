@@ -189,6 +189,8 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 	if err != nil {
 		return Record{}, err
 	}
+	candidateResultID := s.newID("result")
+	candidateWakeID := s.newID("wake")
 
 	var result Record
 	err = s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
@@ -267,7 +269,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 			updated.State = StateCancelled
 			updated.NextWakeAt = nil
 			updated.Result = &Result{
-				ID: s.newID("result"), TaskID: updated.ID, Revision: nextRevision,
+				ID: candidateResultID, TaskID: updated.ID, Revision: nextRevision,
 				State: StateCancelled, Reason: intent.Reason, OccurredAt: exec.Clock.Tick,
 				EvidenceRefs: []string{}, Source: request.request.Source,
 			}
@@ -287,7 +289,7 @@ func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent
 		}
 		if intent.Kind == "wait" {
 			wake := Wake{
-				ID: s.newID("wake"), TaskID: updated.ID, Owner: updated.Owner,
+				ID: candidateWakeID, TaskID: updated.ID, Owner: updated.Owner,
 				ExpectedRevision: updated.Revision, DueTick: *updated.NextWakeAt,
 				Reason: wakeReasonIntentWait, Status: wakeStatusPending,
 				Generation: exec.Binding.Generation,

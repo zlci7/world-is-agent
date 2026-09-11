@@ -727,7 +727,8 @@ func taskCreateStorageBytes(t *testing.T, record Record) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return len(mustTaskJSON(t, record)) + len(response) + len([]byte("[]"))
+	recordJSON := mustTaskJSON(t, record)
+	return len(recordJSON) + len(response) + len([]byte("[]")) + len(recordJSON) + intentTerminalStructuralReserve
 }
 
 func assertTaskErrorSanitized(t *testing.T, err error, forbidden ...string) {

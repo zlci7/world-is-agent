@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 
 	"gameagent/runtime/internal/session"
@@ -42,6 +43,14 @@ type intentCallKey struct {
 	eventID string
 	turnID  string
 	callID  string
+}
+
+type ownerCallIdentityMatch struct {
+	isCreate          bool
+	createResult      CreateResult
+	createFingerprint string
+	intentCall        intentCall
+	intentResponse    Record
 }
 
 type preparedIntentRequest struct {
@@ -174,7 +183,9 @@ func validateIntentCall(call intentCall, current Record) (intentRequest, Record,
 			response.Result.Revision != response.Revision || response.Result.State != StateCancelled ||
 			response.Result.Reason != request.Intent.Reason || response.Result.Source.Kind != request.Source.Kind ||
 			!sourceRefsEqual(response.Result.Source, request.Source) || response.Result.EvidenceRefs == nil ||
-			len(response.Result.EvidenceRefs) != 0 {
+			len(response.Result.EvidenceRefs) != 0 || current.State != StateCancelled ||
+			current.Revision != response.Revision || current.NextWakeAt != nil || current.Result == nil ||
+			!reflect.DeepEqual(current.Result, response.Result) {
 			return intentRequest{}, Record{}, ErrInvalidTaskSpec
 		}
 	default:
@@ -214,47 +225,68 @@ func (s *SQLiteStore) loadIntentTaskTx(ctx context.Context, tx *sql.Tx, owner se
 	return storedIntentTask{record: record, history: history}, nil
 }
 
-func (s *SQLiteStore) loadExactIntentTx(ctx context.Context, tx *sql.Tx, owner session.AgentSessionKey, incoming preparedIntentRequest) (Record, bool, error) {
+func (s *SQLiteStore) loadOwnerCallIdentityTx(ctx context.Context, tx *sql.Tx, owner session.AgentSessionKey, target intentCallKey) (ownerCallIdentityMatch, bool, error) {
 	rows, err := tx.QueryContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? AND entity_id = ? ORDER BY task_id`,
 		owner.GameID, owner.WorldID, owner.EntityID)
 	if err != nil {
-		return Record{}, false, err
+		return ownerCallIdentityMatch{}, false, err
 	}
 	defer rows.Close()
-	var found *Record
+	seen := make(map[intentCallKey]struct{})
+	var match *ownerCallIdentityMatch
 	for rows.Next() {
-		current, _, _, history, err := scanTaskRowWithMetadata(rows)
+		current, createResult, createFingerprint, history, err := scanTaskRowWithMetadata(rows)
 		if err != nil {
-			return Record{}, false, err
+			return ownerCallIdentityMatch{}, false, err
 		}
-		if intentExactKey(current.Spec.Source) == intentExactKey(incoming.request.Source) {
-			return Record{}, true, ErrIdempotencyConflict
+		createKey := intentExactKey(current.Spec.Source)
+		if _, duplicate := seen[createKey]; duplicate {
+			return ownerCallIdentityMatch{}, false, ErrInvalidTaskSpec
+		}
+		seen[createKey] = struct{}{}
+		if createKey == target {
+			candidate := ownerCallIdentityMatch{
+				isCreate: true, createResult: createResult, createFingerprint: createFingerprint,
+			}
+			match = &candidate
 		}
 		for _, call := range history {
 			request, response, err := validateIntentCall(call, current)
 			if err != nil {
-				return Record{}, false, err
+				return ownerCallIdentityMatch{}, false, err
 			}
-			if intentExactKey(request.Source) != intentExactKey(incoming.request.Source) {
-				continue
+			key := intentExactKey(request.Source)
+			if _, duplicate := seen[key]; duplicate {
+				return ownerCallIdentityMatch{}, false, ErrInvalidTaskSpec
 			}
-			if call.RequestHash != incoming.fingerprint || !bytes.Equal(call.RequestJSON, incoming.requestJSON) {
-				return Record{}, true, ErrIdempotencyConflict
+			seen[key] = struct{}{}
+			if key == target {
+				candidate := ownerCallIdentityMatch{
+					intentCall: call, intentResponse: response,
+				}
+				match = &candidate
 			}
-			if found != nil {
-				return Record{}, true, ErrInvalidTaskSpec
-			}
-			cloned := response
-			found = &cloned
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return Record{}, false, err
+		return ownerCallIdentityMatch{}, false, err
 	}
-	if found == nil {
-		return Record{}, false, nil
+	if match == nil {
+		return ownerCallIdentityMatch{}, false, nil
 	}
-	return *found, true, nil
+	return *match, true, nil
+}
+
+func (s *SQLiteStore) loadExactIntentTx(ctx context.Context, tx *sql.Tx, owner session.AgentSessionKey, incoming preparedIntentRequest) (Record, bool, error) {
+	match, found, err := s.loadOwnerCallIdentityTx(ctx, tx, owner, intentExactKey(incoming.request.Source))
+	if err != nil || !found {
+		return Record{}, found, err
+	}
+	if match.isCreate || match.intentCall.RequestHash != incoming.fingerprint ||
+		!bytes.Equal(match.intentCall.RequestJSON, incoming.requestJSON) {
+		return Record{}, true, ErrIdempotencyConflict
+	}
+	return match.intentResponse, true, nil
 }
 
 func (s *SQLiteStore) prepareIntentMutation(current storedIntentTask, response Record, request preparedIntentRequest, reserveTerminal bool) (preparedIntentMutation, error) {
@@ -280,8 +312,11 @@ func (s *SQLiteStore) prepareIntentMutation(current storedIntentTask, response R
 	if err != nil {
 		return preparedIntentMutation{}, ErrInvalidTaskSpec
 	}
-	total := len(recordJSON) + len(createResponseJSON) + len(historyJSON)
-	if total > s.options.MaxTaskBytes || reserveTerminal && total+len(recordJSON)+intentTerminalStructuralReserve > s.options.MaxTaskBytes {
+	parts := []int{len(recordJSON), len(createResponseJSON), len(historyJSON)}
+	if reserveTerminal {
+		parts = append(parts, len(recordJSON), intentTerminalStructuralReserve)
+	}
+	if !taskBytesFit(s.options.MaxTaskBytes, parts...) {
 		return preparedIntentMutation{}, ErrInvalidTaskSpec
 	}
 	return preparedIntentMutation{

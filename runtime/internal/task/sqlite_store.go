@@ -348,9 +348,9 @@ func (s *SQLiteStore) prepareTaskCreate(record Record, wake Wake) (preparedTaskC
 	}
 	responseJSON, err := json.Marshal(initialCreateResult(record))
 	intentHistoryJSON := []byte("[]")
-	if err != nil || len(recordJSON) > s.options.MaxTaskBytes ||
-		len(responseJSON) > s.options.MaxTaskBytes-len(recordJSON) ||
-		len(intentHistoryJSON) > s.options.MaxTaskBytes-len(recordJSON)-len(responseJSON) {
+	if err != nil || !taskBytesFit(s.options.MaxTaskBytes,
+		len(recordJSON), len(responseJSON), len(intentHistoryJSON),
+		len(recordJSON), intentTerminalStructuralReserve) {
 		return preparedTaskCreate{}, ErrInvalidTaskSpec
 	}
 	return preparedTaskCreate{
@@ -364,6 +364,17 @@ func (s *SQLiteStore) prepareTaskCreate(record Record, wake Wake) (preparedTaskC
 		intentHistoryJSON:  intentHistoryJSON,
 		intentHistoryHash:  sha256Hex(intentHistoryJSON),
 	}, nil
+}
+
+func taskBytesFit(limit int, parts ...int) bool {
+	remaining := limit
+	for _, part := range parts {
+		if part < 0 || part > remaining {
+			return false
+		}
+		remaining -= part
+	}
+	return true
 }
 
 func initialCreateResult(record Record) CreateResult {
@@ -444,32 +455,14 @@ func (s *SQLiteStore) loadTask(ctx context.Context, owner session.AgentSessionKe
 }
 
 func (s *SQLiteStore) loadExactCreateTx(ctx context.Context, tx *sql.Tx, owner session.AgentSessionKey, source SourceRef, fingerprint string) (CreateResult, bool, error) {
-	var storedFingerprint string
-	err := tx.QueryRowContext(ctx, `SELECT create_fingerprint FROM tasks
-		WHERE game_id = ? AND world_id = ? AND entity_id = ?
-			AND create_event_id = ? AND create_turn_id = ? AND create_call_id = ?`,
-		owner.GameID, owner.WorldID, owner.EntityID, source.EventID, source.TurnID, source.CallID,
-	).Scan(&storedFingerprint)
-	if errors.Is(err, sql.ErrNoRows) {
-		return CreateResult{}, false, nil
+	match, found, err := s.loadOwnerCallIdentityTx(ctx, tx, owner, intentExactKey(source))
+	if err != nil || !found {
+		return CreateResult{}, found, err
 	}
-	if err != nil {
-		return CreateResult{}, false, err
-	}
-	if storedFingerprint != fingerprint {
+	if !match.isCreate || match.createFingerprint != fingerprint {
 		return CreateResult{}, true, ErrIdempotencyConflict
 	}
-	row := tx.QueryRowContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? AND entity_id = ?
-		AND create_event_id = ? AND create_turn_id = ? AND create_call_id = ?`,
-		owner.GameID, owner.WorldID, owner.EntityID, source.EventID, source.TurnID, source.CallID)
-	_, result, decodedFingerprint, err := scanTaskRowWithCreate(row)
-	if err != nil {
-		return CreateResult{}, true, err
-	}
-	if decodedFingerprint != fingerprint {
-		return CreateResult{}, true, ErrInvalidTaskSpec
-	}
-	return result, true, nil
+	return match.createResult, true, nil
 }
 
 func (s *SQLiteStore) loadEquivalentTaskTx(ctx context.Context, tx *sql.Tx, owner session.AgentSessionKey, equivalenceKey string) (Record, bool, error) {
