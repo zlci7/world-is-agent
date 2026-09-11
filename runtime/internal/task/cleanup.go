@@ -132,19 +132,13 @@ func (s *SQLiteStore) prepareCleanupMutation(current storedIntentTask, updated R
 	if err != nil {
 		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec
 	}
-	baseRecordJSON, projectedJSON, cleanupFootprint, err := cleanupCapacityRecords(updated)
+	projectedJSON, err := recordWithMinimalMissingCleanups(updated)
 	if err != nil {
 		return preparedNoRevisionMutation{}, err
 	}
-	parts := []int{len(baseRecordJSON), len(createResponseJSON), len(intentHistoryJSON)}
-	if taskStateTerminal(updated.State) {
-		parts = append(parts, len(projectedJSON))
-	} else {
-		structuralAndCleanupReserve := intentTerminalStructuralReserve
-		if cleanupFootprint > structuralAndCleanupReserve {
-			structuralAndCleanupReserve = cleanupFootprint
-		}
-		parts = append(parts, len(baseRecordJSON), structuralAndCleanupReserve)
+	parts := []int{len(recordJSON), len(createResponseJSON), len(intentHistoryJSON), len(projectedJSON)}
+	if !taskStateTerminal(updated.State) {
+		parts = append(parts, intentTerminalStructuralReserve)
 	}
 	if !taskBytesFit(s.options.MaxTaskBytes, parts...) {
 		return preparedNoRevisionMutation{}, ErrInvalidTaskSpec

@@ -342,19 +342,13 @@ func (s *SQLiteStore) prepareReconcileMutation(current storedIntentTask, updated
 	if err != nil {
 		return preparedReconcileMutation{}, ErrInvalidTaskSpec
 	}
-	baseRecordJSON, projectedJSON, cleanupFootprint, err := cleanupCapacityRecords(updated)
+	projectedJSON, err := recordWithMinimalMissingCleanups(updated)
 	if err != nil {
 		return preparedReconcileMutation{}, err
 	}
-	parts := []int{len(baseRecordJSON), len(createResponseJSON), len(intentHistoryJSON)}
-	if taskStateTerminal(updated.State) {
-		parts = append(parts, len(projectedJSON))
-	} else {
-		structuralAndCleanupReserve := intentTerminalStructuralReserve
-		if cleanupFootprint > structuralAndCleanupReserve {
-			structuralAndCleanupReserve = cleanupFootprint
-		}
-		parts = append(parts, len(baseRecordJSON), structuralAndCleanupReserve)
+	parts := []int{len(recordJSON), len(createResponseJSON), len(intentHistoryJSON), len(projectedJSON)}
+	if !taskStateTerminal(updated.State) {
+		parts = append(parts, intentTerminalStructuralReserve)
 	}
 	if !taskBytesFit(s.options.MaxTaskBytes, parts...) {
 		return preparedReconcileMutation{}, ErrInvalidTaskSpec
@@ -380,23 +374,6 @@ func recordWithMinimalMissingCleanups(record Record) ([]byte, error) {
 		return nil, ErrInvalidTaskSpec
 	}
 	return data, nil
-}
-
-func cleanupCapacityRecords(record Record) ([]byte, []byte, int, error) {
-	base := record
-	base.Cleanup = []Cleanup{}
-	baseJSON, err := json.Marshal(base)
-	if err != nil {
-		return nil, nil, 0, ErrInvalidTaskSpec
-	}
-	projectedJSON, err := recordWithMinimalMissingCleanups(record)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	if len(projectedJSON) < len(baseJSON) {
-		return nil, nil, 0, ErrInvalidTaskSpec
-	}
-	return baseJSON, projectedJSON, len(projectedJSON) - len(baseJSON), nil
 }
 
 func (s *SQLiteStore) updateReconcileRecordTx(ctx context.Context, tx *sql.Tx, before Record, prepared preparedReconcileMutation) error {

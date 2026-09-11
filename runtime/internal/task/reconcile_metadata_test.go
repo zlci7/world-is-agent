@@ -58,7 +58,7 @@ func TestReconcilePreservesCreateIntentMetadataAndCapacity(t *testing.T) {
 		}
 	})
 
-	t.Run("C1 exact reserve reaches terminal and all minimal cleanups", func(t *testing.T) {
+	t.Run("combined reserve reaches terminal and all minimal cleanups", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "tasks.sqlite")
 		fixture, created, _ := newIntentFixture(t, StoreOptions{Path: path})
 		execOne := operationExecution(fixture, created.Task, "capacity-one")
@@ -72,14 +72,37 @@ func TestReconcilePreservesCreateIntentMetadataAndCapacity(t *testing.T) {
 		pending.Operations = []Operation{operationOne, operationTwo}
 		pending.Evidence = []Evidence{evidence}
 		pending.NeedsReconcile = true
+		pendingProjected := pending
+		pendingProjected.Cleanup = []Cleanup{
+			{OperationID: operationOne.ID, Status: CleanupStatusReleased},
+			{OperationID: operationTwo.ID, Status: CleanupStatusReleased},
+		}
 		pendingJSON := mustJSONBytes(t, pending)
+		pendingProjectedJSON := mustJSONBytes(t, pendingProjected)
+		terminal := pendingProjected
+		terminal.State = StateSucceeded
+		terminal.Revision = 2
+		terminal.NextWakeAt = nil
+		terminal.NeedsReconcile = false
+		terminal.Evidence[0].Applied = true
+		terminal.Result = &Result{
+			ID: "result_capacity", TaskID: terminal.ID, Revision: terminal.Revision,
+			State: terminal.State, Reason: evidence.Kind, OccurredAt: evidence.OccurredAt,
+			EvidenceRefs: []string{evidence.FactID}, Source: evidence.Source,
+		}
+		terminalJSON := mustJSONBytes(t, terminal)
 		createJSON := mustJSONBytes(t, initialCreateResult(created.Task))
-		exactC1Limit := len(pendingJSON) + len(createJSON) + len([]byte("[]")) + len(pendingJSON) + intentTerminalStructuralReserve
+		nonterminalCombinedLimit := len(pendingJSON) + len(createJSON) + len([]byte("[]")) + len(pendingProjectedJSON) + intentTerminalStructuralReserve
+		terminalCombinedLimit := len(terminalJSON) + len(createJSON) + len([]byte("[]")) + len(terminalJSON)
+		exactCombinedLimit := nonterminalCombinedLimit
+		if terminalCombinedLimit > exactCombinedLimit {
+			exactCombinedLimit = terminalCombinedLimit
+		}
 		if err := fixture.store.Close(); err != nil {
 			t.Fatal(err)
 		}
 
-		reopened := openTaskTestStore(t, StoreOptions{Path: path, MaxTaskBytes: exactC1Limit})
+		reopened := openTaskTestStore(t, StoreOptions{Path: path, MaxTaskBytes: exactCombinedLimit})
 		svc := NewService(reopened)
 		svc.newID = func(prefix string) string { return prefix + "_capacity" }
 		svc.nowUnixMS = func() int64 { return 1_700_000_000_123 }

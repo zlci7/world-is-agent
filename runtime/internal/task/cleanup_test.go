@@ -208,7 +208,7 @@ func TestRecordCleanupAuthorityIdentityAndCapacity(t *testing.T) {
 		}
 	})
 
-	t.Run("C1 exact nonterminal reserve supports every minimal cleanup", func(t *testing.T) {
+	t.Run("combined nonterminal reserve supports every minimal cleanup", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "tasks.sqlite")
 		fixture, created, _ := newIntentFixture(t, StoreOptions{Path: path})
 		execOne := operationExecution(fixture, created.Task, "cleanup-nonterminal-one")
@@ -217,13 +217,18 @@ func TestRecordCleanupAuthorityIdentityAndCapacity(t *testing.T) {
 		operationTwo := registeredOperation(execTwo, "operation-cleanup-nonterminal-two")
 		withOperations := created.Task
 		withOperations.Operations = []Operation{operationOne, operationTwo}
-		recordJSON := mustJSONBytes(t, withOperations)
+		withCleanups := withOperations
+		withCleanups.Cleanup = []Cleanup{
+			{OperationID: operationOne.ID, Status: CleanupStatusReleased},
+			{OperationID: operationTwo.ID, Status: CleanupStatusReleased},
+		}
+		recordJSON := mustJSONBytes(t, withCleanups)
 		createJSON := mustJSONBytes(t, initialCreateResult(created.Task))
-		exactC1Limit := len(recordJSON) + len(createJSON) + len([]byte("[]")) + len(recordJSON) + intentTerminalStructuralReserve
+		exactCombinedLimit := len(recordJSON) + len(createJSON) + len([]byte("[]")) + len(recordJSON) + intentTerminalStructuralReserve
 		if err := fixture.store.Close(); err != nil {
 			t.Fatal(err)
 		}
-		reopened := openTaskTestStore(t, StoreOptions{Path: path, MaxTaskBytes: exactC1Limit})
+		reopened := openTaskTestStore(t, StoreOptions{Path: path, MaxTaskBytes: exactCombinedLimit})
 		svc := NewService(reopened)
 		if _, err := svc.RegisterOperation(context.Background(), execOne, operationOne); err != nil {
 			t.Fatal(err)
