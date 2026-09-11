@@ -120,6 +120,84 @@ func TestCombinedTerminalCleanupCapacityRejectsBeforeMutation(t *testing.T) {
 	})
 }
 
+func TestRecordCleanupCapacityDoesNotShrinkAsMissingCleanupsAreRecorded(t *testing.T) {
+	t.Run("nonterminal", func(t *testing.T) {
+		fixture, created, operations := newCleanupCapacityCRFixture(t)
+		assertLargeCleanupPreservesFutureMinimalCleanupCapacity(t, fixture, created, operations, false)
+	})
+
+	t.Run("terminal", func(t *testing.T) {
+		fixture, created, operations := newCleanupCapacityCRFixture(t)
+		evidence := operationEvidence(operations[0], created.Task.ID, "fact-capacity-monotonic-terminal", EvidenceKindSatisfied)
+		if added, err := fixture.svc.AdmitEvidence(context.Background(), fixture.head.Binding, evidence); err != nil || !added {
+			t.Fatalf("AdmitEvidence() = (%v, %v)", added, err)
+		}
+		settled, err := fixture.svc.Reconcile(context.Background(), reconcileExecution(fixture, created.Task, 1))
+		if err != nil || settled.Task.State != StateSucceeded {
+			t.Fatalf("Reconcile() = (%+v, %v)", settled, err)
+		}
+		assertLargeCleanupPreservesFutureMinimalCleanupCapacity(t, fixture, created, operations, true)
+	})
+}
+
+func assertLargeCleanupPreservesFutureMinimalCleanupCapacity(
+	t *testing.T,
+	fixture createFixture,
+	created CreateResult,
+	operations []Operation,
+	terminal bool,
+) {
+	t.Helper()
+	large := Cleanup{
+		OperationID: operations[0].ID, Status: CleanupStatusUnconfirmed,
+		Reason: string(bytes.Repeat([]byte("m"), intentTerminalStructuralReserve+1024)),
+	}
+	minimal := Cleanup{OperationID: operations[1].ID, Status: CleanupStatusReleased}
+	current, err := fixture.svc.Read(context.Background(), created.Task.Owner, created.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withLarge := current
+	withLarge.Cleanup = []Cleanup{large}
+	cleanupComplete := withLarge
+	cleanupComplete.Cleanup = append(cleanupComplete.Cleanup, minimal)
+	withLargeJSON := mustJSONBytes(t, withLarge)
+	cleanupCompleteJSON := mustJSONBytes(t, cleanupComplete)
+	createJSON, historyJSON := taskIdempotencyMetadata(t, fixture.store, current.Owner, current.ID)
+	firstWriteCost := len(withLargeJSON) + len(createJSON) + len(historyJSON) + len(cleanupCompleteJSON)
+	allWritesCost := len(cleanupCompleteJSON) + len(createJSON) + len(historyJSON) + len(cleanupCompleteJSON)
+	if !terminal {
+		firstWriteCost += intentTerminalStructuralReserve
+		allWritesCost += intentTerminalStructuralReserve
+	}
+	if firstWriteCost >= allWritesCost-1 {
+		t.Fatalf("cleanup window missing: first=%d all=%d", firstWriteCost, allWritesCost)
+	}
+	limit := firstWriteCost + (allWritesCost-firstWriteCost)/2
+	path := fixture.store.path
+	if err := fixture.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store := openTaskTestStore(t, StoreOptions{Path: path, MaxTaskBytes: limit})
+	svc := NewService(store)
+	beforeTask, beforeWakes, beforeHistory := snapshotIntentRows(t, store, current.Owner, current.ID)
+	firstErr := svc.RecordCleanup(context.Background(), fixture.head.Binding, current.ID, large)
+	if firstErr == nil {
+		secondErr := svc.RecordCleanup(context.Background(), fixture.head.Binding, current.ID, minimal)
+		if errors.Is(secondErr, ErrInvalidTaskSpec) {
+			t.Fatalf("large cleanup was admitted at S1=%d, then minimal cleanup was rejected at S2=%d (limit=%d)", firstWriteCost, allWritesCost, limit)
+		}
+		t.Fatalf("large cleanup error = nil; following minimal cleanup error = %v", secondErr)
+	}
+	if !errors.Is(firstErr, ErrInvalidTaskSpec) {
+		t.Fatalf("large cleanup error = %v, want ErrInvalidTaskSpec", firstErr)
+	}
+	afterTask, afterWakes, afterHistory := snapshotIntentRows(t, store, current.Owner, current.ID)
+	if !bytes.Equal(beforeTask, afterTask) || !bytes.Equal(beforeWakes, afterWakes) || !bytes.Equal(beforeHistory, afterHistory) {
+		t.Fatal("rejected large cleanup changed task/index/create/history/wake bytes")
+	}
+}
+
 func newCleanupCapacityCRFixture(t *testing.T) (createFixture, CreateResult, []Operation) {
 	t.Helper()
 	fixture, created, _ := newIntentFixture(t, StoreOptions{Path: filepath.Join(t.TempDir(), "tasks.sqlite")})

@@ -136,7 +136,7 @@ func (s *SQLiteStore) prepareCleanupMutation(current storedIntentTask, updated R
 	if err != nil {
 		return preparedNoRevisionMutation{}, err
 	}
-	parts := []int{len(recordJSON), len(createResponseJSON), len(intentHistoryJSON), len(projectedJSON)}
+	parts := []int{len(projectedJSON), len(createResponseJSON), len(intentHistoryJSON), len(projectedJSON)}
 	if !taskStateTerminal(updated.State) {
 		parts = append(parts, intentTerminalStructuralReserve)
 	}
