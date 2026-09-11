@@ -344,6 +344,13 @@ func (s *SQLiteStore) updateIntentRecordTx(ctx context.Context, tx *sql.Tx, befo
 }
 
 func (s *SQLiteStore) consumeIntentWakesTx(ctx context.Context, tx *sql.Tx, record Record) error {
+	if err := s.consumeExecutableWakesTx(ctx, tx, record); err != nil {
+		return err
+	}
+	return s.afterIntentStage(ctx, intentStageWakesConsumed)
+}
+
+func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, record Record) error {
 	rows, err := tx.QueryContext(ctx, `SELECT wake_id, game_id, world_id, entity_id, task_id, clock_id,
 		expected_revision, due_tick, reason, status, claim_id, claimed_by, generation, attempt,
 		retry_after_unix_ms, wake_json FROM task_wakeups
@@ -412,10 +419,17 @@ func (s *SQLiteStore) consumeIntentWakesTx(ctx context.Context, tx *sql.Tx, reco
 			return ErrTaskChanged
 		}
 	}
-	return s.afterIntentStage(ctx, intentStageWakesConsumed)
+	return ctx.Err()
 }
 
 func (s *SQLiteStore) insertIntentWakeTx(ctx context.Context, tx *sql.Tx, record Record, wake Wake) error {
+	if err := s.insertWakeTx(ctx, tx, record, wake); err != nil {
+		return err
+	}
+	return s.afterIntentStage(ctx, intentStageWakeInserted)
+}
+
+func (s *SQLiteStore) insertWakeTx(ctx context.Context, tx *sql.Tx, record Record, wake Wake) error {
 	if err := validateTaskWakePair(record, wake); err != nil {
 		return err
 	}
@@ -434,7 +448,7 @@ func (s *SQLiteStore) insertIntentWakeTx(ctx context.Context, tx *sql.Tx, record
 	if err != nil {
 		return err
 	}
-	return s.afterIntentStage(ctx, intentStageWakeInserted)
+	return ctx.Err()
 }
 
 func (s *SQLiteStore) storeIntentHistoryTx(ctx context.Context, tx *sql.Tx, before Record, prepared preparedIntentMutation) error {

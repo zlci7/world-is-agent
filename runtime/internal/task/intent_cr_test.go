@@ -322,7 +322,11 @@ func TestCancelExactHistoryAnchorsTerminalResultAndShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		current := want
-		current.Cleanup = append(current.Cleanup, Cleanup{OperationID: "operation-later", Status: "done", Reason: "released"})
+		current.Operations = append(current.Operations, Operation{
+			ID: "operation-later", ActionID: "action-later", CommandFingerprint: "command-later",
+			StartRevision: current.Revision, Binding: fixture.head.Binding, Status: OperationStatusRegistered,
+		})
+		current.Cleanup = append(current.Cleanup, Cleanup{OperationID: "operation-later", Status: CleanupStatusReleased})
 		current.Evidence = append(current.Evidence, Evidence{
 			FactID: "fact-later", TaskID: current.ID, Binding: fixture.head.Binding,
 			StartRevision: current.Revision, OccurredAt: fixture.clock.Tick, Kind: EvidenceKindProgress,

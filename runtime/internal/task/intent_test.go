@@ -88,7 +88,7 @@ func TestApplyIntentWaitWithoutNotePreservesDurableFactsAndProgress(t *testing.T
 		Source:  SourceRef{Kind: SourceKindEnvironment, EventID: "fact-event", TurnID: "fact-turn", CallID: "fact-call"},
 		Applied: true,
 	}}
-	current.Cleanup = []Cleanup{{OperationID: "operation-a", Status: "pending", Reason: "lease"}}
+	current.Cleanup = []Cleanup{{OperationID: "operation-a", Status: CleanupStatusUnconfirmed, Reason: "lease"}}
 	setRecordForIntentTest(t, fixture.store, current)
 
 	nextWake := int64(260)
@@ -118,7 +118,7 @@ func TestApplyIntentCancelCreatesStableResultConsumesEveryExecutableWakeAndPrese
 		Kind: "progress", Source: SourceRef{Kind: SourceKindEnvironment, EventID: "fact-e", TurnID: "fact-t", CallID: "fact-c"},
 		Applied: true,
 	}}
-	current.Cleanup = []Cleanup{{OperationID: "operation-a", Status: "pending", Reason: "release"}}
+	current.Cleanup = []Cleanup{{OperationID: "operation-a", Status: CleanupStatusUnconfirmed, Reason: "release"}}
 	setRecordForIntentTest(t, fixture.store, current)
 	for index, status := range []string{"claimed", "enqueued", "running"} {
 		insertIntentWake(t, fixture.store, current, Wake{

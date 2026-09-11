@@ -170,6 +170,16 @@ func TestCreateIdempotencyReturnsImmutableInitialResponseAfterTaskChangesAndReop
 	current.State = StateSucceeded
 	current.Revision = 2
 	current.NextWakeAt = nil
+	terminalEvidence := Evidence{
+		FactID: "fact-terminal", TaskID: current.ID, Binding: head.Binding, StartRevision: 1,
+		OccurredAt: clock.Tick, Kind: EvidenceKindSatisfied, Source: SourceRef{Kind: SourceKindEnvironment}, Applied: true,
+	}
+	current.Evidence = []Evidence{terminalEvidence}
+	current.Result = &Result{
+		ID: "result-terminal", TaskID: current.ID, Revision: current.Revision, State: current.State,
+		Reason: EvidenceKindSatisfied, OccurredAt: terminalEvidence.OccurredAt,
+		EvidenceRefs: []string{terminalEvidence.FactID}, Source: terminalEvidence.Source,
+	}
 	currentJSON, err := json.Marshal(current)
 	if err != nil {
 		t.Fatal(err)
@@ -1084,6 +1094,31 @@ func setTaskStateForCreateTest(t *testing.T, store *SQLiteStore, record Record, 
 	record.Revision = revision
 	if state == StateSucceeded || state == StateFailed || state == StateCancelled {
 		record.NextWakeAt = nil
+		record.NeedsReconcile = false
+		record.PauseReason = ""
+		record.NoProgressAttempts = 0
+		record.ReconcileAttempts = 0
+		reason := "cancelled"
+		refs := []string{}
+		source := record.Spec.Source
+		if state == StateSucceeded || state == StateFailed {
+			kind := EvidenceKindSatisfied
+			if state == StateFailed {
+				kind = EvidenceKindUnsatisfied
+			}
+			evidence := Evidence{
+				FactID: "fact-terminal", TaskID: record.ID, Binding: testBinding(), StartRevision: 1,
+				OccurredAt: record.CreatedAtGameTick, Kind: kind, Source: SourceRef{Kind: SourceKindEnvironment}, Applied: true,
+			}
+			record.Evidence = []Evidence{evidence}
+			reason = kind
+			refs = []string{evidence.FactID}
+			source = evidence.Source
+		}
+		record.Result = &Result{
+			ID: "result-terminal", TaskID: record.ID, Revision: revision, State: state, Reason: reason,
+			OccurredAt: record.CreatedAtGameTick, EvidenceRefs: refs, Source: source,
+		}
 	}
 	data, err := json.Marshal(record)
 	if err != nil {

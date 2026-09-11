@@ -43,6 +43,9 @@ type SQLiteStore struct {
 	// testAfterNoRevisionStage proves that operation/evidence merges remain
 	// atomic even though they intentionally do not advance business revision.
 	testAfterNoRevisionStage func(context.Context, string) error
+	// testAfterReconcileStage proves that task, wake consumption, and optional
+	// replacement wake persistence commit as one atomic reconciliation.
+	testAfterReconcileStage func(context.Context, string) error
 }
 
 type worldHeadRow struct {

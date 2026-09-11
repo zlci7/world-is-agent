@@ -43,6 +43,10 @@ const (
 	EvidenceKindSatisfied   = "satisfied"
 	EvidenceKindUnsatisfied = "unsatisfied"
 	EvidenceKindInterrupted = "interrupted"
+
+	CleanupStatusReleased    = "released"
+	CleanupStatusHandedOff   = "handed_off"
+	CleanupStatusUnconfirmed = "unconfirmed"
 )
 
 type WorldKey struct {
@@ -345,7 +349,7 @@ func (r Record) Validate() error {
 		}
 		operations[operation.ID] = operation
 	}
-	facts := make(map[string]struct{}, len(r.Evidence))
+	facts := make(map[string]Evidence, len(r.Evidence))
 	hasUnappliedEvidence := false
 	for _, evidence := range r.Evidence {
 		if err := evidence.Validate(); err != nil {
@@ -365,7 +369,7 @@ func (r Record) Validate() error {
 		if _, duplicate := facts[evidence.FactID]; duplicate {
 			return ErrInvalidTaskSpec
 		}
-		facts[evidence.FactID] = struct{}{}
+		facts[evidence.FactID] = evidence
 		hasUnappliedEvidence = hasUnappliedEvidence || !evidence.Applied
 		if evidence.OperationID == "" {
 			if evidence.RevalidatedIn != nil {
@@ -388,15 +392,51 @@ func (r Record) Validate() error {
 	if !recordEvidenceSourceIdentityValid(r) {
 		return ErrInvalidTaskSpec
 	}
+	terminal := taskStateTerminal(r.State)
+	if terminal != (r.Result != nil) {
+		return ErrInvalidTaskSpec
+	}
+	if terminal && (r.NextWakeAt != nil || r.NeedsReconcile || hasUnappliedEvidence) {
+		return ErrInvalidTaskSpec
+	}
 	if r.Result != nil {
 		if err := r.Result.Validate(); err != nil {
 			return err
 		}
+		if r.Result.TaskID != r.ID || r.Result.Revision != r.Revision || r.Result.State != r.State {
+			return ErrInvalidTaskSpec
+		}
+		matchedEvidenceOutcome := false
+		for _, ref := range r.Result.EvidenceRefs {
+			evidence, found := facts[ref]
+			if !found || !evidence.Applied {
+				return ErrInvalidTaskSpec
+			}
+			matchesResultFact := evidence.OccurredAt == r.Result.OccurredAt && sourceRefsEqual(evidence.Source, r.Result.Source)
+			switch r.Result.State {
+			case StateSucceeded:
+				matchedEvidenceOutcome = matchedEvidenceOutcome || matchesResultFact && evidence.Kind == EvidenceKindSatisfied
+			case StateFailed:
+				matchedEvidenceOutcome = matchedEvidenceOutcome || matchesResultFact &&
+					(evidence.Kind == EvidenceKindUnsatisfied || evidence.Kind == EvidenceKindInterrupted)
+			}
+		}
+		if (r.Result.State == StateSucceeded || r.Result.State == StateFailed) && !matchedEvidenceOutcome {
+			return ErrInvalidTaskSpec
+		}
 	}
+	cleanups := make(map[string]struct{}, len(r.Cleanup))
 	for _, cleanup := range r.Cleanup {
 		if err := cleanup.Validate(); err != nil {
 			return err
 		}
+		if _, found := operations[cleanup.OperationID]; !found {
+			return ErrInvalidTaskSpec
+		}
+		if _, duplicate := cleanups[cleanup.OperationID]; duplicate {
+			return ErrInvalidTaskSpec
+		}
+		cleanups[cleanup.OperationID] = struct{}{}
 	}
 	return nil
 }
@@ -454,28 +494,50 @@ func (e Evidence) Validate() error {
 }
 
 func (r Result) Validate() error {
-	if !requiredIdentity(r.ID) || !requiredIdentity(r.TaskID) {
+	if !requiredIdentity(r.ID) || !requiredIdentity(r.TaskID) || !requiredIdentity(r.Reason) {
+		return ErrInvalidTaskSpec
+	}
+	if r.EvidenceRefs == nil {
 		return ErrInvalidTaskSpec
 	}
 	if err := ValidateDurableCounter(r.Revision); err != nil {
 		return err
 	}
-	if err := r.State.Validate(); err != nil {
-		return err
+	switch r.State {
+	case StateSucceeded, StateFailed, StateCancelled:
+	default:
+		return ErrInvalidTaskSpec
 	}
 	if r.OccurredAt < 0 {
 		return ErrInvalidTaskSpec
 	}
+	refs := make(map[string]struct{}, len(r.EvidenceRefs))
 	for _, ref := range r.EvidenceRefs {
 		if !requiredIdentity(ref) {
 			return ErrInvalidTaskSpec
 		}
+		if _, duplicate := refs[ref]; duplicate {
+			return ErrInvalidTaskSpec
+		}
+		refs[ref] = struct{}{}
 	}
 	return r.Source.Validate()
 }
 
 func (c Cleanup) Validate() error {
 	if !requiredIdentity(c.OperationID) {
+		return ErrInvalidTaskSpec
+	}
+	switch c.Status {
+	case CleanupStatusReleased, CleanupStatusHandedOff:
+		if c.Reason != "" && strings.TrimSpace(c.Reason) == "" {
+			return ErrInvalidTaskSpec
+		}
+	case CleanupStatusUnconfirmed:
+		if !requiredIdentity(c.Reason) {
+			return ErrInvalidTaskSpec
+		}
+	default:
 		return ErrInvalidTaskSpec
 	}
 	return nil
