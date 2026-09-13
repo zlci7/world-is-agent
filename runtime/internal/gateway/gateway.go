@@ -24,6 +24,7 @@ type Server struct {
 
 	agentLoop   eventHandler
 	worlds      *WorldRegistry
+	dispatcher  *task.Dispatcher
 	mu          sync.Mutex
 	connections map[*worldConnection]struct{}
 	stopped     bool
@@ -63,7 +64,11 @@ func (s *Server) WorldRegistry() *WorldRegistry { return s.worlds }
 func (s *Server) StopTaskAdmission() {
 	s.mu.Lock()
 	s.stopped = true
+	dispatcher := s.dispatcher
 	s.mu.Unlock()
+	if dispatcher != nil {
+		dispatcher.Stop()
+	}
 	if s.worlds != nil {
 		s.worlds.StopAdmission()
 	}

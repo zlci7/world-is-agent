@@ -60,6 +60,12 @@ type WorldKey struct {
 	WorldID string `json:"world_id"`
 }
 
+type WakeInspection struct {
+	Head Head
+	Wake Wake
+	Task Record
+}
+
 type Binding struct {
 	World      WorldKey `json:"world"`
 	RunID      string   `json:"run_id"`

@@ -41,6 +41,51 @@ type preparedBeginMutation struct {
 	raw    []byte
 }
 
+func (s *Service) InspectWake(ctx context.Context, binding Binding, wakeID string) (WakeInspection, error) {
+	if err := validateService(s, ctx); err != nil {
+		return WakeInspection{}, err
+	}
+	if binding.Validate() != nil || !requiredIdentity(wakeID) {
+		return WakeInspection{}, ErrInvalidTaskSpec
+	}
+	// ReadOnly selects a deferred SQLite snapshot even on the writer pool. This
+	// path deliberately excludes mutation helpers that expire save barriers.
+	tx, err := s.store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return WakeInspection{}, classifyStoreError(err)
+	}
+	defer tx.Rollback()
+	head, found, err := s.store.loadWorldHeadTx(ctx, tx, binding.World)
+	if err != nil {
+		return WakeInspection{}, classifyStoreError(err)
+	}
+	if !found {
+		return WakeInspection{}, ErrWorldNotReady
+	}
+	if head.Head.Binding != binding {
+		return WakeInspection{}, ErrGenerationStale
+	}
+	current, err := s.store.findStrictWorldWakeTx(ctx, tx, head, wakeID)
+	if err != nil {
+		return WakeInspection{}, classifyStoreError(err)
+	}
+	wake := current.wake
+	if wake.Status == wakeStatusConsumed && wake.ExpectedRevision > current.record.record.Revision {
+		return WakeInspection{}, ErrInvalidTaskSpec
+	}
+	if wake.Generation > binding.Generation || (wake.Status == wakeStatusClaimed || wake.Status == wakeStatusEnqueued || wake.Status == wakeStatusRunning) && wake.ClaimedBy != head.RuntimeInstanceID {
+		return WakeInspection{}, ErrInvalidTaskSpec
+	}
+	record, err := cloneRecord(current.record.record)
+	if err != nil {
+		return WakeInspection{}, ErrInvalidTaskSpec
+	}
+	if err := tx.Commit(); err != nil {
+		return WakeInspection{}, classifyStoreError(err)
+	}
+	return WakeInspection{Head: head.Head, Wake: wake, Task: record}, nil
+}
+
 func (s *Service) ClaimDue(ctx context.Context, binding Binding, clock Clock, limit int) ([]Wake, error) {
 	if err := validateService(s, ctx); err != nil {
 		return nil, err

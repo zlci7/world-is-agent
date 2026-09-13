@@ -52,6 +52,7 @@ type worldSlot struct {
 }
 
 type WorldRegistry struct {
+	updates chan struct{}
 	mu      sync.Mutex
 	worlds  map[task.WorldKey]*worldSlot
 	service *task.Service
@@ -59,7 +60,14 @@ type WorldRegistry struct {
 }
 
 func NewWorldRegistry(service *task.Service) *WorldRegistry {
-	return &WorldRegistry{worlds: make(map[task.WorldKey]*worldSlot), service: service}
+	return &WorldRegistry{worlds: make(map[task.WorldKey]*worldSlot), service: service, updates: make(chan struct{}, 1)}
+}
+
+func (r *WorldRegistry) notify() {
+	select {
+	case r.updates <- struct{}{}:
+	default:
+	}
 }
 
 func (r *WorldRegistry) slot(world task.WorldKey, create bool) *worldSlot {
@@ -250,7 +258,11 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 	if rebinding {
 		conn.env.close()
 		conn.lanes.CloseAndWait()
-		if err := r.service.DeactivateWorld(ctx, oldHead.Binding, "world_rebind"); err != nil {
+		reason := "world_rebind"
+		if oldHead.Status == "paused" && oldHead.Reason != "" {
+			reason = oldHead.Reason
+		}
+		if err := r.service.DeactivateWorld(ctx, oldHead.Binding, reason); err != nil {
 			slot.mu.Lock()
 			slot.failed = true
 			slot.mu.Unlock()
@@ -304,6 +316,7 @@ func (r *WorldRegistry) markReady(conn *worldConnection, head task.Head) error {
 		return task.ErrWorldNotReady
 	}
 	slot.ready = true
+	r.notify()
 	return nil
 }
 
@@ -360,6 +373,7 @@ func (r *WorldRegistry) UpdateClock(ctx context.Context, env *streamEnvironment,
 		return err
 	}
 	slot.head = head
+	r.notify()
 	return nil
 }
 
@@ -391,6 +405,9 @@ func (r *WorldRegistry) disconnect(ctx context.Context, conn *worldConnection, r
 	slot.mu.Unlock()
 	conn.env.close()
 	conn.lanes.CloseAndWait()
+	if head.Status == "paused" && head.Reason != "" {
+		reason = head.Reason
+	}
 	err := r.service.DeactivateWorld(ctx, head.Binding, reason)
 	slot.mu.Lock()
 	defer slot.mu.Unlock()

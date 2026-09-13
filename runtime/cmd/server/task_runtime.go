@@ -33,6 +33,13 @@ func newGatewayRuntime(ctx context.Context, loop *agent.Loop, config agent.TaskC
 		options = append(options, gateway.WithTaskService(task.NewService(store)))
 	}
 	process.gateway = gateway.NewServer(loop, options...)
+	if config.Enabled {
+		dispatch := task.DispatcherConfig{ScanInterval: config.ScanInterval, BatchSize: config.DispatchBatch, RetryMin: config.RetryMin, RetryMax: config.RetryMax}
+		if err := process.gateway.StartTaskDispatcher(ctx, dispatch, nil, nil); err != nil {
+			_ = process.store.Close()
+			return nil, err
+		}
+	}
 	return process, nil
 }
 
