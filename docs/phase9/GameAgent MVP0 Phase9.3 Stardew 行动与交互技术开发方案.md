@@ -2,7 +2,7 @@
 
 > **Status:** Implementation Plan — 开发基线；实现与验收状态以验收记录为准
 > **Date:** 2026-09-13
-> **执行方式:** 每个独立模块完成相关测试和 `git diff --check` 后创建本地提交，暂停并交付聚焦 CR；CR 修正使用独立 `fix:` 本地提交，复验通过并经用户确认后继续下一模块。9.3 收口执行阶段整体回归和实机验证；Phase9.5 执行最终整分支/系统审查。
+> **执行方式:** 以 9.3 为交付和用户验收周期。每个独立模块完成相关测试和 `git diff --check` 后创建本地提交并连续推进，无需逐提交等待用户 CR。阶段代码完成后执行整体自动化回归与两个只读子 agent 的内部 review，修正使用独立 `fix:` 本地提交并复验，再由用户集中 CR、review 和实机验收；用户确认通过后进入 9.4。Phase9.5 执行最终整分支/系统审查。
 > **Goal:** NPC 能真实赴约、等待和接近玩家，并在交互结束后继续当前原生日程。
 > **Architecture:** Adapter 管理当前世界效果及控制权；未来任务和唤醒始终由 Runtime 管理。
 > **Tech Stack:** C# / .NET 6、SMAPI、游戏原生寻路与 UI；纯逻辑使用 xUnit。
@@ -21,6 +21,8 @@
 - 一次性接近保持固定终点和所选路径；玩家途中移动不触发重选或模型调用。
 - UI 展示成功、Turn 完成、Task 成功分别不是“玩家结束对话”。
 - 只有自身持有的控制器可以被本模块停止；控制权丢失时保留新拥有者的控制器。
+- Adapter 使用显式会话状态机推进握手；普通 Runtime 准入与 Task 准入分离，Task 仅在 WorldBindingReady 后开放。
+- UpdateTicked 只观察按 operation/NPC 登记的活动句柄，不扫描全世界，也不手动重复更新游戏原生 controller。
 
 ## 2. 文件与责任
 
@@ -39,7 +41,7 @@
 | `src/Dialogue/NpcInteractionLifecycle.cs` | 跨 Turn 的交互占用与真实结束 |
 | `src/Dialogue/DialoguePresentationFlow.cs`、`DialogueInteractionController.cs`、`DialogueInteractionMenu.cs` | 修改展示/回复/退出信号接线 |
 | `src/Capabilities/MoveToCapability.cs`、`PresentDialogueCapability.cs` | 旧能力共享租约，保留原参数合同 |
-| `src/Runtime/RuntimeClient.cs`、`CapabilityCatalog.cs`、`RuntimeWorldScope.cs`、`ProtocolMapper.Task.cs` | Task-ready、协议接线、来源和新能力；Mapper 为新增 partial |
+| `src/Runtime/RuntimeClient.cs`、`RuntimeSessionState.cs`、`CapabilityCatalog.cs`、`RuntimeWorldScope.cs`、`ProtocolMapper.Task.cs` | 显式握手状态、Task-ready、协议接线、来源和新能力；Mapper 为新增 partial |
 | `src/State/StardewObservation.cs`、`StardewObservationFactory.cs`、`ObservationBuilder.cs` | 当前活动事实、控制权、节日与操作证据 |
 | `src/Events/PlayerInteractProbe.cs`、`src/ModEntry.cs`、`GameAgent.Stardew.csproj` | 输入抑制、主线程事件和资源输出 |
 | `tests/TaskExecution.Tests/TaskExecution.Tests.csproj` | 新增纯逻辑测试项目，不引用游戏 DLL |
@@ -59,7 +61,7 @@ public static int ToMinute(int hhmm);
 
 标准日历：seasonIndex=0..3，dayOfMonth=1..28；绝对日序为 `(year-1)*112 + seasonIndex*28 + dayOfMonth-1`。Tick=绝对日序×1440+HHMM 转分钟，使用 checked long 运算。当前游戏时钟接受延长到次日凌晨的合法 HHMM；预约参数单独限制 06:00–22:00、10 分钟刻度。分钟部分必须在 0..59，不能把 1260 当合法时间。
 
-SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新时间。Clock.sequence 在当前 run 内递增；Runtime 重新连接时继续当前 run 和最新 Clock，不能生成“读档”身份。
+SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新时间。Clock.sequence 在当前 run 内递增；显式重新连接时继续当前 run 和最新 Clock，不能生成“读档”身份。9.3 提供可复用的手动重连入口，自动检测、退避和持续重试留给后续阶段。
 
 ### 3.2 MeetingContract
 
@@ -71,7 +73,7 @@ SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新�
 
 ### 3.3 LandmarkCatalog
 
-每个配置项包含 landmark_id、display_name、location、tile{x,y}、open_start/open_end、supported_routes、departure_lead_minutes。
+每个配置项包含 landmark_id、display_name、location、tile{x,y}、open_start/open_end、supported_routes、departure_lead_minutes。supported_routes 的稳定主键为 npc_id、origin_location、landmark_id；日期、时刻、开放状态和 NPC 当前状态在主线程复验。
 
 生产项固定为 beach_meeting_spot、saloon_meeting_spot、town_square。坐标、过图路线和提前量按实测填写，不能拿 fake 地图测试坐标部署；加载时校验唯一 ID、整数坐标、开放窗口和正的 10 分钟倍数提前量。
 
@@ -125,6 +127,8 @@ public interface ITaskNpcDriver
 }
 ```
 
+DriverResult 是预期业务拒绝和确定性操作终态的唯一内部合同；领域层不以异常消息编码机器码。取消、线程/协议错误和未知故障才进入技术异常路径。RuntimeClient 只负责协议映射与能力分派，TaskExecutionDriver 集中处理 scope/来源校验、幂等回执、租约和状态转换，各 capability 保持薄层。
+
 纯测试使用 fake；GameNpcDriver 实现必须基于 9.0 核对过的本地游戏 API。StartTravel 的成功启动状态是 running，SUCCEEDED 仅由真实终点确认。Poll 不负责重新计算未来预约。
 
 执行顺序：
@@ -152,13 +156,13 @@ else if now >= end：
     全程合法等待且未见面 → expired / unsatisfied
     否则 → interrupted 或未知，保留明确原因
 else if now >= start 且玩家同地图且 ManhattanDistance <= 2：
-    met / satisfied，建立 task_arrival 交互来源并交接停留
+    met / satisfied，先原子转为 pending interaction-handoff，再建立 task_arrival 来源
 else：继续当前有界等待
 ```
 
 此先后顺序保证 [start,end)；恰好截止不算按时到达。跨阈值跳时如果漏过整个窗口，不能推断玩家一直未出现或 NPC 持续等待，结果标记中断/未知。
 
-监听直接释放过期租约，即使 Runtime/LLM 不在线也不会让 NPC 永久停住。future Task 的状态由 Runtime 协调，不在 Adapter 维护另一套任务状态机。
+监听直接释放过期租约，即使 Runtime/LLM 不在线也不会让 NPC 永久停住。同一时刻产生 Evidence 和 Clock 时，经同一发送通道先发送 Evidence，再发送 WorldClockUpdate，使 Runtime 的截止扫描先看见确定性事实。future Task 的状态由 Runtime 协调，不在 Adapter 维护另一套任务状态机。
 
 ### 4.3 固定目标 approach_player
 
@@ -211,7 +215,7 @@ TaskSourceContextStore 保存当前 TaskActionSource 及独立 InteractionSource
 
 TaskActionSource.start_revision 在 C# 中映射为 StartRevision，来源存储按 operation 保存该启动版本。TaskOperationReceipts 及后续 TaskEvidence.start_revision 使用同一 operation 保存的值；Task 当前 revision 或其他 operation 的新来源不覆盖它。回执经 ActionResult、GameEvent、Observation 发送或再次查询时均保留原启动版本。
 
-met 时在主线程生成 task_arrival 来源，关联 source_id/world/run/generation/NPC/player/task/operation；发送真实 GameEvent。EventAck ACCEPTED 后才提交交互来源，动作时再次校验实际状态。Task 已 succeeded 不撤销该来源。
+met 时在主线程冻结一次性事实，把 waiting 原子转成 pending interaction-handoff，再生成 task_arrival 来源，关联 source_id/world/run/generation/NPC/player/task/operation 并发送真实 GameEvent。EventAck ACCEPTED 后才提交交互来源；EventAck 拒绝、超时或断连时释放暂存交接并按当前时刻恢复原生日程。动作时再次校验实际状态，Task 已 succeeded 不撤销已经提交的来源。
 
 普通交互同样生成 kind=player 的 InteractionSource，并保留原 InteractionContextStore 的 event/turn 生命周期。模型不能通过填写 task_id 获得新的玩家来源。
 
@@ -249,7 +253,7 @@ NpcNativeBehaviorRestorer 只恢复本租约改变的暂停/朝向/移动标记�
 | GameLaunched | 配置、能力、路线资源加载 |
 | SaveLoaded | 新 run，清理旧控制权/来源，读取检查点标记并发起绑定 |
 | DayStarted | 保留 run，更新 Clock 与实体目录；不清空未来 Task |
-| TimeChanged | 先处理当前等待边界，再发布 Clock / Evidence |
+| TimeChanged | 先处理当前等待边界，同一采样产生终态时严格按 Evidence → Clock 发布 |
 | UpdateTicked | dispatcher、移动状态、等待采样、UI 结束、原生恢复 |
 | DayEnding | 结束当日临时世界占用，保留 Runtime 未来 Task |
 | ReturnedToTitle / Dispose | 释放自身占用与来源、撤销绑定 |
@@ -258,6 +262,8 @@ NpcNativeBehaviorRestorer 只恢复本租约改变的暂停/朝向/移动标记�
 Saving/Saved 的完整交接在 Phase9.4 实现。此阶段读取到已有但无法处理的 checkpoint 标记时保持 task-not-ready，不允许以空标记覆盖存档。
 
 ## 7. 开发单元及验收
+
+以下单元是 9.3 内部开发、测试和提交边界，各模块完成测试和本地提交后连续推进，不在模块之间暂停 CR。全部代码与自动化回归完成后，由两个只读子 agent 分别检查架构/并发/资源所有权和协议/失败路径/测试缺口；修正以独立 fix 提交完成。点位采集和路线探针可提前与用户协作；代码先完成通用实现与沙滩闭环，酒馆和广场仅在实测通过后加入生产白名单。本节实机检查项在阶段交付前汇总为统一验收步骤，由用户在代码收口后集中验收。阶段交付包含提交清单、变更说明、自动化结果、已知限制和实机验收步骤。
 
 ### 9.3-A：纯时间、合同与配置
 
@@ -365,4 +371,4 @@ dotnet build adapters/stardew/GameAgent.Stardew.csproj --configuration Debug
 - [ ] 四个能力、来源和租约测试通过；旧 move_to / 对话/取消回归通过。
 - [ ] NPC 恢复原生行为有真实移动证据，而非仅日志和 controller=null。
 - [ ] 无重复终态、第三方控制器误清理或永久停留。
-- [ ] 保存未接通的能力边界在验收记录中明确；各模块完成本地提交和聚焦 CR 后，交付 9.3 阶段结果并暂停，用户确认后进入 Phase9.4。
+- [ ] 保存未接通的能力边界在验收记录中明确；各模块完成本地提交后执行阶段整体自动化回归与两个只读子 agent 的内部 review，问题修复并复验后交付 9.3 阶段结果，由用户集中 CR、review 和实机验收；用户确认通过后进入 Phase9.4。

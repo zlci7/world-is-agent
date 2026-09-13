@@ -2,7 +2,7 @@
 
 > **Status:** Accepted
 > **Date:** 2026-09-11
-> **执行方式:** 本阶段按独立审查单元完成测试、聚焦验证、阶段回归、`git diff --check`、本地提交与独立 CR；CR 修正使用独立 `fix:` 本地提交收口。Phase9.5 保留最终整分支/系统 review。
+> **执行方式:** 以完整子阶段作为交付和用户验收周期；模块完成测试、聚焦验证和 `git diff --check` 后本地提交并连续推进。阶段收口执行整体回归和 agent 内部 review，修正使用独立 `fix:` 本地提交并复验，再交付用户集中 CR、review 与内核验收。已 Accepted 结论和实际验收记录保持不变；Phase9.5 保留最终整分支/系统 review。
 > **Goal:** 建立支持跨天、可靠唤醒、权威结果和完整快照恢复的 Runtime 任务内核。
 > **Architecture:** TaskService 是进程内模块，SQLite 是状态权威；模型工具、连接和游戏 API 均在模块之外接入。
 > **Tech Stack:** Go 1.25、modernc.org/sqlite；复用仓库现有依赖，不引入调度框架。

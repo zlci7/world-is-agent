@@ -2,7 +2,7 @@
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-13
-> **执行方式:** 每个独立模块完成相关测试和 `git diff --check` 后创建本地提交，暂停并交付聚焦 CR；CR 修正使用独立 `fix:` 本地提交，复验通过并经用户确认后继续下一模块。9.2 收口执行阶段整体回归；Phase9.5 执行最终整分支/系统审查。
+> **执行方式:** 以 9.2 为交付和用户验收周期。每个独立模块完成相关测试和 `git diff --check` 后创建本地提交并连续推进，无需逐提交等待用户 CR。阶段代码完成后执行整体自动化回归与 agent 内部 review，修正使用独立 `fix:` 本地提交并复验，随后交付用户集中 CR、review 和 Runtime 机制验收；用户确认通过后进入下一阶段。Phase9.5 执行最终整分支/系统审查。
 > **Goal:** 把持久 Task 接入真实 Runtime 的工具、协议、游戏时钟和 NPC lane。
 > **Architecture:** 进程级 TaskService + 当前连接绑定；Runtime 工具本地执行，Environment 工具通过 ActionRequest 执行。
 > **Tech Stack:** Go 1.25、gRPC / Protobuf v1alpha2、现有 Tool View / Scheduler。
@@ -301,7 +301,7 @@ Loop 新增 `HandleTaskWake`，输入当前 Environment、ConnectionContext、ca
 
 ## 6. 开发任务
 
-按 A1 → A2 → B1 → C1 → B2 → C2 → D 执行。每个模块是一个包含实现和测试的本地提交；模块完成后暂停 CR，交付提交号、相关测试结果及限制，用户确认后继续。模块只执行对应测试及直接受影响的回归；D 收口执行阶段整体回归，Phase9.5 执行最终系统审查。
+按 A1 → A2 → B1 → C1 → B2 → C2 → D 执行。每个模块是一个包含实现和测试的本地提交；模块完成对应测试和直接受影响的回归后连续推进。D 收口执行阶段整体回归与 agent 内部 review，问题修复并复验后统一交付提交清单、变更说明、验证结果和限制，供用户集中 CR、review 与 Runtime 机制验收；用户确认通过后进入 9.3。Phase9.5 执行最终系统审查。
 
 各模块先写下列断言并确认失败，再实现最小逻辑、运行验证及 `git diff --check`。命令从仓库根目录执行；筛选测试必须实际匹配用例，零用例不算通过。
 
@@ -449,5 +449,5 @@ go test ./... -count=1
 - [ ] Runtime 与 Environment 工具执行位置有计数断言，内部 Task trigger 没有伪造玩家来源。
 - [ ] 新普通对话通过 ListActive 读取并取消当前任务，历史终态不遮蔽当前项；Clock 推进、版本冲突和绑定失效分别按合同处理。
 - [ ] 队列满、数据库提交失败、断连、保存屏障均不丢持久 wake；InspectWake 能确认 BeginWake 已提交但结果不确定的状态，临时失败可恢复，持续失败有明确暂停与诊断。
-- [ ] Protocol 生成、C# 协议测试及 Runtime 阶段回归通过；七个模块完成本地提交和聚焦 CR 后，交付 9.2 阶段结果并暂停，用户确认后进入 Phase9.3。
+- [ ] Protocol 生成、C# 协议测试及 Runtime 阶段回归通过；七个模块完成本地提交后执行阶段级内部 review，问题修复并复验后交付 9.2 阶段结果，由用户集中 CR、review 与机制验收，确认通过后进入 Phase9.3。
 - [ ] 本阶段不以 fake 测试替代跨地图、玩家 UI 或真实存档验证。

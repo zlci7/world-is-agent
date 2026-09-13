@@ -2,7 +2,7 @@
 
 > **Status:** Implementation Plan — 开发基线；实现与验收状态以验收记录为准
 > **Date:** 2026-09-13
-> **执行方式:** 每个独立模块完成相关测试和 `git diff --check` 后创建本地提交，暂停并交付聚焦 CR；CR 修正使用独立 `fix:` 本地提交，复验通过并经用户确认后继续下一模块。9.4 收口执行阶段整体回归和实机验证；Phase9.5 执行最终整分支/系统审查。
+> **执行方式:** 以 9.4 为交付和用户验收周期。每个独立模块完成相关测试和 `git diff --check` 后创建本地提交并连续推进，无需逐提交等待用户 CR。阶段代码完成后执行整体自动化回归与 agent 内部 review，修正使用独立 `fix:` 本地提交并复验，再由用户集中 CR、review 和实机验收；用户确认通过后进入 9.5。Phase9.5 执行最终整分支/系统审查。
 > **Goal:** 任务随游戏检查点准确恢复，真实结果在无模型确认的情况下进入 History，并可在后续对话引用。
 > **Architecture:** 游戏保存精确引用，Runtime 保存不可变全量 Task 快照；Task 是执行权威，History 是认知来源。
 > **Tech Stack:** SQLite、gRPC、SMAPI Saving/Saved、现有 Phase8 History/Context。
@@ -223,6 +223,8 @@ Task 投影字段：task_id、目标、权威 state/revision、next_wakeup_at/de
 
 ## 7. 开发任务
 
+以下单元是 9.4 内部开发、测试和提交边界，由 agent 完成内部 CR 后连续推进。保存线程交接等必要实机前置证据在依赖实现前取得；本节保存、加载、回退与结果认知的实机检查项汇总为阶段验收步骤，由用户在代码收口后集中验收。阶段交付包含提交清单、变更说明、自动化结果、已知限制和实机验收步骤。
+
 ### 9.4-A：保存桥接
 
 提交边界：Adapter 保存桥接与 Runtime 保存屏障分别形成独立可审查提交。
@@ -309,4 +311,4 @@ dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.cspro
 - [ ] 保存、引用、加载和旧回调的故障窗口全部有自动化断言。
 - [ ] 后台 task_result 无需 LLM 即可入 History；后续请求有真实结果来源。
 - [ ] Task 终态不提前结束真实 UI，UI 真正结束后恢复原生日程。
-- [ ] 旧 Memory / Context 测试通过；实机限制如实记录，各模块完成本地提交和聚焦 CR 后交付 9.4 阶段结果并暂停，用户确认后进入 Phase9.5 最终验收和整分支/系统审查。
+- [ ] 旧 Memory / Context 测试通过；实机限制如实记录，各模块完成本地提交后执行阶段整体自动化回归与内部 review，问题修复并复验后交付 9.4 阶段结果，由用户集中 CR、review 和实机验收；用户确认通过后进入 Phase9.5 最终验收和整分支/系统审查。
