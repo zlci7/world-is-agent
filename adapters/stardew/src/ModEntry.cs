@@ -70,12 +70,18 @@ public sealed class ModEntry : Mod
         helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
         helper.Events.GameLoop.DayStarted += this.OnDayStarted;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
+        helper.Events.GameLoop.TimeChanged += this.OnTimeChanged;
         helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
         helper.Events.Input.ButtonPressed += this.OnButtonPressed;
         helper.ConsoleCommands.Add(
             "gameagent_probe_npc",
             "Run the GameAgent NPC probe without clicking. Usage: gameagent_probe_npc [NPC name]",
             this.RunProbeCommand
+        );
+        helper.ConsoleCommands.Add(
+            "gameagent_runtime_reconnect",
+            "Reconnect the GameAgent Runtime stream and repeat capability/world binding.",
+            (_, _) => this.StartRuntimeClient()
         );
 
         this.Monitor.Log("GameAgent Stardew Adapter Probe loaded.", LogLevel.Info);
@@ -93,6 +99,11 @@ public sealed class ModEntry : Mod
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
     {
+        this.StartRuntimeClient();
+    }
+
+    private void StartRuntimeClient()
+    {
         try
         {
             this.runtimeClient?.Start();
@@ -105,14 +116,17 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
-        this.runtimeClient?.ClearConversations();
-        this.runtimeClient?.RefreshWorldContext();
+        this.runtimeClient?.BeginWorldContext();
     }
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
-        this.runtimeClient?.ClearConversations();
-        this.runtimeClient?.RefreshWorldContext();
+        this.runtimeClient?.RefreshWorldClock();
+    }
+
+    private void OnTimeChanged(object? sender, TimeChangedEventArgs e)
+    {
+        this.runtimeClient?.RefreshWorldClock();
     }
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)

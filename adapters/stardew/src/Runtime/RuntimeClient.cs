@@ -6,6 +6,7 @@ using GameAgent.Protocol.V1Alpha2;
 using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Dialogue;
 using GameAgent.Stardew.State;
+using GameAgent.Stardew.Tasks;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -30,6 +31,9 @@ public sealed class RuntimeClient : IDisposable
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
     private readonly SemaphoreSlim sendMu = new(1, 1);
+    private readonly object connectionGate = new();
+    private readonly RuntimeSessionState sessionState = new();
+    private readonly RuntimeWorldContext worldContext;
 
     private GrpcChannel? channel;
     private AsyncDuplexStreamingCall<AdapterMessage, RuntimeMessage>? stream;
@@ -40,7 +44,9 @@ public sealed class RuntimeClient : IDisposable
     // Background gRPC threads must not resolve Stardew world state directly.
     private volatile string currentWorldId = string.Empty;
     private long eventSequence;
-    private volatile bool isReady;
+    private int worldBindingSent;
+    private long worldBindingClockSequence;
+    private bool disposed;
 
     public RuntimeClient(
         AdapterConfig config,
@@ -63,23 +69,36 @@ public sealed class RuntimeClient : IDisposable
         this.facePlayerCapability = facePlayerCapability;
         this.moveToCapability = moveToCapability;
         this.monitor = monitor;
+        this.worldContext = new RuntimeWorldContext(this.config.GameId, GameClock.ClockId);
     }
 
-    public bool IsReady => this.isReady && this.stream is not null;
+    public bool IsReady => this.sessionState.CanUseRuntime && this.stream is not null;
+
+    public bool IsTaskReady => this.sessionState.CanUseTasks && this.stream is not null;
 
     public void Start()
     {
-        if (this.receiveTask is not null)
-            return;
+        lock (this.connectionGate)
+        {
+            if (this.disposed)
+                throw new ObjectDisposedException(nameof(RuntimeClient));
+            if (this.receiveTask is { IsCompleted: false })
+                return;
 
-        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+            this.stream?.Dispose();
+            this.channel?.Dispose();
+            this.cancellation?.Dispose();
 
-        this.cancellation = new CancellationTokenSource();
-        this.channel = GrpcChannel.ForAddress(this.config.RuntimeAddress);
-
-        var client = new GameAgentGateway.GameAgentGatewayClient(this.channel);
-        this.stream = client.Connect(cancellationToken: this.cancellation.Token);
-        this.receiveTask = Task.Run(() => this.RunAsync(this.cancellation.Token));
+            AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+            this.cancellation = new CancellationTokenSource();
+            this.channel = GrpcChannel.ForAddress(this.config.RuntimeAddress);
+            GameAgentGateway.GameAgentGatewayClient client = new(this.channel);
+            this.stream = client.Connect(cancellationToken: this.cancellation.Token);
+            this.sessionState.BeginConnection();
+            Interlocked.Exchange(ref this.worldBindingSent, 0);
+            Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+            this.receiveTask = Task.Run(() => this.RunAsync(this.cancellation.Token));
+        }
     }
 
     public void SendPlayerInteracted(NPC npc, Farmer player, string trigger)
@@ -245,7 +264,9 @@ public sealed class RuntimeClient : IDisposable
 
     public void Dispose()
     {
-        this.isReady = false;
+        lock (this.connectionGate)
+            this.disposed = true;
+        this.sessionState.Disconnect();
 
         try
         {
@@ -288,22 +309,23 @@ public sealed class RuntimeClient : IDisposable
         }
         finally
         {
-            this.isReady = false;
+            this.sessionState.Disconnect();
+            Interlocked.Exchange(ref this.worldBindingSent, 0);
+            Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
             this.dispatcher.Enqueue(() => this.ClearRuntimeStreamStateOnMainThread());
         }
     }
 
     private async Task SendHelloAsync(CancellationToken cancellationToken)
     {
-        var hello = new AdapterHello
-        {
-            AdapterId = this.config.AdapterId,
-            AdapterVersion = this.config.AdapterVersion,
-            ProtocolVersion = ProtocolVersion,
-            GameId = this.config.GameId,
-            GameVersion = "unknown",
-            SessionId = this.sessionId,
-        };
+        AdapterHello hello = ProtocolMapper.BuildAdapterHello(
+            this.config.AdapterId,
+            this.config.AdapterVersion,
+            ProtocolVersion,
+            this.config.GameId,
+            "unknown",
+            this.sessionId
+        );
 
         await this.SendAsync(
             new AdapterMessage
@@ -322,11 +344,23 @@ public sealed class RuntimeClient : IDisposable
         switch (message.PayloadCase)
         {
             case RuntimeMessage.PayloadOneofCase.EnvironmentReady:
+                if (!this.sessionState.AcceptEnvironmentReady(message.EnvironmentReady.AcceptedExtensions, out string environmentError))
+                    throw new InvalidOperationException(environmentError);
                 this.monitor.Log("GameAgent Runtime EnvironmentReady received.", LogLevel.Info);
                 break;
 
             case RuntimeMessage.PayloadOneofCase.CapabilityRequest:
+                if (!this.sessionState.AcceptCapabilityRequest(out string capabilityError))
+                    throw new InvalidOperationException(capabilityError);
                 await this.SendCapabilitiesAsync(message.MessageId, cancellationToken);
+                break;
+
+            case RuntimeMessage.PayloadOneofCase.WorldBindingReady:
+                await this.HandleWorldBindingReadyAsync(message.WorldBindingReady, cancellationToken);
+                break;
+
+            case RuntimeMessage.PayloadOneofCase.TaskControl:
+                await this.HandleTaskControlAsync(message.TaskControl, cancellationToken);
                 break;
 
             case RuntimeMessage.PayloadOneofCase.EventAck:
@@ -376,8 +410,120 @@ public sealed class RuntimeClient : IDisposable
             cancellationToken
         );
 
-        this.isReady = true;
+        this.sessionState.MarkCapabilitiesSent();
         this.monitor.Log($"GameAgent CapabilityList sent: {string.Join(", ", capabilities.Capabilities.Select(capability => capability.Name))}.", LogLevel.Info);
+        await this.TrySendWorldBindingAsync(cancellationToken);
+    }
+
+    private async Task TrySendWorldBindingAsync(CancellationToken cancellationToken)
+    {
+        RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
+        if (snapshot is null ||
+            this.sessionState.Phase != RuntimeSessionPhase.AwaitingWorldBindingReady ||
+            Interlocked.CompareExchange(ref this.worldBindingSent, 1, 0) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            Interlocked.Exchange(ref this.worldBindingClockSequence, checked((long)snapshot.ClockSequence));
+            await this.SendAsync(
+                new AdapterMessage
+                {
+                    MessageId = ProtocolMapper.NewMessageId("world_binding"),
+                    WorldBinding = ProtocolMapper.BuildWorldBinding(snapshot, this.config.AgentTargets),
+                },
+                cancellationToken
+            );
+            this.monitor.Log($"GameAgent WorldBinding sent: world_id={snapshot.WorldId} run_id={snapshot.WorldRunId} sequence={snapshot.ClockSequence}.", LogLevel.Info);
+        }
+        catch
+        {
+            Interlocked.Exchange(ref this.worldBindingSent, 0);
+            Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+            throw;
+        }
+    }
+
+    private async Task HandleWorldBindingReadyAsync(WorldBindingReady? ready, CancellationToken cancellationToken)
+    {
+        if (ready is null)
+            throw new InvalidOperationException("world_binding_ready_missing");
+
+        if (string.Equals(ready.Status, "ready", StringComparison.Ordinal))
+        {
+            TaskScope scope = ready.Scope ?? throw new InvalidOperationException("world_binding_scope_missing");
+            if (!this.worldContext.TryApplyBinding(scope.GameId, scope.WorldId, scope.WorldRunId, scope.ExecutionGeneration, out string bindingError))
+            {
+                this.sessionState.PauseTasks();
+                throw new InvalidOperationException(bindingError);
+            }
+        }
+
+        if (!this.sessionState.AcceptWorldBindingReady(ready.Status, out string stateError))
+            throw new InvalidOperationException(stateError);
+
+        this.monitor.Log(
+            $"GameAgent WorldBindingReady received: status={ready.Status} code={ready.Error?.Code ?? string.Empty}.",
+            string.Equals(ready.Status, "ready", StringComparison.Ordinal) ? LogLevel.Info : LogLevel.Warn
+        );
+
+        if (this.sessionState.CanUseTasks &&
+            this.worldContext.Current is RuntimeWorldSnapshot current &&
+            current.ClockSequence > unchecked((ulong)Interlocked.Read(ref this.worldBindingClockSequence)))
+        {
+            await this.SendWorldClockAsync(current, cancellationToken);
+        }
+    }
+
+    private async Task HandleTaskControlAsync(TaskControlRequest? request, CancellationToken cancellationToken)
+    {
+        if (request is null)
+            return;
+
+        string status = "mismatch";
+        RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
+        if (this.sessionState.CanUseTasks && snapshot is not null && ScopeMatches(request.Scope, snapshot))
+            status = "unconfirmed";
+
+        TaskControlResult result = new()
+        {
+            Scope = request.Scope,
+            TaskId = request.TaskId,
+            OperationId = request.OperationId,
+            RequestId = request.RequestId,
+            Status = status,
+        };
+        await this.SendAsync(
+            new AdapterMessage
+            {
+                MessageId = ProtocolMapper.NewMessageId("task_control_result"),
+                TaskControlResult = result,
+            },
+            cancellationToken
+        );
+    }
+
+    private Task SendWorldClockAsync(RuntimeWorldSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        return this.SendAsync(
+            new AdapterMessage
+            {
+                MessageId = ProtocolMapper.NewMessageId("world_clock"),
+                WorldClock = ProtocolMapper.BuildWorldClockUpdate(snapshot),
+            },
+            cancellationToken
+        );
+    }
+
+    private static bool ScopeMatches(TaskScope? scope, RuntimeWorldSnapshot snapshot)
+    {
+        return scope is not null &&
+            string.Equals(scope.GameId, snapshot.GameId, StringComparison.Ordinal) &&
+            string.Equals(scope.WorldId, snapshot.WorldId, StringComparison.Ordinal) &&
+            string.Equals(scope.WorldRunId, snapshot.WorldRunId, StringComparison.Ordinal) &&
+            scope.ExecutionGeneration == snapshot.ExecutionGeneration;
     }
 
     private void HandleCancelAction(CancelActionRequest request)
@@ -435,7 +581,12 @@ public sealed class RuntimeClient : IDisposable
         ActionResult result;
         this.presentDialogueCapability.CloseWaitingForNpc(request.EntityId);
 
-        if (!RuntimeWorldScope.Matches(request.WorldId, this.currentWorldId))
+        if (request.TaskSource is not null && !this.IsTaskReady)
+        {
+            result = ProtocolMapper.BuildRejectedActionResult(request, "task_not_ready", "durable task world is not ready");
+            this.monitor.Log($"GameAgent Task ActionRequest rejected before WorldBindingReady: {request.ActionId}", LogLevel.Warn);
+        }
+        else if (!RuntimeWorldScope.Matches(request.WorldId, this.currentWorldId))
         {
             string message = RuntimeWorldScope.MismatchMessage(request.WorldId, this.currentWorldId);
             result = ProtocolMapper.BuildRejectedActionResult(request, "world_mismatch", message);
@@ -561,15 +712,41 @@ public sealed class RuntimeClient : IDisposable
         return npc;
     }
 
-    public void RefreshWorldContext()
+    public void BeginWorldContext()
     {
         string worldId = this.ResolveCurrentWorldId();
-        if (string.Equals(this.currentWorldId, worldId, StringComparison.Ordinal))
+        if (!RuntimeWorldScope.IsAvailable(worldId))
+        {
+            this.ClearWorldContext();
+            return;
+        }
+
+        this.ClearConversations();
+        this.currentWorldId = worldId;
+        this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick());
+        this.sessionState.PrepareWorldBinding();
+        Interlocked.Exchange(ref this.worldBindingSent, 0);
+        Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+        this.SendFireAndForget(
+            this.TrySendWorldBindingAsync(this.cancellation?.Token ?? CancellationToken.None),
+            "WorldBinding"
+        );
+        this.monitor.Log($"GameAgent world context started: world_id={worldId} run_id={this.worldContext.Current?.WorldRunId}", LogLevel.Debug);
+    }
+
+    public void RefreshWorldClock()
+    {
+        if (this.worldContext.Current is null)
             return;
 
-        this.currentWorldId = worldId;
-        if (RuntimeWorldScope.IsAvailable(worldId))
-            this.monitor.Log($"GameAgent world context refreshed: world_id={worldId}", LogLevel.Debug);
+        this.worldContext.AdvanceClock(this.ReadCurrentWorldTick());
+        if (this.IsTaskReady && this.worldContext.Current is RuntimeWorldSnapshot snapshot)
+        {
+            this.SendFireAndForget(
+                this.SendWorldClockAsync(snapshot, this.cancellation?.Token ?? CancellationToken.None),
+                "WorldClockUpdate"
+            );
+        }
     }
 
     public void ClearWorldContext()
@@ -577,6 +754,10 @@ public sealed class RuntimeClient : IDisposable
         this.moveToCapability.CancelAll("world context cleared before movement completed");
         this.presentDialogueCapability.CloseAll();
         this.currentWorldId = string.Empty;
+        this.worldContext.Clear();
+        this.sessionState.PauseTasks();
+        Interlocked.Exchange(ref this.worldBindingSent, 0);
+        Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
         this.conversationStore.Clear();
         this.interactionContextStore.Clear();
     }
@@ -598,6 +779,11 @@ public sealed class RuntimeClient : IDisposable
             return Constants.SaveFolderName;
 
         return string.Empty;
+    }
+
+    private long ReadCurrentWorldTick()
+    {
+        return GameClock.ToTick(Game1.year, GameClock.SeasonIndex(Game1.currentSeason), Game1.dayOfMonth, Game1.timeOfDay);
     }
 
     private async Task SendAsync(AdapterMessage message, CancellationToken cancellationToken)
