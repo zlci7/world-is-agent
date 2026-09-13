@@ -31,4 +31,7 @@
     <Compile Include="..\..\src\Tasks\NpcNativeSchedulePolicy.cs" Link="NpcNativeSchedulePolicy.cs" />
     <Compile Include="..\..\src\Tasks\ControllerOwnership.cs" Link="ControllerOwnership.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\assets\landmarks.json" Link="assets\landmarks.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
