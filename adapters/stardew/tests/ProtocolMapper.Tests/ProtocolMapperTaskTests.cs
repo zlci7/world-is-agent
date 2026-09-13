@@ -115,6 +115,37 @@ public sealed class ProtocolMapperTaskTests
         Assert.Throws<ArgumentException>(() => ProtocolMapper.RequireTaskOperationSource(request, Snapshot));
     }
 
+    [Fact]
+    public void MapsMoveToLandmarkArgumentsAndArrivalProgressEvidence()
+    {
+        ActionRequest request = TaskActionRequest();
+        TaskOperationSource source = ProtocolMapper.RequireTaskOperationSource(request, Snapshot);
+
+        string landmarkId = ProtocolMapper.RequireMoveToLandmarkArgument(request);
+        ActionResult result = ProtocolMapper.BuildTaskDriverActionResult(
+            request,
+            source,
+            new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36)),
+            Snapshot);
+
+        Assert.Equal("beach_meeting_spot", landmarkId);
+        Assert.Equal(ActionStatus.Succeeded, result.Status);
+        TaskEvidence evidence = Assert.Single(result.TaskEvidence);
+        Assert.Equal("progress", evidence.Outcome);
+        Assert.Equal((ulong)4, evidence.StartRevision);
+        Assert.Equal("Beach", evidence.Details.Fields["location"].StringValue);
+        Assert.False(evidence.Details.Fields.ContainsKey("satisfied"));
+    }
+
+    [Fact]
+    public void MoveToLandmarkRejectsExtraModelArguments()
+    {
+        ActionRequest request = TaskActionRequest();
+        request.Arguments.Fields.Add("location", Value.ForString("Beach"));
+
+        Assert.Throws<ArgumentException>(() => ProtocolMapper.RequireMoveToLandmarkArgument(request));
+    }
+
     private static ActionRequest ResolveRequest()
     {
         return new ActionRequest

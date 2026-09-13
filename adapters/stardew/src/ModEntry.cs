@@ -26,6 +26,7 @@ public sealed class ModEntry : Mod
     private FacePlayerCapability? facePlayerCapability;
     private MoveToCapability? moveToCapability;
     private ResolveMeetingCapability? resolveMeetingCapability;
+    private TaskExecutionDriver? taskExecutionDriver;
     private PlayerInteractProbe? playerInteractProbe;
     private RuntimeClient? runtimeClient;
     private StardewRouteProbe? phase9RouteProbe;
@@ -54,6 +55,12 @@ public sealed class ModEntry : Mod
         string landmarkJson = File.ReadAllText(Path.Combine(helper.DirectoryPath, "assets", "landmarks.json"));
         LandmarkCatalog landmarkCatalog = LandmarkCatalog.Parse(landmarkJson);
         this.resolveMeetingCapability = new ResolveMeetingCapability(landmarkCatalog);
+        NpcControlLease npcControlLease = new();
+        this.taskExecutionDriver = new TaskExecutionDriver(
+            new TaskSourceContextStore(),
+            new TaskOperationReceipts(),
+            npcControlLease,
+            new GameNpcDriver());
         this.runtimeClient = new RuntimeClient(
             this.config,
             this.dispatcher,
@@ -65,6 +72,8 @@ public sealed class ModEntry : Mod
             this.moveToCapability,
             this.resolveMeetingCapability,
             landmarkCatalog,
+            this.taskExecutionDriver,
+            npcControlLease,
             this.Monitor
         );
         this.playerInteractProbe = new PlayerInteractProbe(
@@ -147,6 +156,7 @@ public sealed class ModEntry : Mod
         this.dispatcher?.Drain();
         this.dialogueController?.Update();
         this.moveToCapability?.Update();
+        this.runtimeClient?.UpdateTaskActions();
     }
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)

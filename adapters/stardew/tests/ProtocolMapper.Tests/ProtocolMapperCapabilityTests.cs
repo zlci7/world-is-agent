@@ -58,10 +58,15 @@ public sealed class ProtocolMapperCapabilityTests
 
         Capability resolve = CapabilityCatalog.BuildEnvironmentCapabilities(LandmarkCatalog.Parse(json).Landmarks)
             .Capabilities.Single(capability => capability.Name == "resolve_meeting");
+        Capability moveToLandmark = CapabilityCatalog.BuildEnvironmentCapabilities(LandmarkCatalog.Parse(json).Landmarks)
+            .Capabilities.Single(capability => capability.Name == "move_to_landmark");
 
         Assert.Equal(ExecutionMode.Sync, resolve.ExecutionMode);
         Assert.Equal(CapabilityConcurrencyMode.Sequential, resolve.ConcurrencyMode);
         Assert.Contains("\"enum\":[\"beach_meeting_spot\"]", resolve.InputSchemaJson, StringComparison.Ordinal);
         Assert.Contains("\"additionalProperties\":false", resolve.InputSchemaJson, StringComparison.Ordinal);
+        Assert.Equal(ExecutionMode.Async, moveToLandmark.ExecutionMode);
+        Assert.Equal(CapabilityConcurrencyMode.Sequential, moveToLandmark.ConcurrencyMode);
+        Assert.Contains("\"enum\":[\"beach_meeting_spot\"]", moveToLandmark.InputSchemaJson, StringComparison.Ordinal);
     }
 }

@@ -30,6 +30,9 @@ public sealed class RuntimeClient : IDisposable
     private readonly MoveToCapability moveToCapability;
     private readonly ResolveMeetingCapability resolveMeetingCapability;
     private readonly LandmarkCatalog landmarkCatalog;
+    private readonly TaskExecutionDriver taskExecutionDriver;
+    private readonly NpcControlLease npcControlLease;
+    private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
     private readonly SemaphoreSlim sendMu = new(1, 1);
@@ -61,6 +64,8 @@ public sealed class RuntimeClient : IDisposable
         MoveToCapability moveToCapability,
         ResolveMeetingCapability resolveMeetingCapability,
         LandmarkCatalog landmarkCatalog,
+        TaskExecutionDriver taskExecutionDriver,
+        NpcControlLease npcControlLease,
         IMonitor monitor
     )
     {
@@ -74,6 +79,8 @@ public sealed class RuntimeClient : IDisposable
         this.moveToCapability = moveToCapability;
         this.resolveMeetingCapability = resolveMeetingCapability;
         this.landmarkCatalog = landmarkCatalog;
+        this.taskExecutionDriver = taskExecutionDriver;
+        this.npcControlLease = npcControlLease;
         this.monitor = monitor;
         this.worldContext = new RuntimeWorldContext(this.config.GameId, GameClock.ClockId);
     }
@@ -625,6 +632,12 @@ public sealed class RuntimeClient : IDisposable
                     return;
                 }
 
+                if (request.Capability == "move_to_landmark")
+                {
+                    this.HandleMoveToLandmarkAction(request);
+                    return;
+                }
+
                 result = request.Capability switch
                 {
                     "emote" => this.HandleEmoteAction(request),
@@ -703,6 +716,8 @@ public sealed class RuntimeClient : IDisposable
 
     private void ClearRuntimeStreamStateOnMainThread()
     {
+        this.taskExecutionDriver.Clear();
+        this.activeTaskActions.Clear();
         this.moveToCapability.Clear();
         this.presentDialogueCapability.CloseAll();
         this.conversationStore.Clear();
@@ -733,6 +748,8 @@ public sealed class RuntimeClient : IDisposable
             return;
         }
 
+        this.taskExecutionDriver.Clear();
+        this.activeTaskActions.Clear();
         this.ClearConversations();
         this.currentWorldId = worldId;
         this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick());
@@ -763,6 +780,8 @@ public sealed class RuntimeClient : IDisposable
 
     public void ClearWorldContext()
     {
+        this.taskExecutionDriver.Clear();
+        this.activeTaskActions.Clear();
         this.moveToCapability.CancelAll("world context cleared before movement completed");
         this.presentDialogueCapability.CloseAll();
         this.currentWorldId = string.Empty;
@@ -780,6 +799,46 @@ public sealed class RuntimeClient : IDisposable
         this.presentDialogueCapability.CloseAll();
         this.conversationStore.Clear();
         this.interactionContextStore.Clear();
+    }
+
+    public void UpdateTaskActions()
+    {
+        RuntimeWorldSnapshot? world = this.worldContext.Current;
+        if (world is null || this.activeTaskActions.Count == 0)
+            return;
+
+        foreach (OperationKey operation in this.activeTaskActions.Keys.ToArray())
+        {
+            if (!this.activeTaskActions.TryGetValue(operation, out ActiveTaskOperation? active))
+                continue;
+
+            try
+            {
+                TaskExecutionOutcome outcome = active.Requests.Any(request => this.actionCancellationRegistry.TryConsumeCancelled(request.ActionId))
+                    ? this.taskExecutionDriver.Cancel(operation, "action cancelled while travelling")
+                    : this.taskExecutionDriver.Poll(operation, world);
+                if (!outcome.Result.IsTerminal)
+                    continue;
+
+                this.activeTaskActions.Remove(operation);
+                foreach (ActionRequest request in active.Requests)
+                {
+                    this.actionCancellationRegistry.Clear(request.ActionId);
+                    this.SendActionResult(
+                        ProtocolMapper.BuildTaskDriverActionResult(request, active.Source, outcome.Result, world),
+                        request.Capability);
+                }
+            }
+            catch (Exception ex)
+            {
+                this.activeTaskActions.Remove(operation);
+                foreach (ActionRequest request in active.Requests)
+                    this.actionCancellationRegistry.Clear(request.ActionId);
+                this.monitor.Log($"GameAgent task action polling failed: {ex.Message}", LogLevel.Error);
+                foreach (ActionRequest request in active.Requests)
+                    this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "task_action_failed", ex), request.Capability);
+            }
+        }
     }
 
     private string ResolveCurrentWorldId()
@@ -933,6 +992,42 @@ public sealed class RuntimeClient : IDisposable
         }
     }
 
+    private void HandleMoveToLandmarkAction(ActionRequest request)
+    {
+        try
+        {
+            RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
+            TaskOperationSource source = ProtocolMapper.RequireTaskOperationSource(request, world);
+            string landmarkId = ProtocolMapper.RequireMoveToLandmarkArgument(request);
+            TaskExecutionOutcome outcome = this.taskExecutionDriver.BeginTravel(source, world, landmarkId, this.landmarkCatalog);
+            if (outcome.Result.IsTerminal)
+            {
+                this.SendActionResult(ProtocolMapper.BuildTaskDriverActionResult(request, source, outcome.Result, world), request.Capability);
+                return;
+            }
+
+            if (!this.activeTaskActions.TryGetValue(source.Operation, out ActiveTaskOperation? active))
+            {
+                active = new ActiveTaskOperation(source, new List<ActionRequest>());
+                this.activeTaskActions.Add(source.Operation, active);
+            }
+            if (!active.Requests.Any(existing => string.Equals(existing.ActionId, request.ActionId, StringComparison.Ordinal)))
+                active.Requests.Add(request);
+
+            Struct metadata = ProtocolMapper.BuildTaskDriverStatusMetadata(outcome.Result);
+            this.SendActionStatusUpdate(request, ActionStatus.Accepted, metadata);
+            this.SendActionStatusUpdate(request, ActionStatus.Running, metadata);
+        }
+        catch (ArgumentException ex)
+        {
+            this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_action_arguments", ex.Message), request.Capability);
+        }
+        catch (Exception ex)
+        {
+            this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "task_action_failed", ex), request.Capability);
+        }
+    }
+
     private void HandlePresentDialogueAction(ActionRequest request)
     {
         try
@@ -972,6 +1067,7 @@ public sealed class RuntimeClient : IDisposable
 
     private void HandleMoveToAction(ActionRequest request)
     {
+        LeaseToken? lease = null;
         try
         {
             if (!this.TryGuardInteractionContext(request, requireProximity: true, out NPC? npc, out _, out ActionResult? rejected))
@@ -987,6 +1083,21 @@ public sealed class RuntimeClient : IDisposable
             }
 
             NPC guardedNpc = npc ?? throw new InvalidOperationException("interaction guard passed without NPC");
+            RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
+            OperationKey operation = new(
+                world.WorldId,
+                world.WorldRunId,
+                world.ExecutionGeneration,
+                request.EntityId,
+                "interaction:" + request.SourceEventId,
+                request.ActionId);
+            LeaseAttempt leaseAttempt = this.npcControlLease.Acquire(operation, "travelling");
+            if (!leaseAttempt.Acquired)
+            {
+                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, leaseAttempt.Code, "NPC is controlled by another operation"), request.Capability);
+                return;
+            }
+            lease = leaseAttempt.Token;
             MoveToInput input = ProtocolMapper.RequireMoveToArgument(request);
             MoveToStart start = this.moveToCapability.Start(
                 request.ActionId,
@@ -995,16 +1106,19 @@ public sealed class RuntimeClient : IDisposable
                 isCancelled: () => this.actionCancellationRegistry.IsCancelled(request.ActionId),
                 onSucceeded: progress =>
                 {
+                    this.npcControlLease.Release(lease!, "arrived");
                     this.actionCancellationRegistry.Clear(request.ActionId);
                     this.SendActionResult(ProtocolMapper.BuildMoveToSucceededActionResult(request, progress), request.Capability);
                 },
                 onCancelled: reason =>
                 {
+                    this.npcControlLease.Release(lease!, "cancelled");
                     this.actionCancellationRegistry.Clear(request.ActionId);
                     this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, reason), request.Capability);
                 },
                 onFailed: (code, ex) =>
                 {
+                    this.npcControlLease.Release(lease!, code);
                     this.actionCancellationRegistry.Clear(request.ActionId);
                     this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, code, ex), request.Capability);
                 }
@@ -1014,23 +1128,30 @@ public sealed class RuntimeClient : IDisposable
             this.SendActionStatusUpdate(request, ActionStatus.Running, ProtocolMapper.BuildMoveToStatusMetadata(start.Progress));
             if (start.AlreadyAtTarget)
             {
+                this.npcControlLease.Release(lease!, "already_at_target");
                 this.actionCancellationRegistry.Clear(request.ActionId);
                 this.SendActionResult(ProtocolMapper.BuildMoveToSucceededActionResult(request, start.Progress), request.Capability);
             }
         }
         catch (ArgumentException ex)
         {
+            if (lease is not null)
+                this.npcControlLease.Release(lease, "invalid_move_target");
             this.monitor.Log($"GameAgent move_to rejected: {ex.Message}", LogLevel.Warn);
             this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_move_target", ex.Message), request.Capability);
         }
         catch (OperationCanceledException ex)
         {
+            if (lease is not null)
+                this.npcControlLease.Release(lease, "cancelled");
             this.actionCancellationRegistry.Clear(request.ActionId);
             this.monitor.Log($"GameAgent move_to cancelled: {ex.Message}", LogLevel.Debug);
             this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, ex.Message), request.Capability);
         }
         catch (Exception ex)
         {
+            if (lease is not null)
+                this.npcControlLease.Release(lease, "move_failed");
             this.monitor.Log($"GameAgent move_to failed: {ex.Message}", LogLevel.Error);
             this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "move_failed", ex), request.Capability);
         }
@@ -1256,4 +1377,6 @@ public sealed class RuntimeClient : IDisposable
             TaskContinuationOptions.OnlyOnFaulted
         );
     }
+
+    private sealed record ActiveTaskOperation(TaskOperationSource Source, List<ActionRequest> Requests);
 }

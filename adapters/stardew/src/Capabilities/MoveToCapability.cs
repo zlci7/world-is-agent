@@ -153,10 +153,11 @@ public sealed class MoveToCapability
 
     private static void StopController(ActiveMoveToAction active)
     {
-        if (ReferenceEquals(active.Npc.controller, active.Controller))
-            active.Npc.controller = null;
-
-        active.Npc.Halt();
+        if (!ReferenceEquals(active.Npc.controller, active.Controller))
+            return;
+        active.Npc.controller = null;
+        if (active.Npc.temporaryController is null)
+            active.Npc.Halt();
     }
 
     private static MoveToProgress CurrentProgress(NPC npc)

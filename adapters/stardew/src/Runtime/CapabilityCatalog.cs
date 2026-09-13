@@ -83,6 +83,15 @@ public static class CapabilityCatalog
                     ExecutionMode = ExecutionMode.Sync,
                     ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
                 });
+                result.Capabilities.Add(new Capability
+                {
+                    Name = "move_to_landmark",
+                    Version = "0.1.0",
+                    Description = "Moves the task NPC to a verified meeting landmark using the native cross-location schedule pathfinder. Arrival produces progress evidence, not task satisfaction.",
+                    InputSchemaJson = $"{{\"type\":\"object\",\"properties\":{{\"landmark_id\":{{\"type\":\"string\",\"enum\":{landmarkEnum}}}}},\"required\":[\"landmark_id\"],\"additionalProperties\":false}}",
+                    ExecutionMode = ExecutionMode.Async,
+                    ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
+                });
             }
         }
 

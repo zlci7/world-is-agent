@@ -218,6 +218,66 @@ public static partial class ProtocolMapper
         return new TaskOperationSource(operation, source.StartRevision, RequireNonEmpty(source.WakeId, "task action wake_id"), agreement);
     }
 
+    public static string RequireMoveToLandmarkArgument(ActionRequest request)
+    {
+        Struct arguments = request.Arguments ?? throw new ArgumentException("missing required move_to_landmark arguments");
+        if (arguments.Fields.Count != 1)
+            throw new ArgumentException("move_to_landmark accepts only landmark_id");
+        return RequireStringField(arguments, "landmark_id", "move_to_landmark landmark_id");
+    }
+
+    public static ActionResult BuildTaskDriverActionResult(
+        ActionRequest request,
+        TaskOperationSource source,
+        DriverResult driver,
+        RuntimeWorldSnapshot world)
+    {
+        ActionStatus status = driver.Status switch
+        {
+            "succeeded" => ActionStatus.Succeeded,
+            "failed" => ActionStatus.Failed,
+            "interrupted" => ActionStatus.Interrupted,
+            "cancelled" => ActionStatus.Cancelled,
+            "rejected" => ActionStatus.Rejected,
+            _ => throw new ArgumentException($"unsupported terminal driver status: {driver.Status}"),
+        };
+        Struct details = BuildDriverDetails(driver);
+        ActionResult result = new()
+        {
+            ActionId = request.ActionId,
+            Status = status,
+            Output = details,
+        };
+        if (status != ActionStatus.Succeeded)
+        {
+            result.Error = new Error
+            {
+                Code = RequireNonEmpty(driver.Code, "driver result code"),
+                Message = string.IsNullOrWhiteSpace(driver.Message) ? driver.Code : driver.Message,
+            };
+        }
+        if (status == ActionStatus.Succeeded && string.Equals(driver.Code, "arrived", StringComparison.Ordinal))
+        {
+            result.TaskEvidence.Add(new TaskEvidence
+            {
+                FactId = $"{source.Operation.TaskId}:{source.Operation.OperationId}:arrived",
+                TaskId = source.Operation.TaskId,
+                OperationId = source.Operation.OperationId,
+                Scope = BuildTaskScope(world),
+                StartRevision = source.StartRevision,
+                OccurredAt = world.NowTick,
+                Outcome = "progress",
+                Details = details,
+            });
+        }
+        return result;
+    }
+
+    public static Struct BuildTaskDriverStatusMetadata(DriverResult driver)
+    {
+        return BuildDriverDetails(driver);
+    }
+
     private static TaskScope BuildTaskScope(RuntimeWorldSnapshot snapshot)
     {
         return new TaskScope
@@ -236,6 +296,26 @@ public static partial class ProtocolMapper
             ClockId = snapshot.ClockId,
             NowTick = snapshot.NowTick,
             Sequence = snapshot.ClockSequence,
+        };
+    }
+
+    private static Struct BuildDriverDetails(DriverResult driver)
+    {
+        return new Struct
+        {
+            Fields =
+            {
+                ["code"] = Value.ForString(driver.Code ?? string.Empty),
+                ["location"] = Value.ForString(driver.Position.Location),
+                ["tile"] = Value.ForStruct(new Struct
+                {
+                    Fields =
+                    {
+                        ["x"] = Value.ForNumber(driver.Position.X),
+                        ["y"] = Value.ForNumber(driver.Position.Y),
+                    },
+                }),
+            },
         };
     }
 
