@@ -21,7 +21,9 @@ public static class CapabilityCatalog
     private const string MoveToInputSchemaJson =
         "{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\"},\"tile\":{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"integer\"},\"y\":{\"type\":\"integer\"}},\"required\":[\"x\",\"y\"],\"additionalProperties\":false}},\"required\":[\"location\",\"tile\"],\"additionalProperties\":false}";
 
-    public static CapabilityList BuildEnvironmentCapabilities(IEnumerable<Landmark>? landmarks = null)
+    public static CapabilityList BuildEnvironmentCapabilities(
+        IEnumerable<Landmark>? landmarks = null,
+        bool includeTaskCapabilities = true)
     {
         CapabilityList result = new()
         {
@@ -77,7 +79,7 @@ public static class CapabilityCatalog
             },
         };
 
-        if (landmarks is not null)
+        if (includeTaskCapabilities && landmarks is not null)
         {
             string[] ids = landmarks.Select(landmark => landmark.LandmarkId).Distinct().OrderBy(id => id).ToArray();
             if (ids.Length != 0)

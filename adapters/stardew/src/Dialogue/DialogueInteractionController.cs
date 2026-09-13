@@ -12,7 +12,8 @@ public sealed record DialoguePresentation(
     string ConversationId,
     PresentDialogueInput Input,
     Action<PlayerDialogueSubmission> OnSubmitted,
-    Action OnAbandoned
+    Action OnAbandoned,
+    Action OnFinished
 );
 
 public sealed class DialogueInteractionController
@@ -199,7 +200,8 @@ public sealed class DialogueInteractionController
             this.flow = new DialoguePresentationFlow(
                 shouldShowReplyMenu: this.choices.Count > 0 || presentation.Input.AllowFreeText,
                 onDisplayed: onDisplayed,
-                onAbandoned: presentation.OnAbandoned
+                onAbandoned: presentation.OnAbandoned,
+                onFinished: presentation.OnFinished
             );
         }
 

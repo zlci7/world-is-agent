@@ -48,7 +48,8 @@ public sealed class PresentDialogueCapability
         Action<string> onDisplayed,
         Action<Exception> onFailed,
         Action<PlayerDialogueSubmission> onSubmitted,
-        Action onAbandoned
+        Action onAbandoned,
+        Action onFinished
     )
     {
         string npcEntityId = ToNpcEntityId(npc.Name);
@@ -75,7 +76,8 @@ public sealed class PresentDialogueCapability
                     {
                         this.conversationStore.CloseIfConversation(worldId, npcEntityId, PlayerEntityId, conversationId);
                         onAbandoned();
-                    }
+                    },
+                    OnFinished: onFinished
                 );
             },
             onDisplayed: () =>

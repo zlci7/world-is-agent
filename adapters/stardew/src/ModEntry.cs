@@ -105,7 +105,7 @@ public sealed class ModEntry : Mod
         helper.ConsoleCommands.Add(
             "gameagent_runtime_reconnect",
             "Reconnect the GameAgent Runtime stream and repeat capability/world binding.",
-            (_, _) => this.StartRuntimeClient()
+            (_, _) => this.ReconnectRuntimeClient()
         );
 
         this.Monitor.Log("GameAgent Stardew Adapter Probe loaded.", LogLevel.Info);
@@ -135,6 +135,18 @@ public sealed class ModEntry : Mod
         catch (Exception ex)
         {
             this.Monitor.Log($"Failed to start GameAgent Runtime client: {ex}", LogLevel.Error);
+        }
+    }
+
+    private void ReconnectRuntimeClient()
+    {
+        try
+        {
+            this.runtimeClient?.Reconnect();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Failed to reconnect GameAgent Runtime client: {ex}", LogLevel.Error);
         }
     }
 

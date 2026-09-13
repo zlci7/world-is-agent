@@ -6,6 +6,24 @@ namespace GameAgent.Stardew.Tests;
 public sealed class DialoguePresentationFlowTests
 {
     [Fact]
+    public void FinalDialogueReportsUiFinishedOnlyAfterItCloses()
+    {
+        int finished = 0;
+        DialoguePresentationFlow flow = new(
+            shouldShowReplyMenu: false,
+            onDisplayed: () => { },
+            onAbandoned: () => { },
+            onFinished: () => finished++);
+        flow.Start(() => { });
+
+        flow.Update(isDialogueUiBusy: true, isReplyMenuActive: false, showReplyMenu: () => { });
+        Assert.Equal(0, finished);
+        flow.Update(isDialogueUiBusy: false, isReplyMenuActive: false, showReplyMenu: () => { });
+
+        Assert.Equal(1, finished);
+    }
+
+    [Fact]
     public void ShowsNpcLineThenReplyMenuAfterNativeDialogueCloses()
     {
         int npcLineShows = 0;

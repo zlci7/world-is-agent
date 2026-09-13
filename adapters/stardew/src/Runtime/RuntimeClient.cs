@@ -36,12 +36,14 @@ public sealed class RuntimeClient : IDisposable
     private readonly MeetingWaitMonitor meetingWaitMonitor;
     private readonly NpcInteractionLifecycle taskInteractionLifecycle;
     private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
+    private readonly Dictionary<string, string> taskInteractionEventByConversation = new(StringComparer.Ordinal);
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
     private readonly SemaphoreSlim sendMu = new(1, 1);
     private readonly object connectionGate = new();
     private readonly RuntimeSessionState sessionState = new();
     private readonly RuntimeWorldContext worldContext;
+    private readonly WorldBindingExchange worldBindingExchange = new();
 
     private GrpcChannel? channel;
     private AsyncDuplexStreamingCall<AdapterMessage, RuntimeMessage>? stream;
@@ -119,8 +121,30 @@ public sealed class RuntimeClient : IDisposable
             this.sessionState.BeginConnection();
             Interlocked.Exchange(ref this.worldBindingSent, 0);
             Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+            this.worldBindingExchange.Reset();
             this.receiveTask = Task.Run(() => this.RunAsync(this.cancellation.Token));
         }
+    }
+
+    public void Reconnect()
+    {
+        lock (this.connectionGate)
+        {
+            if (this.receiveTask is not { IsCompleted: false } || this.stream is null)
+            {
+                this.Start();
+                return;
+            }
+        }
+
+        this.ResetTaskRuntimeState("manual_rebind");
+        this.sessionState.PrepareWorldBinding();
+        Interlocked.Exchange(ref this.worldBindingSent, 0);
+        Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+        this.worldBindingExchange.Reset();
+        this.SendFireAndForget(
+            this.TrySendWorldBindingAsync(this.cancellation?.Token ?? CancellationToken.None),
+            "WorldBinding rebind");
     }
 
     public void SendPlayerInteracted(NPC npc, Farmer player, string trigger)
@@ -378,7 +402,7 @@ public sealed class RuntimeClient : IDisposable
                 break;
 
             case RuntimeMessage.PayloadOneofCase.WorldBindingReady:
-                await this.HandleWorldBindingReadyAsync(message.WorldBindingReady, cancellationToken);
+                await this.HandleWorldBindingReadyAsync(message.CorrelationId, message.WorldBindingReady, cancellationToken);
                 break;
 
             case RuntimeMessage.PayloadOneofCase.TaskControl:
@@ -420,7 +444,9 @@ public sealed class RuntimeClient : IDisposable
 
     private async Task SendCapabilitiesAsync(string correlationId, CancellationToken cancellationToken)
     {
-        CapabilityList capabilities = CapabilityCatalog.BuildEnvironmentCapabilities(this.landmarkCatalog.Landmarks);
+        CapabilityList capabilities = CapabilityCatalog.BuildEnvironmentCapabilities(
+            this.landmarkCatalog.Landmarks,
+            includeTaskCapabilities: this.sessionState.TaskExtensionAccepted);
 
         await this.SendAsync(
             new AdapterMessage
@@ -447,13 +473,15 @@ public sealed class RuntimeClient : IDisposable
             return;
         }
 
+        string requestId = ProtocolMapper.NewMessageId("world_binding");
         try
         {
+            this.worldBindingExchange.Begin(requestId);
             Interlocked.Exchange(ref this.worldBindingClockSequence, checked((long)snapshot.ClockSequence));
             await this.SendAsync(
                 new AdapterMessage
                 {
-                    MessageId = ProtocolMapper.NewMessageId("world_binding"),
+                    MessageId = requestId,
                     WorldBinding = ProtocolMapper.BuildWorldBinding(snapshot, this.config.AgentTargets),
                 },
                 cancellationToken
@@ -462,16 +490,30 @@ public sealed class RuntimeClient : IDisposable
         }
         catch
         {
+            this.worldBindingExchange.Cancel(requestId);
             Interlocked.Exchange(ref this.worldBindingSent, 0);
             Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
             throw;
         }
     }
 
-    private async Task HandleWorldBindingReadyAsync(WorldBindingReady? ready, CancellationToken cancellationToken)
+    private async Task HandleWorldBindingReadyAsync(string correlationId, WorldBindingReady? ready, CancellationToken cancellationToken)
     {
         if (ready is null)
             throw new InvalidOperationException("world_binding_ready_missing");
+
+        WorldBindingReplyStatus replyStatus = this.worldBindingExchange.Classify(correlationId);
+        if (replyStatus == WorldBindingReplyStatus.Duplicate)
+            return;
+        if (replyStatus == WorldBindingReplyStatus.Stale)
+        {
+            this.monitor.Log($"Ignoring stale WorldBindingReady correlation_id={correlationId}.", LogLevel.Debug);
+            return;
+        }
+        if (this.sessionState.Phase != RuntimeSessionPhase.AwaitingWorldBindingReady)
+        {
+            throw new InvalidOperationException("handshake_out_of_order");
+        }
 
         if (string.Equals(ready.Status, "ready", StringComparison.Ordinal))
         {
@@ -485,6 +527,7 @@ public sealed class RuntimeClient : IDisposable
 
         if (!this.sessionState.AcceptWorldBindingReady(ready.Status, out string stateError))
             throw new InvalidOperationException(stateError);
+        this.worldBindingExchange.Complete(correlationId);
 
         this.monitor.Log(
             $"GameAgent WorldBindingReady received: status={ready.Status} code={ready.Error?.Code ?? string.Empty}.",
@@ -504,21 +547,36 @@ public sealed class RuntimeClient : IDisposable
         if (request is null)
             return;
 
-        TaskCompletionSource<string> decided = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<TaskControlDecision> decided = new(TaskCreationOptions.RunContinuationsAsynchronously);
         this.dispatcher.Enqueue(() =>
         {
-            string status = "mismatch";
+            TaskControlDecision decision = new("unconfirmed", "scope_mismatch");
             RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
-            if (this.sessionState.CanUseTasks && snapshot is not null && ScopeMatches(request.Scope, snapshot))
+            if (this.sessionState.TaskExtensionAccepted && snapshot is not null && ScopeMatches(request.Scope, snapshot))
             {
-                status = this.taskInteractionLifecycle.IsHandedOff(request.TaskId, request.OperationId)
-                    ? "handed_off"
-                    : "unconfirmed";
+                decision = this.taskInteractionLifecycle.ReleaseForTaskControl(request.TaskId, request.OperationId, request.Reason);
+                if (decision.Status == "released" || decision.Code is "control_lost" or "release_failed")
+                {
+                    OperationKey[] matching = this.activeTaskActions.Keys
+                        .Where(operation => string.Equals(operation.TaskId, request.TaskId, StringComparison.Ordinal) &&
+                            string.Equals(operation.OperationId, request.OperationId, StringComparison.Ordinal))
+                        .ToArray();
+                    foreach (OperationKey operation in matching)
+                    {
+                        if (this.activeTaskActions.Remove(operation, out ActiveTaskOperation? active))
+                        {
+                            foreach (ActionRequest action in active.Requests)
+                                this.actionCancellationRegistry.Clear(action.ActionId);
+                        }
+                    }
+                    this.meetingWaitMonitor.Cancel(request.TaskId, request.OperationId);
+                    this.CleanupReleasedTaskInteraction(decision.EventId);
+                }
             }
-            decided.TrySetResult(status);
+            decided.TrySetResult(decision);
         });
         using CancellationTokenRegistration registration = cancellationToken.Register(() => decided.TrySetCanceled(cancellationToken));
-        string status = await decided.Task;
+        TaskControlDecision resolved = await decided.Task;
 
         TaskControlResult result = new()
         {
@@ -526,8 +584,10 @@ public sealed class RuntimeClient : IDisposable
             TaskId = request.TaskId,
             OperationId = request.OperationId,
             RequestId = request.RequestId,
-            Status = status,
+            Status = resolved.Status,
         };
+        if (!string.IsNullOrWhiteSpace(resolved.Code))
+            result.Error = new Error { Code = resolved.Code, Message = "task control release could not be confirmed" };
         await this.SendAsync(
             new AdapterMessage
             {
@@ -614,7 +674,11 @@ public sealed class RuntimeClient : IDisposable
         ActionResult result;
         this.presentDialogueCapability.CloseWaitingForNpc(request.EntityId);
 
-        if (request.TaskSource is not null && !this.IsTaskReady)
+        if (IsTaskCapability(request.Capability) && !this.sessionState.TaskExtensionAccepted)
+        {
+            result = ProtocolMapper.BuildRejectedActionResult(request, "task_extension_not_negotiated", "durable task extension was not negotiated");
+        }
+        else if (request.TaskSource is not null && !this.IsTaskReady)
         {
             result = ProtocolMapper.BuildRejectedActionResult(request, "task_not_ready", "durable task world is not ready");
             this.monitor.Log($"GameAgent Task ActionRequest rejected before WorldBindingReady: {request.ActionId}", LogLevel.Warn);
@@ -749,7 +813,10 @@ public sealed class RuntimeClient : IDisposable
 
         if (!string.IsNullOrWhiteSpace(completion.EventId))
         {
-            this.taskInteractionLifecycle.Complete(completion.EventId, "turn_completed");
+            InteractionContextSnapshot? current = this.interactionContextStore.TryGet(completion.EventId);
+            bool taskConversation = current is not null && this.taskInteractionEventByConversation.ContainsKey(current.ConversationId);
+            if (!taskConversation)
+                this.taskInteractionLifecycle.Complete(completion.EventId, "turn_completed");
             InteractionContextSnapshot? released = this.interactionContextStore.Release(completion.EventId);
             this.LogReleasedInteractionContext(released);
             this.CloseWaitingForNpcOnMainThread(released?.NpcEntityId);
@@ -763,11 +830,8 @@ public sealed class RuntimeClient : IDisposable
 
     private void ClearRuntimeStreamStateOnMainThread()
     {
-        this.taskInteractionLifecycle.Clear("runtime_disconnected");
-        this.taskExecutionDriver.Clear();
-        this.activeTaskActions.Clear();
-        this.meetingWaitMonitor.Clear();
-        this.moveToCapability.Clear();
+        this.moveToCapability.CancelAll("runtime disconnected before movement completed");
+        this.ResetTaskRuntimeState("runtime_disconnected");
         this.presentDialogueCapability.CloseAll();
         this.conversationStore.Clear();
         this.interactionContextStore.Clear();
@@ -797,16 +861,14 @@ public sealed class RuntimeClient : IDisposable
             return;
         }
 
-        this.taskInteractionLifecycle.Clear("world_replaced");
-        this.taskExecutionDriver.Clear();
-        this.activeTaskActions.Clear();
-        this.meetingWaitMonitor.Clear();
+        this.ResetTaskRuntimeState("world_replaced");
         this.ClearConversations();
         this.currentWorldId = worldId;
         this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick());
         this.sessionState.PrepareWorldBinding();
         Interlocked.Exchange(ref this.worldBindingSent, 0);
         Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+        this.worldBindingExchange.Reset();
         this.SendFireAndForget(
             this.TrySendWorldBindingAsync(this.cancellation?.Token ?? CancellationToken.None),
             "WorldBinding"
@@ -838,10 +900,7 @@ public sealed class RuntimeClient : IDisposable
 
     public void ClearWorldContext()
     {
-        this.taskInteractionLifecycle.Clear("world_cleared");
-        this.taskExecutionDriver.Clear();
-        this.activeTaskActions.Clear();
-        this.meetingWaitMonitor.Clear();
+        this.ResetTaskRuntimeState("world_cleared");
         this.moveToCapability.CancelAll("world context cleared before movement completed");
         this.presentDialogueCapability.CloseAll();
         this.currentWorldId = string.Empty;
@@ -849,6 +908,7 @@ public sealed class RuntimeClient : IDisposable
         this.sessionState.PauseTasks();
         Interlocked.Exchange(ref this.worldBindingSent, 0);
         Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+        this.worldBindingExchange.Reset();
         this.conversationStore.Clear();
         this.interactionContextStore.Clear();
     }
@@ -865,6 +925,8 @@ public sealed class RuntimeClient : IDisposable
     {
         RuntimeWorldSnapshot? world = this.worldContext.Current;
         if (world is null)
+            return;
+        if (!this.IsTaskReady)
             return;
 
         this.taskExecutionDriver.ExpireArrivalHandoffs();
@@ -1209,6 +1271,7 @@ public sealed class RuntimeClient : IDisposable
                 evidence.Source.Operation.NpcEntityId,
                 ProtocolMapper.PlayerEntityId,
                 gameEvent.EventId);
+            this.taskInteractionEventByConversation[conversationId] = gameEvent.EventId;
             InteractionContextSnapshot snapshot = this.BuildInteractionContextSnapshot(
                 gameEvent.EventId,
                 gameEvent.WorldId,
@@ -1218,6 +1281,7 @@ public sealed class RuntimeClient : IDisposable
             if (!this.interactionContextStore.TryReserve(snapshot, out reason))
             {
                 this.conversationStore.DiscardPending(gameEvent.EventId);
+                this.taskInteractionEventByConversation.Remove(conversationId);
                 this.taskInteractionLifecycle.Reject(gameEvent.EventId, reason);
                 return false;
             }
@@ -1227,6 +1291,7 @@ public sealed class RuntimeClient : IDisposable
         {
             this.conversationStore.DiscardPending(gameEvent.EventId);
             this.interactionContextStore.DiscardPending(gameEvent.EventId);
+            this.RemoveTaskInteractionConversation(gameEvent.EventId);
             this.taskInteractionLifecycle.Reject(gameEvent.EventId, "interaction_prepare_failed");
             throw;
         }
@@ -1236,7 +1301,7 @@ public sealed class RuntimeClient : IDisposable
     {
         try
         {
-            if (!this.TryGuardInteractionContext(request, requireProximity: false, out NPC? npc, out _, out ActionResult? rejected))
+            if (!this.TryGuardInteractionContext(request, requireProximity: true, out NPC? npc, out InteractionContextSnapshot? interaction, out ActionResult? rejected))
             {
                 this.SendActionResult(rejected ?? throw new InvalidOperationException("interaction guard rejected without ActionResult"), request.Capability);
                 return;
@@ -1244,6 +1309,10 @@ public sealed class RuntimeClient : IDisposable
 
             NPC guardedNpc = npc ?? throw new InvalidOperationException("interaction guard passed without NPC");
             PresentDialogueInput input = ProtocolMapper.RequirePresentDialogueArgument(request);
+            string taskInteractionEventId = interaction is not null && this.taskInteractionEventByConversation.TryGetValue(interaction.ConversationId, out string? mappedEventId)
+                ? mappedEventId
+                : string.Empty;
+            bool finalDialogue = input.ReplyOptions.Count == 0 && !input.AllowFreeText;
             this.presentDialogueCapability.Present(
                 guardedNpc,
                 Game1.player,
@@ -1252,9 +1321,18 @@ public sealed class RuntimeClient : IDisposable
                 isCancelled: () => this.actionCancellationRegistry.TryConsumeCancelled(request.ActionId),
                 onCancelled: () => this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, "action cancelled before dialogue display"), request.Capability),
                 onDisplayed: conversationId => this.SendActionResult(ProtocolMapper.BuildPresentDialogueSucceededActionResult(request, conversationId, input), request.Capability),
-                onFailed: ex => this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "action_failed", ex), request.Capability),
+                onFailed: ex =>
+                {
+                    this.CompleteTaskInteraction(taskInteractionEventId, "dialogue_failed");
+                    this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "action_failed", ex), request.Capability);
+                },
                 onSubmitted: submission => this.SendPlayerDialogueSubmission(guardedNpc, Game1.player, submission),
-                onAbandoned: () => this.ReleaseInteractionContext(request.SourceEventId)
+                onAbandoned: () => this.ReleaseInteractionContext(request.SourceEventId),
+                onFinished: () =>
+                {
+                    if (finalDialogue)
+                        this.CompleteTaskInteraction(taskInteractionEventId, "dialogue_finished");
+                }
             );
         }
         catch (ArgumentException ex)
@@ -1291,7 +1369,7 @@ public sealed class RuntimeClient : IDisposable
                     "background task actions cannot approach the player without an interaction source"), request.Capability);
                 return;
             }
-            if (!this.TryGuardInteractionContext(request, requireProximity: false, out NPC? npc, out _, out ActionResult? rejected))
+            if (!this.TryGuardInteractionContext(request, requireProximity: false, out NPC? npc, out InteractionContextSnapshot? interaction, out ActionResult? rejected))
             {
                 this.SendActionResult(rejected ?? throw new InvalidOperationException("interaction guard rejected without ActionResult"), request.Capability);
                 return;
@@ -1305,10 +1383,15 @@ public sealed class RuntimeClient : IDisposable
 
             RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
             TaskInteractionHandoff? taskArrival = this.taskInteractionLifecycle.FindCommitted(request.SourceEventId);
+            if (taskArrival is null && interaction is not null &&
+                this.taskInteractionEventByConversation.TryGetValue(interaction.ConversationId, out string? taskInteractionEventId))
+            {
+                taskArrival = this.taskInteractionLifecycle.FindCommitted(taskInteractionEventId);
+            }
             if (taskArrival is not null)
             {
                 operation = taskArrival.Source.Operation with { OperationId = "approach:" + request.ActionId };
-                if (!this.taskInteractionLifecycle.TryBeginApproach(request.SourceEventId, operation))
+                if (!this.taskInteractionLifecycle.TryBeginApproach(taskArrival.EventId, operation))
                 {
                     this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "control_lost", "task interaction control is unavailable"), request.Capability);
                     return;
@@ -1571,11 +1654,54 @@ public sealed class RuntimeClient : IDisposable
         if (string.IsNullOrWhiteSpace(eventId))
             return;
 
-        this.taskInteractionLifecycle.Complete(eventId, "interaction_abandoned");
+        InteractionContextSnapshot? current = this.interactionContextStore.TryGet(eventId);
+        string taskInteractionEventId = current is not null && this.taskInteractionEventByConversation.TryGetValue(current.ConversationId, out string? mappedEventId)
+            ? mappedEventId
+            : eventId;
+        this.CompleteTaskInteraction(taskInteractionEventId, "interaction_abandoned");
         InteractionContextSnapshot? released = this.interactionContextStore.Release(eventId);
         this.LogReleasedInteractionContext(released);
         this.CloseWaitingForNpcOnMainThread(released?.NpcEntityId);
     }
+
+    private void CompleteTaskInteraction(string eventId, string reason)
+    {
+        if (string.IsNullOrWhiteSpace(eventId))
+            return;
+        this.taskInteractionLifecycle.Complete(eventId, reason);
+        this.RemoveTaskInteractionConversation(eventId);
+    }
+
+    private void CleanupReleasedTaskInteraction(string eventId)
+    {
+        if (string.IsNullOrWhiteSpace(eventId))
+            return;
+        this.conversationStore.DiscardPending(eventId);
+        this.interactionContextStore.DiscardPending(eventId);
+        this.RemoveTaskInteractionConversation(eventId);
+    }
+
+    private void RemoveTaskInteractionConversation(string eventId)
+    {
+        string[] conversations = this.taskInteractionEventByConversation
+            .Where(pair => string.Equals(pair.Value, eventId, StringComparison.Ordinal))
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (string conversationId in conversations)
+            this.taskInteractionEventByConversation.Remove(conversationId);
+    }
+
+    private void ResetTaskRuntimeState(string reason)
+    {
+        this.taskInteractionLifecycle.Clear(reason);
+        this.taskExecutionDriver.Clear();
+        this.activeTaskActions.Clear();
+        this.meetingWaitMonitor.Clear();
+        this.taskInteractionEventByConversation.Clear();
+    }
+
+    private static bool IsTaskCapability(string capability) =>
+        capability is "resolve_meeting" or "move_to_landmark" or "wait_for_player";
 
     private void CloseWaitingForNpcOnMainThread(string? npcEntityId)
     {

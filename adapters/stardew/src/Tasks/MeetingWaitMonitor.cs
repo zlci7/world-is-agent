@@ -82,6 +82,22 @@ public sealed class MeetingWaitMonitor
         this.completed.Clear();
     }
 
+    public bool Cancel(OperationKey operation)
+    {
+        if (!this.active.Remove(operation))
+            return false;
+        this.completed.Add(operation);
+        return true;
+    }
+
+    public bool Cancel(string taskId, string operationId)
+    {
+        OperationKey? operation = this.active.Keys.SingleOrDefault(candidate =>
+            string.Equals(candidate.TaskId, taskId, StringComparison.Ordinal) &&
+            string.Equals(candidate.OperationId, operationId, StringComparison.Ordinal));
+        return operation is not null && this.Cancel(operation);
+    }
+
     private WaitEvidence Finish(ActiveWait wait, long occurredAt, string outcome, string code, WorldPosition position)
     {
         this.active.Remove(wait.Source.Operation);

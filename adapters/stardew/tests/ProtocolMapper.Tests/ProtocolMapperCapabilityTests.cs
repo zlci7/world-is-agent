@@ -77,4 +77,20 @@ public sealed class ProtocolMapperCapabilityTests
         Assert.Equal(ExecutionMode.Async, approachPlayer.ExecutionMode);
         Assert.Equal(CapabilityConcurrencyMode.Sequential, approachPlayer.ConcurrencyMode);
     }
+
+    [Fact]
+    public void HidesTaskCapabilitiesWhenExtensionWasNotNegotiated()
+    {
+        const string json = "{\"landmarks\":[{\"landmark_id\":\"beach_meeting_spot\",\"display_name\":\"Beach meeting spot\",\"location\":\"Beach\",\"tile\":{\"x\":28,\"y\":36},\"open_start\":600,\"open_end\":2200,\"departure_lead_minutes\":240,\"supported_routes\":[]}]}";
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(json);
+
+        CapabilityList capabilities = CapabilityCatalog.BuildEnvironmentCapabilities(
+            catalog.Landmarks,
+            includeTaskCapabilities: false);
+
+        Assert.DoesNotContain(capabilities.Capabilities, capability => capability.Name == "resolve_meeting");
+        Assert.DoesNotContain(capabilities.Capabilities, capability => capability.Name == "move_to_landmark");
+        Assert.DoesNotContain(capabilities.Capabilities, capability => capability.Name == "wait_for_player");
+        Assert.Contains(capabilities.Capabilities, capability => capability.Name == "move_to");
+    }
 }

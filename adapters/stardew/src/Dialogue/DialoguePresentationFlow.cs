@@ -7,6 +7,7 @@ public sealed class DialoguePresentationFlow
     private readonly bool shouldShowReplyMenu;
     private readonly Action onDisplayed;
     private readonly Action onAbandoned;
+    private readonly Action onFinished;
     private PresentationStage stage = PresentationStage.NotStarted;
     private bool observedNpcDialogue;
     private bool displayed;
@@ -15,12 +16,14 @@ public sealed class DialoguePresentationFlow
     public DialoguePresentationFlow(
         bool shouldShowReplyMenu,
         Action onDisplayed,
-        Action onAbandoned
+        Action onAbandoned,
+        Action? onFinished = null
     )
     {
         this.shouldShowReplyMenu = shouldShowReplyMenu;
         this.onDisplayed = onDisplayed;
         this.onAbandoned = onAbandoned;
+        this.onFinished = onFinished ?? (() => { });
     }
 
     public bool IsFinished { get; private set; }
@@ -53,12 +56,12 @@ public sealed class DialoguePresentationFlow
 
     public void MarkSubmitted()
     {
-        this.IsFinished = true;
+        this.Finish(abandoned: false);
     }
 
     public void FinishWithoutAbandon()
     {
-        this.IsFinished = true;
+        this.Finish(abandoned: false);
     }
 
     public void CloseWithoutSubmission(Action closeVisibleUi)
@@ -68,7 +71,7 @@ public sealed class DialoguePresentationFlow
 
         this.suppressAbandon = true;
         closeVisibleUi();
-        this.IsFinished = true;
+        this.Finish(abandoned: false);
     }
 
     public void Abandon()
@@ -76,9 +79,7 @@ public sealed class DialoguePresentationFlow
         if (this.IsFinished)
             return;
 
-        this.IsFinished = true;
-        if (!this.suppressAbandon)
-            this.onAbandoned();
+        this.Finish(abandoned: !this.suppressAbandon);
     }
 
     private void UpdateShowingNpcLine(bool isDialogueUiBusy, Action showReplyMenu)
@@ -94,7 +95,7 @@ public sealed class DialoguePresentationFlow
 
         if (!this.shouldShowReplyMenu)
         {
-            this.IsFinished = true;
+            this.Finish(abandoned: false);
             return;
         }
 
@@ -117,6 +118,16 @@ public sealed class DialoguePresentationFlow
 
         this.displayed = true;
         this.onDisplayed();
+    }
+
+    private void Finish(bool abandoned)
+    {
+        if (this.IsFinished)
+            return;
+        this.IsFinished = true;
+        if (abandoned)
+            this.onAbandoned();
+        this.onFinished();
     }
 
     private enum PresentationStage

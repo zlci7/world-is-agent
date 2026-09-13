@@ -100,6 +100,19 @@ public sealed class RuntimeSessionStateTests
         Assert.False(session.CanUseTasks);
     }
 
+    [Fact]
+    public void PausedSessionCanBeginAnExplicitRebind()
+    {
+        RuntimeSessionState session = ReadySession();
+        session.PauseTasks();
+
+        session.PrepareWorldBinding();
+
+        Assert.Equal(RuntimeSessionPhase.AwaitingWorldBindingReady, session.Phase);
+        Assert.True(session.CanUseRuntime);
+        Assert.False(session.CanUseTasks);
+    }
+
     private static RuntimeSessionState ReadySession()
     {
         RuntimeSessionState session = new();
