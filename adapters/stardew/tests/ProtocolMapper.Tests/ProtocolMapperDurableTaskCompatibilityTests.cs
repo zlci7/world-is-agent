@@ -128,7 +128,19 @@ public sealed class ProtocolMapperDurableTaskCompatibilityTests
             new() { TaskControl = new TaskControlRequest { Scope = scope, TaskId = "task_1", OperationId = "op_1", RequestId = "request_1", Reason = "player_interaction" } },
         };
 
-        Assert.All(adapterMessages, message => Assert.NotEmpty(message.ToByteArray()));
-        Assert.All(runtimeMessages, message => Assert.NotEmpty(message.ToByteArray()));
+        AdapterMessage.PayloadOneofCase[] adapterCases = { AdapterMessage.PayloadOneofCase.WorldClock, AdapterMessage.PayloadOneofCase.CheckpointPrepare, AdapterMessage.PayloadOneofCase.CheckpointFinish, AdapterMessage.PayloadOneofCase.TaskControlResult };
+        for (int index = 0; index < adapterMessages.Length; index++)
+        {
+            AdapterMessage decoded = AdapterMessage.Parser.ParseFrom(adapterMessages[index].ToByteArray());
+            Assert.Equal(adapterCases[index], decoded.PayloadCase);
+            Assert.Equal(adapterMessages[index], decoded);
+        }
+        RuntimeMessage.PayloadOneofCase[] runtimeCases = { RuntimeMessage.PayloadOneofCase.WorldBindingReady, RuntimeMessage.PayloadOneofCase.CheckpointPrepared, RuntimeMessage.PayloadOneofCase.TaskControl };
+        for (int index = 0; index < runtimeMessages.Length; index++)
+        {
+            RuntimeMessage decoded = RuntimeMessage.Parser.ParseFrom(runtimeMessages[index].ToByteArray());
+            Assert.Equal(runtimeCases[index], decoded.PayloadCase);
+            Assert.Equal(runtimeMessages[index], decoded);
+        }
     }
 }

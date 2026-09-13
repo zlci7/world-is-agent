@@ -47,27 +47,57 @@ func (s *Server) StartTaskDispatcher(ctx context.Context, config task.Dispatcher
 				}
 				catalog, hello := slot.owner.catalog, slot.owner.hello
 				slot.mu.Unlock()
-				if record.NeedsReconcile {
-					ctx = context.WithValue(ctx, taskReconcileQueryKey{}, true)
+				for {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					turnCtx := ctx
+					if record.NeedsReconcile {
+						turnCtx = context.WithValue(ctx, taskReconcileQueryKey{}, true)
+					}
+					err := loop.HandleTaskWake(turnCtx, env, agent.ConnectionContext{GameID: hello.GameId, SessionID: hello.SessionId}, entry.Entities[exec.Owner.EntityID], catalog, exec, record)
+					if err != nil {
+						log.Printf("task turn: %s", logSafeError(err))
+					}
+					err = env.finishTaskExecution(ctx, exec, err)
+					if !errors.Is(err, errTaskDecisionRequired) {
+						return err
+					}
+					record, err = s.worlds.service.Read(ctx, exec.Owner, exec.TaskID)
+					if err != nil {
+						return err
+					}
+					exec.ExpectedRevision = record.Revision
 				}
-				err := loop.HandleTaskWake(ctx, env, agent.ConnectionContext{GameID: hello.GameId, SessionID: hello.SessionId}, entry.Entities[exec.Owner.EntityID], catalog, exec, record)
-				if err != nil {
-					log.Printf("task turn: %s", logSafeError(err))
-				}
-				return env.finishTaskExecution(ctx, exec, err)
 			}
 			reconcile = func(ctx context.Context, exec task.ExecutionContext, record task.Record) error {
 				entry, ok := s.worlds.Current(exec.Binding.World)
 				if !ok || entry.Head.Binding != exec.Binding {
 					return nil
 				}
-				return entry.Environment.(*streamEnvironment).finishTaskExecution(ctx, exec, taskActionFailure{task.ErrTaskChanged})
+				err := entry.Environment.(*streamEnvironment).finishTaskExecution(ctx, exec, taskActionFailure{task.ErrTaskChanged})
+				if !errors.Is(err, errTaskDecisionRequired) {
+					return err
+				}
+				record, err = s.worlds.service.Read(ctx, exec.Owner, exec.TaskID)
+				if err != nil {
+					return err
+				}
+				exec.ExpectedRevision = record.Revision
+				return handler(ctx, exec, record)
 			}
 		}
 	}
 	admission := newTaskDispatch(s.worlds, s.worlds.service, config, handler, reconcile)
 	dispatcher, err := task.NewDispatcher(ctx, s.worlds.service, config, task.DispatcherCallbacks{
 		ReadyWorlds: s.worlds.ReadyWorlds, EnqueueWake: admission.EnqueueWake, PauseWorld: admission.PauseWorld, Updates: s.worlds.updates,
+		Guard: func(binding task.Binding, fn func(task.Head) error) error {
+			entry, ok := s.worlds.Current(binding.World)
+			if !ok {
+				return task.ErrWorldNotReady
+			}
+			return s.worlds.Guard(entry.Environment.(*streamEnvironment), binding, func(current WorldEntry) error { return fn(current.Head) })
+		},
 	})
 	if err != nil {
 		return err

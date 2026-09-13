@@ -109,22 +109,25 @@ type taskControlReleaser interface {
 	ReleaseTask(context.Context, task.Record) error
 }
 
-func (t *taskTurnContext) releaseCommitted(ctx context.Context, env Environment, rc *tool.RuntimeCallContext) error {
+func (t *taskTurnContext) releaseCommitted(ctx context.Context, env Environment, view tool.TurnToolView, calls []model.ToolCall) error {
+	rc := view.RuntimeContext()
 	if rc == nil || rc.ObservedTask == nil {
+		return nil
+	}
+	committed := false
+	for _, call := range calls {
+		if entry, ok := view.Lookup(call.Name); ok && entry.Executor == t.tools {
+			committed = true
+		}
+	}
+	if !committed {
 		return nil
 	}
 	releaser, ok := env.(taskControlReleaser)
 	if !ok {
 		return nil
 	}
-	record, err := t.service.Read(ctx, rc.Execution.Owner, rc.ObservedTask.ID)
-	if err != nil {
-		return err
-	}
-	if record.Result != nil {
-		return releaser.ReleaseTask(ctx, record)
-	}
-	return nil
+	return releaser.ReleaseTask(ctx, *rc.ObservedTask)
 }
 
 func redactTaskCalls(calls []model.ToolCall, view tool.TurnToolView) []model.ToolCall {

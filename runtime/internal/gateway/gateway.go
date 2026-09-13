@@ -275,26 +275,6 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 			if payload.Event == nil {
 				continue
 			}
-			if tasksNegotiated {
-				if connection.world == nil {
-					if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
-						return err
-					}
-					continue
-				}
-				if env.taskAuthority == nil {
-					if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
-						return err
-					}
-					continue
-				}
-				if _, _, ok := env.taskAuthority.Current(); !ok {
-					if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
-						return err
-					}
-					continue
-				}
-			}
 			if err := s.dispatchGameEvent(env, laneStore, seenEventIDs, conn, catalog, msg.MessageId, payload.Event); err != nil {
 				return err
 			}

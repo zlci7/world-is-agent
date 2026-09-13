@@ -28,7 +28,7 @@ func (e *streamEnvironment) RegisterTaskAction(ctx context.Context, rc tool.Runt
 	return e.taskAuthority.Guard(rc.Execution.Binding, rc.AuthorityEpoch, func(head task.Head) error {
 		exec := rc.Execution
 		exec.Clock, exec.ExpectedRevision = head.Clock, rc.ObservedTask.Revision
-		if rc.ObservedTask.ID != exec.TaskID || rc.ObservedTask.Owner != exec.Owner || rc.ObservedTask.State != task.StateRunning {
+		if rc.ObservedTask.ID != exec.TaskID || rc.ObservedTask.Owner != exec.Owner || rc.ObservedTask.State != task.StateRunning || head.Clock.Tick >= rc.ObservedTask.Spec.DeadlineAt {
 			return task.ErrTaskChanged
 		}
 		bytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(req)
@@ -165,9 +165,13 @@ func (e *streamEnvironment) coordinateTasks(ctx context.Context, owner session.A
 	if len(ids) == 0 {
 		return nil
 	}
+	return e.retryTaskWork(ctx, func() error { return e.reconcileTaskIDs(ctx, owner, ids) })
+}
+
+func (e *streamEnvironment) retryTaskWork(ctx context.Context, run func() error) error {
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
-		err = e.reconcileTaskIDs(ctx, owner, ids)
+		err = run()
 		if err == nil || task.BindingRecoveryError(err) {
 			return err
 		}
@@ -195,9 +199,11 @@ func (e taskActionFailure) Unwrap() error { return e.error }
 
 type taskReconcileQueryKey struct{}
 
+var errTaskDecisionRequired = errors.New("task decision required")
+
 func (s *Server) claimTaskInteraction(env *streamEnvironment, event *protocol.GameEvent) bool {
 	source := event.GetInteractionSource()
-	if s.agentLoop == nil || env.taskAuthority == nil || strings.TrimSpace(source.GetSourceId()) == "" || strings.TrimSpace(source.GetPlayerEntityId()) == "" || strings.TrimSpace(source.GetKind()) == "" {
+	if s.agentLoop == nil || env.taskAuthority == nil || strings.TrimSpace(source.GetSourceId()) == "" || strings.TrimSpace(source.GetPlayerEntityId()) == "" || source.GetKind() != "player" && source.GetKind() != "task_arrival" {
 		return false
 	}
 	head, epoch, ready := env.taskAuthority.Current()
@@ -253,7 +259,7 @@ func taskActionError(req *protocol.ActionRequest, err error) error {
 	return err
 }
 
-func (e *streamEnvironment) guardActionSend(req *protocol.ActionRequest, send func() error) error {
+func (e *streamEnvironment) guardActionSend(ctx context.Context, req *protocol.ActionRequest, send func() error) error {
 	slot := e.taskAuthority.registry.slot(e.taskAuthority.world, false)
 	if slot == nil {
 		return task.ErrWorldNotReady
@@ -266,6 +272,30 @@ func (e *streamEnvironment) guardActionSend(req *protocol.ActionRequest, send fu
 	if req.TaskSource != nil && !proto.Equal(req.TaskSource.Scope, taskScopeToProtocol(slot.head.Binding)) {
 		return task.ErrGenerationStale
 	}
+	if source := req.TaskSource; source != nil {
+		inspection, err := e.taskAuthority.registry.service.InspectWake(ctx, slot.head.Binding, source.WakeId)
+		if err != nil {
+			return err
+		}
+		record := inspection.Task
+		if inspection.Head != slot.head || inspection.Head.Status != "ready" || inspection.Wake.Status != "running" || record.ID != source.TaskId || record.Owner.WorldID != req.WorldId || record.Owner.EntityID != req.EntityId || record.State != task.StateRunning || record.Result != nil || record.Revision != source.StartRevision || record.NeedsReconcile || slot.head.Clock.Tick >= record.Spec.DeadlineAt {
+			return task.ErrTaskChanged
+		}
+		for _, evidence := range record.Evidence {
+			if !evidence.Applied {
+				return task.ErrTaskChanged
+			}
+		}
+		registered := false
+		for _, operation := range record.Operations {
+			if operation.ID == source.OperationId && operation.ActionID == req.ActionId && operation.StartRevision == source.StartRevision && operation.Binding == slot.head.Binding && operation.Status == task.OperationStatusRegistered {
+				registered = true
+			}
+		}
+		if !registered {
+			return task.ErrTaskChanged
+		}
+	}
 	return send()
 }
 
@@ -273,10 +303,30 @@ func (e *streamEnvironment) queryTask(ctx context.Context, exec task.ExecutionCo
 	queryCtx, cancel := context.WithTimeout(context.WithValue(ctx, taskReconcileQueryKey{}, true), time.Second)
 	defer cancel()
 	_, err := e.Observe(queryCtx, exec.Owner.WorldID, exec.Owner.EntityID)
-	if err == nil {
-		err = errors.New("task evidence remains unconfirmed")
+	if err != nil {
+		return taskObservationFailure{err}
 	}
-	return taskObservationFailure{err}
+	record, err := e.taskAuthority.registry.service.Read(queryCtx, exec.Owner, exec.TaskID)
+	if err != nil {
+		return err
+	}
+	if taskOperationAwaitingEvidence(record) {
+		return taskObservationFailure{errors.New("task evidence remains unconfirmed")}
+	}
+	return nil
+}
+
+func taskOperationAwaitingEvidence(record task.Record) bool {
+	for _, operation := range record.Operations {
+		confirmed := false
+		for _, evidence := range record.Evidence {
+			confirmed = confirmed || evidence.OperationID == operation.ID && evidence.Applied
+		}
+		if !confirmed {
+			return true
+		}
+	}
+	return false
 }
 
 // finishTaskExecution owns finite technical recovery after cognition has ended.
@@ -319,19 +369,7 @@ func (e *streamEnvironment) finishTaskExecution(ctx context.Context, exec task.E
 			turnErr = e.queryTask(cleanupCtx, exec)
 			continue
 		}
-		exec.Clock, exec.ExpectedRevision = head.Clock, record.Revision
-		kind := task.AttemptOutcomeKindNoProgress
-		var observeErr taskObservationFailure
-		if record.NeedsReconcile {
-			kind = task.AttemptOutcomeKindReconcileFailed
-		} else if errors.As(turnErr, &observeErr) || head.Clock.Tick >= record.Spec.DeadlineAt {
-			kind = task.AttemptOutcomeKindObservationFailed
-		}
-		err = a.Guard(head.Binding, epoch, func(task.Head) error {
-			var err error
-			record, err = a.registry.service.FinishAttempt(cleanupCtx, exec, task.AttemptOutcome{Kind: kind})
-			return err
-		})
+		record, err = e.finishTaskAttempt(cleanupCtx, exec, head, epoch, record, turnErr)
 		if err != nil {
 			if task.BindingRecoveryError(err) {
 				return nil
@@ -348,7 +386,30 @@ func (e *streamEnvironment) finishTaskExecution(ctx context.Context, exec task.E
 		if record.State != task.StateRunning {
 			return nil
 		}
+		if !record.NeedsReconcile {
+			return errTaskDecisionRequired
+		}
 		turnErr = e.queryTask(cleanupCtx, exec)
 	}
 	return task.ErrTaskConflict
+}
+
+func (e *streamEnvironment) finishTaskAttempt(ctx context.Context, exec task.ExecutionContext, head task.Head, epoch uint64, record task.Record, turnErr error) (task.Record, error) {
+	err := e.taskAuthority.Guard(head.Binding, epoch, func(current task.Head) error {
+		exec.Clock, exec.ExpectedRevision = current.Clock, record.Revision
+		kind := task.AttemptOutcomeKindNoProgress
+		var observeErr taskObservationFailure
+		if record.NeedsReconcile {
+			kind = task.AttemptOutcomeKindReconcileFailed
+			if turnErr == nil && !taskOperationAwaitingEvidence(record) && current.Clock.Tick < record.Spec.DeadlineAt {
+				kind = task.AttemptOutcomeKindProgress
+			}
+		} else if errors.As(turnErr, &observeErr) || current.Clock.Tick >= record.Spec.DeadlineAt {
+			kind = task.AttemptOutcomeKindObservationFailed
+		}
+		var err error
+		record, err = e.taskAuthority.registry.service.FinishAttempt(ctx, exec, task.AttemptOutcome{Kind: kind})
+		return err
+	})
+	return record, err
 }

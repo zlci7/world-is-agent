@@ -275,6 +275,9 @@ func taskProposalFromSpec(value task.TaskSpec) (*protocolv1alpha2.TaskProposal, 
 	if err := value.Validate(); err != nil {
 		return nil, err
 	}
+	if len(value.Contract) == 0 {
+		return nil, nil
+	}
 	var proposal taskProposal
 	if err := json.Unmarshal(value.Contract, &proposal); err != nil || !json.Valid(proposal.Payload) && len(proposal.Payload) != 0 {
 		return nil, task.ErrInvalidTaskSpec

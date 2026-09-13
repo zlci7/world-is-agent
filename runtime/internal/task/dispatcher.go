@@ -14,6 +14,7 @@ type DispatcherConfig struct {
 type DispatcherCallbacks struct {
 	Updates     <-chan struct{}
 	ReadyWorlds func() []Head
+	Guard       func(Binding, func(Head) error) error
 	EnqueueWake func(context.Context, Binding, Wake) error
 	PauseWorld  func(context.Context, Binding, Wake, error)
 }
@@ -24,7 +25,7 @@ type Dispatcher struct {
 }
 
 func NewDispatcher(parent context.Context, s *Service, c DispatcherConfig, cb DispatcherCallbacks) (*Dispatcher, error) {
-	if parent == nil || s == nil || c.ScanInterval <= 0 || c.BatchSize <= 0 || c.RetryMin <= 0 || c.RetryMax < c.RetryMin || cb.ReadyWorlds == nil || cb.EnqueueWake == nil || cb.PauseWorld == nil {
+	if parent == nil || s == nil || c.ScanInterval <= 0 || c.BatchSize <= 0 || c.RetryMin <= 0 || c.RetryMax < c.RetryMin || cb.ReadyWorlds == nil || cb.Guard == nil || cb.EnqueueWake == nil || cb.PauseWorld == nil {
 		return nil, ErrInvalidTaskSpec
 	}
 	ctx, cancel := context.WithCancel(parent)
@@ -41,7 +42,11 @@ func NewDispatcher(parent context.Context, s *Service, c DispatcherConfig, cb Di
 				var wakes []Wake
 				var err error
 				for failures := 1; failures <= 3; failures++ {
-					wakes, err = s.ClaimDue(ctx, head.Binding, head.Clock, c.BatchSize)
+					err = cb.Guard(head.Binding, func(current Head) error {
+						var claimErr error
+						wakes, claimErr = s.ClaimDue(ctx, current.Binding, current.Clock, c.BatchSize)
+						return claimErr
+					})
 					if err == nil || !TechnicalFailure(err) || failures == 3 {
 						break
 					}

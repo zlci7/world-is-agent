@@ -5,6 +5,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -40,7 +41,7 @@ func TestDurableTaskWireRoundTripsNestedTaskValues(t *testing.T) {
 		FactId: "fact_1", TaskId: "task_1", OperationId: "op_1", Scope: scope,
 		StartRevision: 18446744073709551615, OccurredAt: 1234, Outcome: "progress",
 		WaitUntil: proto.Int64(1400), Details: details,
-		GameTime: &GameTime{Year: proto.Int32(2), Tick: proto.Int64(1234)},
+		GameTime:     &GameTime{Year: proto.Int32(2), Tick: proto.Int64(1234)},
 		ContextFacts: []*ContextFact{{Kind: "task_progress", ScopeId: "task_1", Text: "waiting"}},
 	}
 	proposal := &TaskProposal{Clock: clock, WakeAt: 1400, DeadlineAt: 2000, ParticipantEntityIds: []string{"npc:Abigail", "player:local"}, EquivalenceKey: "meet:abigail", Payload: details}
@@ -125,22 +126,38 @@ func TestDurableTaskControlEnvelopeVariantsRoundTrip(t *testing.T) {
 		{Payload: &RuntimeMessage_CheckpointPrepared{CheckpointPrepared: &CheckpointPrepared{Scope: scope, SaveRequestId: "save_1", Checkpoint: &TaskCheckpointRef{Status: "confirmed"}}}},
 		{Payload: &RuntimeMessage_TaskControl{TaskControl: &TaskControlRequest{Scope: scope, TaskId: "task_1", OperationId: "op_1", RequestId: "request_1", Reason: "player_interaction"}}},
 	}
-	for _, message := range adapterMessages {
+	for index, message := range adapterMessages {
 		encoded, err := proto.Marshal(message)
 		if err != nil {
 			t.Fatalf("marshal adapter control envelope: %v", err)
 		}
-		if len(encoded) == 0 {
-			t.Fatal("adapter control envelope encoded empty")
+		var decoded AdapterMessage
+		if err := proto.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		field := decoded.ProtoReflect().WhichOneof(decoded.ProtoReflect().Descriptor().Oneofs().ByName("payload"))
+		if field == nil || field.Number() != []protoreflect.FieldNumber{19, 20, 21, 22}[index] {
+			t.Fatalf("adapter control oneof lost: %v", &decoded)
+		}
+		if !proto.Equal(message, &decoded) {
+			t.Fatalf("adapter payload sentinels lost: got %v want %v", &decoded, message)
 		}
 	}
-	for _, message := range runtimeMessages {
+	for index, message := range runtimeMessages {
 		encoded, err := proto.Marshal(message)
 		if err != nil {
 			t.Fatalf("marshal runtime control envelope: %v", err)
 		}
-		if len(encoded) == 0 {
-			t.Fatal("runtime control envelope encoded empty")
+		var decoded RuntimeMessage
+		if err := proto.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		field := decoded.ProtoReflect().WhichOneof(decoded.ProtoReflect().Descriptor().Oneofs().ByName("payload"))
+		if field == nil || field.Number() != []protoreflect.FieldNumber{18, 19, 20}[index] {
+			t.Fatalf("runtime control oneof lost: %v", &decoded)
+		}
+		if !proto.Equal(message, &decoded) {
+			t.Fatalf("runtime payload sentinels lost: got %v want %v", &decoded, message)
 		}
 	}
 }

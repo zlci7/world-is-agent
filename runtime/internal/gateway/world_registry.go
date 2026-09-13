@@ -238,14 +238,31 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 	slot.lifecycle.Lock()
 	defer slot.lifecycle.Unlock()
 	slot.mu.Lock()
-	if slot.failed || slot.owner != nil && slot.owner != conn {
+	if slot.failed {
 		slot.mu.Unlock()
 		return task.Head{}, task.ErrWorldNotReady
 	}
 	rebinding := slot.owner == conn
-	if value.Binding.Generation != 0 && (!rebinding || value.Binding.Generation != slot.head.Binding.Generation) {
+	persisted, headErr := r.service.ReadHead(ctx, value.Binding.World)
+	if headErr != nil && !errors.Is(headErr, task.ErrTaskNotFound) {
+		if rebinding {
+			slot.failed = true
+			slot.authorityEpoch++
+		}
+		slot.mu.Unlock()
+		if rebinding {
+			conn.env.close()
+			conn.lanes.CloseAndWait()
+		}
+		return task.Head{}, headErr
+	}
+	if value.Binding.Generation != 0 && (headErr != nil || value.Binding.Generation != persisted.Binding.Generation || value.Binding.RunID != persisted.Binding.RunID) {
 		slot.mu.Unlock()
 		return task.Head{}, task.ErrGenerationStale
+	}
+	if slot.owner != nil && slot.owner != conn && value.Binding.Generation == 0 {
+		slot.mu.Unlock()
+		return task.Head{}, task.ErrWorldNotReady
 	}
 	if rebinding && value.Binding.RunID != slot.head.Binding.RunID {
 		slot.mu.Unlock()
@@ -255,13 +272,16 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 		slot.mu.Unlock()
 		return task.Head{}, task.ErrSaveInProgress
 	}
-	oldHead := slot.head
+	oldHead, oldOwner := slot.head, slot.owner
 	slot.authorityEpoch++
 	slot.ready = false
 	slot.mu.Unlock()
-	if rebinding {
-		conn.env.close()
-		conn.lanes.CloseAndWait()
+	if oldOwner != nil {
+		oldOwner.env.close()
+		if oldOwner != conn {
+			oldOwner.transport.close()
+		}
+		oldOwner.lanes.CloseAndWait()
 		reason := "world_rebind"
 		if oldHead.Status == "paused" && oldHead.Reason != "" {
 			reason = oldHead.Reason
@@ -272,6 +292,8 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 			slot.mu.Unlock()
 			return task.Head{}, err
 		}
+	}
+	if rebinding {
 		nextEnv := newStreamEnvironment(conn.env.stream)
 		nextEnv.sendSlot = conn.transport.sendSlot
 		nextLanes, err := session.NewLaneStore(ctx, session.DefaultQueueSize)
@@ -363,14 +385,10 @@ func (r *WorldRegistry) UpdateClock(ctx context.Context, env *streamEnvironment,
 		return task.ErrClockMismatch
 	}
 	if clock.Sequence == current.Sequence && clock != current {
-		slot.authorityEpoch++
-		slot.ready = false
-		slot.head.Status = "paused"
-		slot.head.Reason = "clock_mismatch"
-		return task.ErrClockMismatch
+		return r.pauseClockViolation(ctx, slot, task.ErrClockMismatch)
 	}
 	if clock.Sequence < current.Sequence || clock.Tick < current.Tick {
-		return task.ErrClockRewound
+		return r.pauseClockViolation(ctx, slot, task.ErrClockRewound)
 	}
 	head, err := r.service.UpdateClock(ctx, binding, clock)
 	if err != nil {
@@ -379,6 +397,17 @@ func (r *WorldRegistry) UpdateClock(ctx context.Context, env *streamEnvironment,
 	slot.head = head
 	r.notify()
 	return nil
+}
+
+// The caller holds slot.mu so authority closes before another Task mutation.
+func (r *WorldRegistry) pauseClockViolation(ctx context.Context, slot *worldSlot, cause error) error {
+	slot.authorityEpoch++
+	slot.ready = false
+	slot.head.Status = "paused"
+	slot.head.Reason = taskDispatchCode(cause)
+	pauseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return errors.Join(cause, r.service.DeactivateWorld(pauseCtx, slot.head.Binding, slot.head.Reason))
 }
 
 func (r *WorldRegistry) disconnect(ctx context.Context, conn *worldConnection, reason string) error {

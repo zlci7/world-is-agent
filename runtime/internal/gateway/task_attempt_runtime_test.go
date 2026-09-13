@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -232,16 +233,17 @@ func TestTaskDispatcherModelFailuresFinishExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_WorldClock{WorldClock: &protocol.WorldClockUpdate{Scope: taskScopeToProtocol(f.head.Binding), Clock: &protocol.WorldClock{ClockId: "game", NowTick: 11, Sequence: 2}}}})
-			f.observe(f.next())
-			completion := f.next().GetTurnCompletion()
-			if completion == nil {
-				t.Fatal("model failure omitted TurnCompletion")
-			}
-			for i := 0; i < 3; i++ {
+			for attempt := 0; attempt < 3; attempt++ {
 				f.observe(f.next())
+				if completion := f.next().GetTurnCompletion(); completion == nil {
+					t.Fatal("cognition omitted TurnCompletion")
+				}
+				if attempt < 2 {
+					f.observe(f.next())
+				}
 			}
 			final := f.awaitRecord(created.Task.ID, func(r task.Record) bool { return r.State == task.StatePaused })
-			if final.Result != nil || final.NoProgressAttempts != 1 || final.ReconcileAttempts != 3 || f.model.calls.Load() != 1 {
+			if final.Result != nil || final.NoProgressAttempts != 3 || final.ReconcileAttempts != 0 || final.PauseReason != "no_progress" || f.model.calls.Load() != 3 {
 				t.Fatalf("attempt was not finite: %+v calls=%d", final, f.model.calls.Load())
 			}
 		})
@@ -262,7 +264,7 @@ func TestTaskOperationSaveFencesSyncAndAsyncBeforeSend(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
-			req := &protocol.ActionRequest{ActionId: "fenced", WorldId: "world", EntityId: "actor", Capability: "follow_route"}
+			req := &protocol.ActionRequest{ActionId: "fenced", WorldId: "world", EntityId: "actor", Capability: "follow_route", TaskSource: &protocol.TaskActionSource{Scope: taskScopeToProtocol(f.head.Binding)}}
 			var err error
 			if async {
 				_, err = env.StartAction(ctx, req)
@@ -298,5 +300,166 @@ func TestTaskDeadlineObservationCannotAuthorizeCognition(t *testing.T) {
 	final := f.awaitRecord(r.ID, func(r task.Record) bool { return r.State == task.StatePaused })
 	if final.Result != nil || final.NoProgressAttempts != 0 || final.ReconcileAttempts != 3 || f.model.calls.Load() != 0 {
 		t.Fatalf("deadline bypassed deterministic reconciliation: %+v", final)
+	}
+}
+
+func TestTaskFinishAttemptClockAdvanceAfterSnapshot(t *testing.T) {
+	f := newTaskWireFixture(t, false)
+	env, exec, record, _ := beginWireExecution(t, f)
+	head, epoch, _ := env.taskAuthority.Current()
+	if err := f.server.worlds.UpdateClock(f.ctx, env, &protocol.WorldClockUpdate{Scope: taskScopeToProtocol(head.Binding), Clock: &protocol.WorldClock{ClockId: "game", NowTick: 51, Sequence: 3}}); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := env.finishTaskAttempt(f.ctx, exec, head, epoch, record, nil)
+	if err != nil {
+		t.Fatalf("normal Clock advance rejected cleanup: %v", err)
+	}
+	if finished.NoProgressAttempts != 1 {
+		t.Fatalf("cleanup ownership duplicated: %+v", finished)
+	}
+	if _, _, ready := env.taskAuthority.Current(); !ready {
+		t.Fatal("cleanup paused a normally advancing world")
+	}
+}
+
+func TestTaskOperationEmptyInternalContractSendsAction(t *testing.T) {
+	f := newTaskWireFixture(t, false)
+	env, exec, record, _ := beginWireExecution(t, f)
+	_, epoch, _ := env.taskAuthority.Current()
+	req := &protocol.ActionRequest{ActionId: "internal-action", WorldId: "world", EntityId: "actor", Capability: "follow_route"}
+	if err := env.RegisterTaskAction(f.ctx, tool.RuntimeCallContext{Execution: exec, ObservedTask: &record, AuthorityEpoch: epoch}, req); err != nil {
+		t.Fatalf("valid internal task contract rejected: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := env.SubmitAction(f.ctx, req); done <- err }()
+	got := f.next().GetAction()
+	if got.GetActionId() != "internal-action" || got.TaskSource == nil || got.TaskSource.TaskContract != nil {
+		t.Fatalf("internal action source: %v", got)
+	}
+	f.result(got, nil, nil)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskOperationLastSendGateRevalidatesEligibility(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		for _, change := range []string{"deadline_during_cognition", "deadline_after_registration", "pending_evidence", "terminal", "revision", "waiting"} {
+			t.Run(fmt.Sprintf("async=%v/%s", async, change), func(t *testing.T) {
+				f := newTaskWireFixture(t, false)
+				env, exec, record, prior := beginWireExecution(t, f)
+				_, epoch, _ := env.taskAuthority.Current()
+				rc := tool.RuntimeCallContext{Execution: exec, ObservedTask: &record, AuthorityEpoch: epoch}
+				req := &protocol.ActionRequest{ActionId: "must-not-send", WorldId: "world", EntityId: "actor", Capability: "follow_route"}
+				advance := func() {
+					if err := f.server.worlds.UpdateClock(f.ctx, env, &protocol.WorldClockUpdate{Scope: taskScopeToProtocol(exec.Binding), Clock: &protocol.WorldClock{ClockId: "game", NowTick: 100, Sequence: 3}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if change == "deadline_during_cognition" {
+					advance()
+				}
+				registerErr := env.RegisterTaskAction(f.ctx, rc, req)
+				if change != "deadline_during_cognition" && registerErr != nil {
+					t.Fatal(registerErr)
+				}
+				if change == "deadline_after_registration" {
+					advance()
+				}
+				if change == "pending_evidence" || change == "terminal" {
+					if _, err := env.admitTaskEvidence(f.ctx, f.key, []*protocol.TaskEvidence{wireReceipt(f, record, prior, "satisfied")}, false, ""); err != nil {
+						t.Fatal(err)
+					}
+					if change == "terminal" {
+						if _, err := f.service.Reconcile(f.ctx, exec); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if change == "revision" {
+					if _, err := f.service.FinishAttempt(f.ctx, exec, task.AttemptOutcome{Kind: task.AttemptOutcomeKindNoProgress}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if change == "waiting" {
+					wait := int64(70)
+					exec.Source = task.SourceRef{Kind: task.SourceKindTaskWake, EventID: "wake", TurnID: "turn", CallID: "wait"}
+					if _, err := f.service.ApplyIntent(f.ctx, exec, task.Intent{Kind: "wait", NextWakeAt: &wait}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				ctx, cancel := context.WithTimeout(f.ctx, 100*time.Millisecond)
+				defer cancel()
+				err := registerErr
+				if err == nil {
+					if async {
+						_, err = env.StartAction(ctx, req)
+					} else {
+						_, err = env.SubmitAction(ctx, req)
+					}
+				}
+				if err == nil || errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("last send gate did not reject changed task: %v", err)
+				}
+				sendErr := err
+				select {
+				case message := <-f.messages:
+					t.Fatalf("ineligible action emitted: %v", message)
+				default:
+				}
+				stored, err := f.service.Read(f.ctx, f.key, record.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if registerErr == nil && len(stored.Operations) != 2 {
+					t.Fatalf("registered operation lost before cleanup: %+v", stored.Operations)
+				}
+				if change == "pending_evidence" || change == "terminal" {
+					done := make(chan error, 1)
+					go func() { done <- env.finishTaskExecution(f.ctx, exec, sendErr) }()
+					for i := 0; i < 2; i++ {
+						control := f.next().GetTaskControl()
+						if control == nil {
+							t.Fatal("registered rejected operation lost cleanup responsibility")
+						}
+						f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_TaskControlResult{TaskControlResult: &protocol.TaskControlResult{Scope: control.Scope, TaskId: control.TaskId, OperationId: control.OperationId, RequestId: control.RequestId, Status: "released"}}})
+					}
+					if err := <-done; err != nil {
+						t.Fatal(err)
+					}
+					final, err := f.service.Read(f.ctx, f.key, record.ID)
+					if err != nil || final.Result == nil || len(final.Cleanup) != 2 || f.model.calls.Load() != 0 {
+						t.Fatalf("deterministic terminal cleanup failed: %+v err=%v", final, err)
+					}
+				}
+				if change == "deadline_after_registration" {
+					done := make(chan error, 1)
+					go func() { done <- env.finishTaskExecution(f.ctx, exec, sendErr) }()
+					for i := 0; i < 3; i++ {
+						f.observe(f.next())
+					}
+					if err := <-done; err != nil {
+						t.Fatal(err)
+					}
+					final, err := f.service.Read(f.ctx, f.key, record.ID)
+					if err != nil || final.State != task.StatePaused || final.ReconcileAttempts != 3 || len(final.Operations) != 2 || f.model.calls.Load() != 0 {
+						t.Fatalf("deadline lost registered operation reconciliation: %+v err=%v", final, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestTaskInitialObservationTransportFailureClassified(t *testing.T) {
+	f := newTaskWireFixture(t, false)
+	f.server.dispatcher.Stop()
+	entry, _ := f.server.worlds.Current(f.head.Binding.World)
+	env := entry.Environment.(*streamEnvironment)
+	env.close()
+	_, err := env.Observe(f.ctx, "world", "actor")
+	var failure taskObservationFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("initial observation transport failure was not classified: %v", err)
 	}
 }

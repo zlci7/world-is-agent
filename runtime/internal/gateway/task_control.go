@@ -20,11 +20,19 @@ func (e *streamEnvironment) ReleaseTask(ctx context.Context, record task.Record)
 	if e.taskAuthority == nil {
 		return task.ErrWorldNotReady
 	}
-	head, _, ready := e.taskAuthority.Current()
-	if !ready {
-		return task.ErrWorldNotReady
-	}
-	return e.releaseTaskControl(ctx, head.Binding, record)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return e.retryTaskWork(cleanupCtx, func() error {
+		head, _, ready := e.taskAuthority.Current()
+		if !ready {
+			return task.ErrWorldNotReady
+		}
+		current, err := e.taskAuthority.registry.service.Read(cleanupCtx, record.Owner, record.ID)
+		if err != nil {
+			return err
+		}
+		return e.releaseTaskControl(cleanupCtx, head.Binding, current)
+	})
 }
 
 func (e *historyMaintenanceEnvironment) ReleaseTask(ctx context.Context, record task.Record) error {

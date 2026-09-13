@@ -37,6 +37,14 @@ func NewService(store *SQLiteStore) *Service {
 	}
 }
 
+func (s *Service) ReadHead(ctx context.Context, world WorldKey) (Head, error) {
+	if err := validateService(s, ctx); err != nil {
+		return Head{}, err
+	}
+	row, err := s.store.loadWorldHead(ctx, world)
+	return row.Head, err
+}
+
 func (s *Service) ActivateWorld(ctx context.Context, world WorldKey, runID string, clock Clock, ref CheckpointRef) (Head, error) {
 	if err := validateService(s, ctx); err != nil {
 		return Head{}, err

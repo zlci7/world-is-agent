@@ -581,7 +581,7 @@ func (l *Loop) runBoundedSteps(
 		if err == nil && taskContext != nil {
 			err = taskContext.captureProposals(ctx, &outcome)
 			if err == nil {
-				err = taskContext.releaseCommitted(ctx, env, toolView.RuntimeContext())
+				err = taskContext.releaseCommitted(ctx, env, toolView, calls)
 			}
 		}
 		turnHistoryFromContext(ctx).collector.Executions(stepIndex, outcome.Executions)

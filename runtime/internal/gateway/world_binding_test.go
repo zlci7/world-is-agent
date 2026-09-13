@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"reflect"
@@ -282,8 +283,8 @@ func TestWorldClockAuthority(t *testing.T) {
 		{"duplicate", func(u *protocol.WorldClockUpdate) {}, "", false},
 		{"conflicting duplicate", func(u *protocol.WorldClockUpdate) { u.Clock.NowTick = 11 }, "clock_mismatch", true},
 		{"conflicting rewind duplicate", func(u *protocol.WorldClockUpdate) { u.Clock.NowTick = 9 }, "clock_mismatch", true},
-		{"sequence regression", func(u *protocol.WorldClockUpdate) { u.Clock.Sequence = 0 }, "clock_rewound", false},
-		{"tick rewind", func(u *protocol.WorldClockUpdate) { u.Clock.NowTick = 9; u.Clock.Sequence = 2 }, "clock_rewound", false},
+		{"sequence regression", func(u *protocol.WorldClockUpdate) { u.Clock.Sequence = 0 }, "clock_rewound", true},
+		{"tick rewind", func(u *protocol.WorldClockUpdate) { u.Clock.NowTick = 9; u.Clock.Sequence = 2 }, "clock_rewound", true},
 		{"clock ID", func(u *protocol.WorldClockUpdate) { u.Clock.ClockId = "wrong" }, "clock_mismatch", false},
 		{"game", func(u *protocol.WorldClockUpdate) { u.Scope.GameId = "wrong" }, "world_mismatch", false},
 		{"world", func(u *protocol.WorldClockUpdate) { u.Scope.WorldId = "wrong" }, "world_mismatch", false},
@@ -308,7 +309,30 @@ func TestWorldClockAuthority(t *testing.T) {
 			current, ok := server.WorldRegistry().Current(entry.Head.Binding.World)
 			if test.paused {
 				if ok {
-					t.Fatal("conflicting duplicate admission open")
+					t.Fatal("clock authority violation left task admission open")
+				}
+				if _, err := service.UpdateClock(context.Background(), entry.Head.Binding, entry.Head.Clock); !errors.Is(err, task.ErrWorldNotReady) {
+					t.Fatalf("clock violation left persistent authority ready: %v", err)
+				}
+				persisted, err := service.ReadHead(context.Background(), entry.Head.Binding.World)
+				if err != nil || persisted.Status != "paused" || persisted.Reason != test.code {
+					t.Fatalf("clock pause reason not durable: %+v err=%v", persisted, err)
+				}
+				if err := server.worlds.UpdateClock(context.Background(), entry.Environment.(*streamEnvironment), &protocol.WorldClockUpdate{Scope: ready.Scope, Clock: &protocol.WorldClock{ClockId: "game", NowTick: 12, Sequence: 3}}); !errors.Is(err, task.ErrWorldNotReady) {
+					t.Fatalf("Clock update reopened authority without rebind: %v", err)
+				}
+				if len(server.WorldRegistry().ReadyWorlds()) != 0 {
+					t.Fatal("clock violation left scanning enabled")
+				}
+				select {
+				case <-entry.Environment.(*streamEnvironment).closed:
+					t.Fatal("clock fault closed ordinary connection")
+				default:
+				}
+				request := worldRequest()
+				request.Scope.ExecutionGeneration = ready.Scope.ExecutionGeneration
+				if rebound := bindTestWorld(t, s, request); rebound.Status != "ready" || rebound.Scope.ExecutionGeneration != 2 {
+					t.Fatalf("explicit clock-fault rebind did not recover: %v", rebound)
 				}
 				return
 			}
@@ -384,5 +408,61 @@ func TestWorldBindingCatalogSnapshot(t *testing.T) {
 	available[0].Name = "mutated"
 	if view.Available()[0].Name != "inspect" {
 		t.Fatal("catalog snapshot aliases returned tools")
+	}
+}
+
+func TestWorldBindingNewConnectionSameRunReconnect(t *testing.T) {
+	for _, disconnected := range []bool{false, true} {
+		t.Run(fmt.Sprint(disconnected), func(t *testing.T) {
+			server, _, _ := taskTestServer(t)
+			old, done := taskHandshake(t, server)
+			ready := bindTestWorld(t, old, worldRequest())
+			world := task.WorldKey{GameID: "sim", WorldID: "world"}
+			prior, _ := server.worlds.Current(world)
+			if disconnected {
+				close(old.incoming)
+				<-done
+			}
+			fresh, _ := taskHandshake(t, server)
+			request := worldRequest()
+			request.Scope.ExecutionGeneration = ready.Scope.ExecutionGeneration
+			rebound := bindTestWorld(t, fresh, request)
+			if rebound.Status != "ready" || rebound.Scope.ExecutionGeneration != 2 {
+				t.Fatalf("new connection could not resume persisted generation: %v", rebound)
+			}
+			select {
+			case <-prior.Environment.(*streamEnvironment).closed:
+			default:
+				t.Fatal("old stream stayed live")
+			}
+			if err := server.worlds.UpdateClock(context.Background(), prior.Environment.(*streamEnvironment), &protocol.WorldClockUpdate{Scope: ready.Scope, Clock: worldRequest().Clock}); !errors.Is(err, task.ErrGenerationStale) {
+				t.Fatalf("old stream clock: %v", err)
+			}
+		})
+	}
+}
+
+func TestWorldBindingReconnectRejectsNoncurrentGeneration(t *testing.T) {
+	server, _, _ := taskTestServer(t)
+	old, _ := taskHandshake(t, server)
+	ready := bindTestWorld(t, old, worldRequest())
+	request := worldRequest()
+	request.Scope = ready.Scope
+	current := bindTestWorld(t, old, request)
+	if current.Scope.ExecutionGeneration != 2 {
+		t.Fatal(current)
+	}
+	for _, generation := range []uint64{1, 3, 99} {
+		fresh, _ := taskHandshake(t, server)
+		request := worldRequest()
+		request.Scope.ExecutionGeneration = generation
+		response := bindTestWorld(t, fresh, request)
+		if response.Status != "paused" || response.Error.GetCode() != "generation_stale" {
+			t.Fatalf("generation %d accepted: %v", generation, response)
+		}
+		entry, ok := server.worlds.Current(task.WorldKey{GameID: "sim", WorldID: "world"})
+		if !ok || entry.Head.Binding.Generation != 2 {
+			t.Fatal("rejected connection disturbed current owner")
+		}
 	}
 }

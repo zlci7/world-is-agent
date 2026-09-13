@@ -9,6 +9,7 @@ import (
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/session"
+	"gameagent/runtime/internal/task"
 )
 
 type streamEnvironment struct {
@@ -100,8 +101,8 @@ func (e *streamEnvironment) Observe(ctx context.Context, worldID string, entityI
 		},
 	}
 
-	if err := e.send(msg); err != nil {
-		return nil, err
+	if err := e.sendContext(ctx, msg); err != nil {
+		return nil, taskObservationFailure{err}
 	}
 
 	select {
@@ -321,10 +322,13 @@ func (e *streamEnvironment) sendActionRequest(ctx context.Context, req *protocol
 			Action: req,
 		},
 	}
-	if e.taskAuthority == nil {
+	if req.TaskSource == nil {
 		return e.sendContext(ctx, message)
 	}
-	return e.sendGuarded(ctx, message, func(send func() error) error { return e.guardActionSend(req, send) })
+	if e.taskAuthority == nil {
+		return task.ErrWorldNotReady
+	}
+	return e.sendGuarded(ctx, message, func(send func() error) error { return e.guardActionSend(ctx, req, send) })
 }
 
 func (e *streamEnvironment) send(msg *protocolv1alpha2.RuntimeMessage) error {

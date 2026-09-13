@@ -32,6 +32,22 @@ func wireReceipt(f *taskWireFixture, r task.Record, op task.Operation, outcome s
 	return &protocol.TaskEvidence{FactId: "receipt", TaskId: r.ID, OperationId: op.ID, Scope: taskScopeToProtocol(f.head.Binding), StartRevision: op.StartRevision, OccurredAt: 10, Outcome: outcome}
 }
 
+func TestTaskInteractionKindAllowlist(t *testing.T) {
+	for _, kind := range []string{"player", "task_arrival", "arrival", "unknown", ""} {
+		t.Run(kind, func(t *testing.T) {
+			f := newTaskWireFixture(t, false)
+			r, op := seedWireOperation(t, f)
+			entry, _ := f.server.worlds.Current(f.head.Binding.World)
+			source := &protocol.InteractionSource{SourceId: "source", Kind: kind, PlayerEntityId: "player", TaskId: r.ID, OperationId: op.ID, Scope: taskScopeToProtocol(f.head.Binding)}
+			event := &protocol.GameEvent{InteractionSource: source, TaskEvidence: []*protocol.TaskEvidence{wireReceipt(f, r, op, "satisfied")}}
+			got := f.server.claimTaskInteraction(entry.Environment.(*streamEnvironment), event)
+			if want := kind == "player" || kind == "task_arrival"; got != want {
+				t.Fatalf("kind=%q admitted=%v want %v", kind, got, want)
+			}
+		})
+	}
+}
+
 func TestEvidenceDoesNotRequireModel(t *testing.T) {
 	for _, outcome := range []string{"satisfied", "unsatisfied"} {
 		for _, interaction := range []bool{false, true} {
@@ -44,7 +60,7 @@ func TestEvidenceDoesNotRequireModel(t *testing.T) {
 				r, op := seedWireOperation(t, f)
 				var source *protocol.InteractionSource
 				if interaction {
-					source = &protocol.InteractionSource{SourceId: "arrival-source", Kind: "arrival", PlayerEntityId: "player", TaskId: r.ID, OperationId: op.ID, Scope: taskScopeToProtocol(f.head.Binding)}
+					source = &protocol.InteractionSource{SourceId: "arrival-source", Kind: "task_arrival", PlayerEntityId: "player", TaskId: r.ID, OperationId: op.ID, Scope: taskScopeToProtocol(f.head.Binding)}
 				}
 				evidence := wireReceipt(f, r, op, outcome)
 				f.event("receipt-event", []*protocol.TaskEvidence{evidence}, source)
@@ -409,7 +425,7 @@ func TestEvidenceInteractionDedupSurvivesSameRunRebind(t *testing.T) {
 	f := newTaskWireFixture(t, false)
 	r, op := seedWireOperation(t, f)
 	evidence := wireReceipt(f, r, op, "satisfied")
-	source := &protocol.InteractionSource{SourceId: "arrival", Kind: "arrival", PlayerEntityId: "player", TaskId: r.ID, OperationId: op.ID, Scope: taskScopeToProtocol(f.head.Binding)}
+	source := &protocol.InteractionSource{SourceId: "arrival", Kind: "task_arrival", PlayerEntityId: "player", TaskId: r.ID, OperationId: op.ID, Scope: taskScopeToProtocol(f.head.Binding)}
 	f.event("arrival", []*protocol.TaskEvidence{evidence}, source)
 	f.next()
 	control := f.next().GetTaskControl()

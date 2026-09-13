@@ -32,6 +32,16 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 	n := p.calls.Add(1)
 	d := model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlContinue}}
 	switch p.mode {
+	case "ordinary_after_pause", "ordinary_pause_during_action":
+		for _, entry := range req.Tools {
+			if (n > 1 || p.mode == "ordinary_after_pause") && (entry.Name == "create_task" || entry.Name == "update_task") {
+				return model.Response{}, errors.New("Task tools visible while paused")
+			}
+		}
+		if n == 1 {
+			return model.Response{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlContinue}, ToolCalls: []model.ToolCall{{ID: "ordinary", Name: "follow_route", Arguments: map[string]any{}}}}}, nil
+		}
+		return model.Response{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlSettle}}}, nil
 	case "player_cancel":
 		if n == 1 {
 			return model.Response{Decision: model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlContinue}, ToolCalls: []model.ToolCall{{ID: "cancel", Name: "update_task", Arguments: map[string]any{"task_id": p.taskID, "intent": "cancel", "reason": "player request"}}}}}, nil
