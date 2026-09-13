@@ -16,6 +16,7 @@ type taskRuntimeEnvironment interface {
 }
 
 type taskTurnContext struct {
+	env       Environment
 	service   *task.Service
 	world     tool.TaskWorld
 	tools     *tool.TaskTools
@@ -54,6 +55,9 @@ func (t *taskTurnContext) snapshot(ctx context.Context, config tool.ToolAdmissio
 	head, epoch, ready := t.world.Current()
 	if !ready || head.Binding != rc.Execution.Binding || epoch != rc.AuthorityEpoch || head.Clock.ID != rc.Execution.Clock.ID {
 		t.tools.Close()
+		if t.background() {
+			return tool.ToolAdmissionResult{}, task.ErrGenerationStale
+		}
 		return t.catalog.BuildTurnToolView(config), nil
 	}
 	if rc.Execution.Source.Kind == task.SourceKindTaskWake {
@@ -97,6 +101,28 @@ func (t *taskTurnContext) captureProposals(ctx context.Context, outcome *toolBat
 			}
 			result.Output["proposal_ref"] = ref
 		}
+	}
+	return nil
+}
+
+type taskControlReleaser interface {
+	ReleaseTask(context.Context, task.Record) error
+}
+
+func (t *taskTurnContext) releaseCommitted(ctx context.Context, env Environment, rc *tool.RuntimeCallContext) error {
+	if rc == nil || rc.ObservedTask == nil {
+		return nil
+	}
+	releaser, ok := env.(taskControlReleaser)
+	if !ok {
+		return nil
+	}
+	record, err := t.service.Read(ctx, rc.Execution.Owner, rc.ObservedTask.ID)
+	if err != nil {
+		return err
+	}
+	if record.Result != nil {
+		return releaser.ReleaseTask(ctx, record)
 	}
 	return nil
 }

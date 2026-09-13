@@ -14,6 +14,7 @@ type TaskProjection struct {
 	NextWakeupAt *int64     `json:"next_wakeup_at"`
 	DeadlineAt   int64      `json:"deadline_at"`
 	WakeReason   string     `json:"wake_reason,omitempty"`
+	WakeID       string     `json:"wake_id,omitempty"`
 	Reason       string     `json:"reason,omitempty"`
 }
 
@@ -32,6 +33,7 @@ func projectTask(owner session.AgentSessionKey, rc *tool.RuntimeCallContext) (*T
 	}
 	if rc.Execution.Source.Kind == task.SourceKindTaskWake {
 		projection.WakeReason = rc.WakeReason
+		projection.WakeID = rc.Execution.WakeID
 	}
 	if r.State == task.StatePaused {
 		projection.Reason = r.PauseReason

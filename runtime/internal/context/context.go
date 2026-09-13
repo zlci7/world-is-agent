@@ -958,7 +958,9 @@ func (r *ContextBuildReport) addReason(reason string) {
 }
 
 func validateEngineInput(input BuildInput) error {
-	if input.Event == nil {
+	rc := input.TurnToolView.RuntimeContext()
+	internalWake := input.Event == nil && rc != nil && rc.Execution.Source.Kind == "task_wake" && rc.Execution.Owner == input.SessionKey && rc.Execution.WakeID != "" && rc.ObservedTask != nil
+	if input.Event == nil && !internalWake {
 		return fmt.Errorf("%w: event is required", ErrInvalidInput)
 	}
 	if input.Observation == nil {
@@ -990,10 +992,10 @@ func validateEngineInput(input BuildInput) error {
 	}
 	eventWorldID := strings.TrimSpace(input.Event.GetWorldId())
 	eventTargetEntityID := strings.TrimSpace(input.Event.GetTargetEntityId())
-	if eventWorldID != input.SessionKey.WorldID {
+	if !internalWake && eventWorldID != input.SessionKey.WorldID {
 		return fmt.Errorf("%w: event world_id does not match session key", ErrInvalidInput)
 	}
-	if eventTargetEntityID != input.SessionKey.EntityID {
+	if !internalWake && eventTargetEntityID != input.SessionKey.EntityID {
 		return fmt.Errorf("%w: event target_entity_id does not match session key", ErrInvalidInput)
 	}
 	if input.Observation.GetWorldId() != input.SessionKey.WorldID {

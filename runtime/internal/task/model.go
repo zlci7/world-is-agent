@@ -32,9 +32,10 @@ const (
 	ReconcileNextObserve = "observe"
 	ReconcileNextSettled = "settled"
 
-	AttemptOutcomeKindProgress        = "progress"
-	AttemptOutcomeKindNoProgress      = "no_progress"
-	AttemptOutcomeKindReconcileFailed = "reconcile_failed"
+	AttemptOutcomeKindProgress          = "progress"
+	AttemptOutcomeKindNoProgress        = "no_progress"
+	AttemptOutcomeKindReconcileFailed   = "reconcile_failed"
+	AttemptOutcomeKindObservationFailed = "observation_failed"
 
 	OperationStatusRegistered = "registered"
 	OperationStatusUncertain  = "uncertain"
@@ -636,7 +637,7 @@ func (r ReconcileResult) Validate() error {
 
 func (a AttemptOutcome) Validate() error {
 	switch a.Kind {
-	case AttemptOutcomeKindProgress, AttemptOutcomeKindNoProgress, AttemptOutcomeKindReconcileFailed:
+	case AttemptOutcomeKindProgress, AttemptOutcomeKindNoProgress, AttemptOutcomeKindReconcileFailed, AttemptOutcomeKindObservationFailed:
 		if !optionalIdentity(a.Reason) {
 			return ErrInvalidTaskSpec
 		}

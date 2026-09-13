@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/agent"
@@ -52,15 +53,18 @@ type worldSlot struct {
 }
 
 type WorldRegistry struct {
-	updates chan struct{}
-	mu      sync.Mutex
-	worlds  map[task.WorldKey]*worldSlot
-	service *task.Service
-	stopped bool
+	updates        chan struct{}
+	mu             sync.Mutex
+	worlds         map[task.WorldKey]*worldSlot
+	service        *task.Service
+	stopped        bool
+	interactions   map[string]struct{}
+	interactionMu  sync.Mutex
+	dispatchConfig task.DispatcherConfig
 }
 
 func NewWorldRegistry(service *task.Service) *WorldRegistry {
-	return &WorldRegistry{worlds: make(map[task.WorldKey]*worldSlot), service: service, updates: make(chan struct{}, 1)}
+	return &WorldRegistry{worlds: make(map[task.WorldKey]*worldSlot), service: service, updates: make(chan struct{}, 1), interactions: make(map[string]struct{}), dispatchConfig: task.DispatcherConfig{RetryMin: 10 * time.Millisecond, RetryMax: 100 * time.Millisecond}}
 }
 
 func (r *WorldRegistry) notify() {

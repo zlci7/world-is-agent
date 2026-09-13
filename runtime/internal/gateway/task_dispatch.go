@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/session"
 	"gameagent/runtime/internal/task"
+	"gameagent/runtime/internal/tool"
 )
 
 type wakeService interface {
@@ -24,6 +27,43 @@ func (s *Server) StartTaskDispatcher(ctx context.Context, config task.Dispatcher
 	defer s.mu.Unlock()
 	if s.stopped || s.worlds == nil || s.dispatcher != nil {
 		return task.ErrWorldNotReady
+	}
+	s.worlds.dispatchConfig = config
+	if handler == nil {
+		if loop, ok := s.agentLoop.(interface {
+			HandleTaskWake(context.Context, agent.Environment, agent.ConnectionContext, *protocol.EntityRef, *tool.EnvironmentToolCatalog, task.ExecutionContext, task.Record) error
+		}); ok {
+			handler = func(ctx context.Context, exec task.ExecutionContext, record task.Record) error {
+				entry, ok := s.worlds.Current(exec.Binding.World)
+				if !ok || entry.Head.Binding != exec.Binding {
+					return nil
+				}
+				env := entry.Environment.(*streamEnvironment)
+				slot := s.worlds.slot(exec.Binding.World, false)
+				slot.mu.Lock()
+				if slot.owner == nil || slot.owner.env != env || slot.head.Binding != exec.Binding {
+					slot.mu.Unlock()
+					return nil
+				}
+				catalog, hello := slot.owner.catalog, slot.owner.hello
+				slot.mu.Unlock()
+				if record.NeedsReconcile {
+					ctx = context.WithValue(ctx, taskReconcileQueryKey{}, true)
+				}
+				err := loop.HandleTaskWake(ctx, env, agent.ConnectionContext{GameID: hello.GameId, SessionID: hello.SessionId}, entry.Entities[exec.Owner.EntityID], catalog, exec, record)
+				if err != nil {
+					log.Printf("task turn: %s", logSafeError(err))
+				}
+				return env.finishTaskExecution(ctx, exec, err)
+			}
+			reconcile = func(ctx context.Context, exec task.ExecutionContext, record task.Record) error {
+				entry, ok := s.worlds.Current(exec.Binding.World)
+				if !ok || entry.Head.Binding != exec.Binding {
+					return nil
+				}
+				return entry.Environment.(*streamEnvironment).finishTaskExecution(ctx, exec, taskActionFailure{task.ErrTaskChanged})
+			}
+		}
 	}
 	admission := newTaskDispatch(s.worlds, s.worlds.service, config, handler, reconcile)
 	dispatcher, err := task.NewDispatcher(ctx, s.worlds.service, config, task.DispatcherCallbacks{

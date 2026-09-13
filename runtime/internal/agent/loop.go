@@ -243,27 +243,36 @@ func (l *Loop) handleEventWithToolAdmission(
 	event *protocolv1alpha2.GameEvent,
 	catalogs ...*tool.EnvironmentToolCatalog,
 ) error {
-	toolView := toolAdmission.View
-	tools := toolView.Available()
-	ctx, cancelTurn := context.WithTimeout(ctx, l.config.TurnTimeout)
-	defer cancelTurn()
-
 	turnID := idgen.New("turn")
 	var taskContext *taskTurnContext
 	if len(catalogs) > 0 {
 		taskContext = l.beginTaskContext(env, key, event, turnID, catalogs[0])
 	}
+	return l.handleTurn(ctx, env, conn, key, target, toolAdmission, event, turnID, taskContext)
+}
+
+func (l *Loop) handleTurn(ctx context.Context, env Environment, conn ConnectionContext, key session.AgentSessionKey, target *protocolv1alpha2.EntityRef, toolAdmission tool.ToolAdmissionResult, event *protocolv1alpha2.GameEvent, turnID string, taskContext *taskTurnContext) error {
+	toolView := toolAdmission.View
+	tools := toolView.Available()
+	ctx, cancelTurn := context.WithTimeout(ctx, l.config.TurnTimeout)
+	defer cancelTurn()
 	if taskContext != nil {
 		defer taskContext.tools.Close()
 	}
 	ctx = context.WithValue(ctx, turnHistoryContextKey{}, &terminalHistoryState{collector: newTurnHistoryCollector(key, turnID, event)})
+	eventID, eventType := event.GetEventId(), event.GetEventType()
+	if taskContext != nil && taskContext.background() {
+		eventID, eventType = taskContext.authority.Execution.WakeID, "task_wake"
+		collector := turnHistoryFromContext(ctx).collector
+		collector.batch.Event.ID, collector.batch.Event.Type = eventID, eventType
+	}
 	// 为本次有效 GameEvent 创建 TurnTracer。
 	turnTracer := trace.NewTurnTracerWithID(l.recorder, trace.TurnContext{
 		GameID:    key.GameID,
 		WorldID:   key.WorldID,
 		SessionID: conn.SessionID,
-		EventID:   event.EventId,
-		EventType: event.EventType,
+		EventID:   eventID,
+		EventType: eventType,
 		EntityID:  key.EntityID,
 	}, turnID)
 	turnTracer.Emit(trace.EventTurnStarted, trace.EventData{
@@ -291,6 +300,17 @@ func (l *Loop) handleEventWithToolAdmission(
 	}
 	turnHistoryFromContext(ctx).collector.Observe(0, obs)
 	turnTracer.Emit(trace.EventObservationReceived, trace.EventData{})
+	if taskContext != nil && taskContext.background() {
+		stopped, err := taskContext.stopped(ctx)
+		if err != nil {
+			l.failTurn(ctx, env, turnTracer, key, event, turnID, "task", "task_evidence_failed", err, trace.EventData{})
+			return err
+		}
+		if stopped {
+			l.completeTurn(ctx, env, turnTracer, key, event, turnID, trace.EventData{})
+			return nil
+		}
+	}
 
 	descriptor := definition.NewAgentInstanceDescriptor(key, target)
 	recentMemories := l.loadRecentMemories(ctx, turnTracer, key)
@@ -356,6 +376,17 @@ func (l *Loop) runBoundedSteps(
 			return err
 		}
 		if taskContext != nil {
+			if taskContext.background() {
+				stopped, err := taskContext.stopped(ctx)
+				if err != nil {
+					l.failTurn(ctx, env, turnTracer, key, event, turnID, "task", "task_evidence_failed", err, trace.EventData{})
+					return err
+				}
+				if stopped {
+					l.completeTurn(ctx, env, turnTracer, key, event, turnID, trace.EventData{})
+					return nil
+				}
+			}
 			admission, err := taskContext.snapshot(ctx, l.toolAdmissionConfig())
 			if err != nil {
 				l.failTurn(ctx, env, turnTracer, key, event, turnID, "context", "task_context_failed", err, trace.EventData{})
@@ -542,9 +573,16 @@ func (l *Loop) runBoundedSteps(
 			continue
 		}
 		scheduler := l.newToolBatchScheduler(turnTracer, stepIndex, event, turnID, toolView, asyncActionsStarted >= l.config.MaxAsyncActionsPerTurn)
+		if taskContext != nil && taskContext.background() {
+			scheduler.sourceEventID = taskContext.authority.Execution.WakeID
+			scheduler.beforeEnvironmentAction = taskContext.beforeAction(env, toolView.RuntimeContext())
+		}
 		outcome, err := scheduler.Run(ctx, env, key.WorldID, key.EntityID, calls)
 		if err == nil && taskContext != nil {
 			err = taskContext.captureProposals(ctx, &outcome)
+			if err == nil {
+				err = taskContext.releaseCommitted(ctx, env, toolView.RuntimeContext())
+			}
 		}
 		turnHistoryFromContext(ctx).collector.Executions(stepIndex, outcome.Executions)
 		if err != nil {
@@ -572,6 +610,17 @@ func (l *Loop) runBoundedSteps(
 			ToolResults: copyToolResultsForTranscript(outcome.Results),
 		})
 		successfulActions = append(successfulActions, outcome.SuccessfulActions...)
+		if taskContext != nil && taskContext.background() {
+			stopped, err := taskContext.stopped(ctx)
+			if err != nil {
+				l.failTurn(ctx, env, turnTracer, key, event, turnID, "task", "task_evidence_failed", err, trace.EventData{})
+				return err
+			}
+			if stopped {
+				l.completeTurn(ctx, env, turnTracer, key, event, turnID, lastCompletedActionEventData(successfulActions))
+				return nil
+			}
+		}
 		if outcome.AsyncActionStarted {
 			asyncActionsStarted++
 			turnTracer.Emit(trace.EventObservationRequested, trace.EventData{

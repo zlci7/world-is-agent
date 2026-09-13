@@ -219,8 +219,8 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 		env, laneStore = connection.env, connection.lanes
 		if hasInlineTaskPayload(msg) {
 			ready := false
-			if tasksNegotiated && connection.world != nil {
-				_, ready = s.worlds.Current(*connection.world)
+			if tasksNegotiated && connection.world != nil && env.taskAuthority != nil {
+				_, _, ready = env.taskAuthority.Current()
 			}
 			if !ready {
 				if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
@@ -261,7 +261,13 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 					return err
 				}
 			}
-		case *protocolv1alpha2.AdapterMessage_CheckpointPrepare, *protocolv1alpha2.AdapterMessage_CheckpointFinish, *protocolv1alpha2.AdapterMessage_TaskControlResult:
+		case *protocolv1alpha2.AdapterMessage_TaskControlResult:
+			if !tasksNegotiated || !env.resolveTaskControl(payload.TaskControlResult) {
+				if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+					return err
+				}
+			}
+		case *protocolv1alpha2.AdapterMessage_CheckpointPrepare, *protocolv1alpha2.AdapterMessage_CheckpointFinish:
 			if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
 				return err
 			}
@@ -276,7 +282,13 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 					}
 					continue
 				}
-				if _, ok := s.worlds.Current(*connection.world); !ok {
+				if env.taskAuthority == nil {
+					if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+						return err
+					}
+					continue
+				}
+				if _, _, ok := env.taskAuthority.Current(); !ok {
 					if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
 						return err
 					}
@@ -380,6 +392,35 @@ func (s *Server) dispatchGameEvent(
 		))
 	}
 	key := resolved.Key
+	if len(event.GetTaskEvidence()) > 0 {
+		ids, err := env.admitTaskEvidence(env.stream.Context(), key, event.TaskEvidence, false, "")
+		if err != nil {
+			return env.send(eventAckMessage(messageID, event.EventId, protocolv1alpha2.EventAckStatus_EVENT_ACK_STATUS_REJECTED, taskErrorToProtocol(err)))
+		}
+		lane, err := laneStore.GetOrCreate(key)
+		if err != nil {
+			return err
+		}
+		admitted := make(chan struct{})
+		if err = lane.Enqueue(session.Task{ID: event.EventId, Admitted: admitted, Run: func(ctx context.Context) {
+			if err := env.coordinateTasks(ctx, key, ids); err != nil {
+				log.Printf("task evidence: %s", logSafeError(err))
+			}
+			if s.claimTaskInteraction(env, event) {
+				if err := s.agentLoop.HandleEvent(ctx, env, conn, key, resolved.Target, catalog, event); err != nil {
+					log.Printf("task result interaction: %s", logSafeError(err))
+				}
+			}
+		}}); err != nil {
+			return env.send(eventAckMessage(messageID, event.EventId, protocolv1alpha2.EventAckStatus_EVENT_ACK_STATUS_REJECTED, taskErrorToProtocol(err)))
+		}
+		if err = env.send(eventAckMessage(messageID, event.EventId, protocolv1alpha2.EventAckStatus_EVENT_ACK_STATUS_ACCEPTED, nil)); err != nil {
+			return err
+		}
+		seenEventIDs[event.EventId] = struct{}{}
+		close(admitted)
+		return nil
+	}
 
 	// Step 3：按身份 key 拿/建该 Agent 的 ExecutionLane。
 	// 每个 Agent 一条 lane = 同一 Agent 的事件 FIFO 串行、不同 Agent 并行。

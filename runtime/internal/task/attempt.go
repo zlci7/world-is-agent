@@ -147,10 +147,11 @@ func applyAttemptOutcome(current Record, outcome AttemptOutcome) (Record, bool, 
 			updated.NeedsReconcile = false
 			pause = true
 		}
-	case AttemptOutcomeKindReconcileFailed:
-		if !current.NeedsReconcile {
+	case AttemptOutcomeKindReconcileFailed, AttemptOutcomeKindObservationFailed:
+		if (outcome.Kind == AttemptOutcomeKindReconcileFailed) != current.NeedsReconcile {
 			return Record{}, false, ErrTaskChanged
 		}
+		updated.NeedsReconcile = true
 		updated.ReconcileAttempts++
 		if updated.ReconcileAttempts == maxConsecutiveAttemptFailures {
 			updated.State = StatePaused

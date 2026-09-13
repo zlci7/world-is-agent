@@ -8,6 +8,7 @@ import (
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/agent"
+	"gameagent/runtime/internal/session"
 )
 
 type streamEnvironment struct {
@@ -21,6 +22,8 @@ type streamEnvironment struct {
 	pendingMu           sync.Mutex
 	pendingObservations map[string]pendingObservation
 	pendingActions      map[string]*pendingAction
+	pendingControls     map[string]*pendingTaskControl
+	taskReleases        map[string]*pendingTaskControl
 }
 
 type pendingObservation struct {
@@ -35,6 +38,7 @@ type observeResult struct {
 }
 
 type pendingAction struct {
+	request *protocolv1alpha2.ActionRequest
 	updates chan actionStatusResult
 	results chan actionResult
 }
@@ -56,6 +60,8 @@ func newStreamEnvironment(stream protocolv1alpha2.GameAgentGateway_ConnectServer
 		closed:              make(chan struct{}),
 		pendingObservations: make(map[string]pendingObservation),
 		pendingActions:      make(map[string]*pendingAction),
+		pendingControls:     make(map[string]*pendingTaskControl),
+		taskReleases:        make(map[string]*pendingTaskControl),
 	}
 }
 
@@ -100,9 +106,23 @@ func (e *streamEnvironment) Observe(ctx context.Context, worldID string, entityI
 
 	select {
 	case result := <-ch:
+		if result.err != nil {
+			return nil, taskObservationFailure{result.err}
+		}
+		if e.taskAuthority != nil {
+			owner := session.AgentSessionKey{GameID: e.taskAuthority.world.GameID, WorldID: worldID, EntityID: entityID}
+			active, _ := ctx.Value(taskReconcileQueryKey{}).(bool)
+			ids, err := e.admitTaskEvidence(ctx, owner, result.observation.GetTaskEvidence(), active, "")
+			if err == nil {
+				err = e.coordinateTasks(ctx, owner, ids)
+			}
+			if err != nil {
+				return nil, taskObservationFailure{err}
+			}
+		}
 		return result.observation, result.err
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, taskObservationFailure{ctx.Err()}
 	}
 }
 
@@ -118,19 +138,20 @@ func (e *streamEnvironment) SubmitAction(ctx context.Context, req *protocolv1alp
 	}
 
 	pending := newPendingAction()
+	pending.request = req
 	e.setPendingAction(req.ActionId, pending)
 	defer e.deletePendingAction(req.ActionId)
 
-	if err := e.sendActionRequest(req); err != nil {
-		return nil, err
+	if err := e.sendActionRequest(ctx, req); err != nil {
+		return nil, taskActionError(req, err)
 	}
 
 	select {
 	case result := <-pending.results:
-		return result.result, result.err
+		return e.coordinateActionResult(ctx, req, result)
 	case <-ctx.Done():
 		e.CancelAction(req.ActionId, "action_timeout")
-		return nil, ctx.Err()
+		return nil, taskActionError(req, ctx.Err())
 	}
 }
 
@@ -146,11 +167,12 @@ func (e *streamEnvironment) StartAction(ctx context.Context, req *protocolv1alph
 	}
 
 	pending := newPendingAction()
+	pending.request = req
 	e.setPendingAction(req.ActionId, pending)
 
-	if err := e.sendActionRequest(req); err != nil {
+	if err := e.sendActionRequest(ctx, req); err != nil {
 		e.deletePendingAction(req.ActionId)
-		return agent.ActionStart{}, err
+		return agent.ActionStart{}, taskActionError(req, err)
 	}
 
 	for {
@@ -166,11 +188,12 @@ func (e *streamEnvironment) StartAction(ctx context.Context, req *protocolv1alph
 			return agent.ActionStart{Update: update.update}, nil
 		case result := <-pending.results:
 			e.deletePendingAction(req.ActionId)
-			return agent.ActionStart{Result: result.result}, result.err
+			r, err := e.coordinateActionResult(ctx, req, result)
+			return agent.ActionStart{Result: r}, err
 		case <-ctx.Done():
 			e.deletePendingAction(req.ActionId)
 			e.CancelAction(req.ActionId, "action_start_timeout")
-			return agent.ActionStart{}, ctx.Err()
+			return agent.ActionStart{}, taskActionError(req, ctx.Err())
 		}
 	}
 }
@@ -191,10 +214,13 @@ func (e *streamEnvironment) WaitActionResult(ctx context.Context, actionID strin
 
 	select {
 	case result := <-pending.results:
+		if pending.request != nil {
+			return e.coordinateActionResult(ctx, pending.request, result)
+		}
 		return result.result, result.err
 	case <-ctx.Done():
 		e.CancelAction(actionID, "async_action_timeout")
-		return nil, ctx.Err()
+		return nil, taskActionError(pending.request, ctx.Err())
 	}
 }
 
@@ -234,6 +260,7 @@ func (e *streamEnvironment) SendTurnCompletion(ctx context.Context, completion *
 func (e *streamEnvironment) resolveObservation(correlationID string, observation *protocolv1alpha2.Observation) {
 	e.pendingMu.Lock()
 	pending, ok := e.pendingObservations[correlationID]
+	delete(e.pendingObservations, correlationID)
 	e.pendingMu.Unlock()
 
 	if !ok {
@@ -287,36 +314,62 @@ func (e *streamEnvironment) resolveActionResult(actionID string, result *protoco
 	}
 }
 
-func (e *streamEnvironment) sendActionRequest(req *protocolv1alpha2.ActionRequest) error {
-	return e.send(&protocolv1alpha2.RuntimeMessage{
+func (e *streamEnvironment) sendActionRequest(ctx context.Context, req *protocolv1alpha2.ActionRequest) error {
+	message := &protocolv1alpha2.RuntimeMessage{
 		MessageId: newMessageID("action"),
 		Payload: &protocolv1alpha2.RuntimeMessage_Action{
 			Action: req,
 		},
-	})
+	}
+	if e.taskAuthority == nil {
+		return e.sendContext(ctx, message)
+	}
+	return e.sendGuarded(ctx, message, func(send func() error) error { return e.guardActionSend(req, send) })
 }
 
 func (e *streamEnvironment) send(msg *protocolv1alpha2.RuntimeMessage) error {
+	return e.sendContext(context.Background(), msg)
+}
+
+func (e *streamEnvironment) sendContext(ctx context.Context, msg *protocolv1alpha2.RuntimeMessage) error {
+	return e.sendGuarded(ctx, msg, nil)
+}
+
+func (e *streamEnvironment) sendGuarded(ctx context.Context, msg *protocolv1alpha2.RuntimeMessage, guard func(func() error) error) error {
 	select {
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-e.closed:
 		return io.EOF
 	case e.sendSlot <- struct{}{}:
 	}
-	select {
-	case <-e.closed:
-		<-e.sendSlot
-		return io.EOF
-	default:
-	}
-
 	// At most one transport send is active. Shutdown releases its caller so the
 	// handler can finish task persistence; returning the handler releases gRPC I/O.
 	result := make(chan error, 1)
-	go func() {
-		defer func() { <-e.sendSlot }()
-		result <- e.stream.Send(msg)
-	}()
+	start := func() error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-e.closed:
+			return io.EOF
+		default:
+		}
+		go func() { defer func() { <-e.sendSlot }(); result <- e.stream.Send(msg) }()
+		return nil
+	}
+	var err error
+	if guard != nil {
+		err = guard(start)
+	} else {
+		err = start()
+	}
+	if err != nil {
+		<-e.sendSlot
+		return err
+	}
 	select {
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-e.closed:
 		return io.EOF
 	case err := <-result:
