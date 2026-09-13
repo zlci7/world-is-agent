@@ -32,6 +32,7 @@ public sealed class RuntimeClient : IDisposable
     private readonly LandmarkCatalog landmarkCatalog;
     private readonly TaskExecutionDriver taskExecutionDriver;
     private readonly NpcControlLease npcControlLease;
+    private readonly MeetingWaitMonitor meetingWaitMonitor;
     private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
@@ -66,6 +67,7 @@ public sealed class RuntimeClient : IDisposable
         LandmarkCatalog landmarkCatalog,
         TaskExecutionDriver taskExecutionDriver,
         NpcControlLease npcControlLease,
+        MeetingWaitMonitor meetingWaitMonitor,
         IMonitor monitor
     )
     {
@@ -81,6 +83,7 @@ public sealed class RuntimeClient : IDisposable
         this.landmarkCatalog = landmarkCatalog;
         this.taskExecutionDriver = taskExecutionDriver;
         this.npcControlLease = npcControlLease;
+        this.meetingWaitMonitor = meetingWaitMonitor;
         this.monitor = monitor;
         this.worldContext = new RuntimeWorldContext(this.config.GameId, GameClock.ClockId);
     }
@@ -638,6 +641,12 @@ public sealed class RuntimeClient : IDisposable
                     return;
                 }
 
+                if (request.Capability == "wait_for_player")
+                {
+                    this.HandleWaitForPlayerAction(request);
+                    return;
+                }
+
                 result = request.Capability switch
                 {
                     "emote" => this.HandleEmoteAction(request),
@@ -718,6 +727,7 @@ public sealed class RuntimeClient : IDisposable
     {
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
+        this.meetingWaitMonitor.Clear();
         this.moveToCapability.Clear();
         this.presentDialogueCapability.CloseAll();
         this.conversationStore.Clear();
@@ -750,6 +760,7 @@ public sealed class RuntimeClient : IDisposable
 
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
+        this.meetingWaitMonitor.Clear();
         this.ClearConversations();
         this.currentWorldId = worldId;
         this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick());
@@ -771,9 +782,16 @@ public sealed class RuntimeClient : IDisposable
         this.worldContext.AdvanceClock(this.ReadCurrentWorldTick());
         if (this.IsTaskReady && this.worldContext.Current is RuntimeWorldSnapshot snapshot)
         {
+            IReadOnlyList<AdapterMessage> messages = TaskOutboundBatch.EvidenceThenClock(
+                this.CollectWaitEvidence(snapshot),
+                new AdapterMessage
+                {
+                    MessageId = ProtocolMapper.NewMessageId("world_clock"),
+                    WorldClock = ProtocolMapper.BuildWorldClockUpdate(snapshot),
+                });
             this.SendFireAndForget(
-                this.SendWorldClockAsync(snapshot, this.cancellation?.Token ?? CancellationToken.None),
-                "WorldClockUpdate"
+                this.SendBatchAsync(messages, this.cancellation?.Token ?? CancellationToken.None),
+                "TaskEvidence/WorldClockUpdate"
             );
         }
     }
@@ -782,6 +800,7 @@ public sealed class RuntimeClient : IDisposable
     {
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
+        this.meetingWaitMonitor.Clear();
         this.moveToCapability.CancelAll("world context cleared before movement completed");
         this.presentDialogueCapability.CloseAll();
         this.currentWorldId = string.Empty;
@@ -804,9 +823,10 @@ public sealed class RuntimeClient : IDisposable
     public void UpdateTaskActions()
     {
         RuntimeWorldSnapshot? world = this.worldContext.Current;
-        if (world is null || this.activeTaskActions.Count == 0)
+        if (world is null)
             return;
 
+        this.taskExecutionDriver.ExpireArrivalHandoffs();
         foreach (OperationKey operation in this.activeTaskActions.Keys.ToArray())
         {
             if (!this.activeTaskActions.TryGetValue(operation, out ActiveTaskOperation? active))
@@ -839,6 +859,9 @@ public sealed class RuntimeClient : IDisposable
                     this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "task_action_failed", ex), request.Capability);
             }
         }
+
+        foreach (AdapterMessage message in this.CollectWaitEvidence(world))
+            this.SendFireAndForget(this.SendAsync(message, this.cancellation?.Token ?? CancellationToken.None), "TaskEvidence");
     }
 
     private string ResolveCurrentWorldId()
@@ -867,6 +890,26 @@ public sealed class RuntimeClient : IDisposable
         {
             this.TraceSend(message);
             await this.stream.RequestStream.WriteAsync(message);
+        }
+        finally
+        {
+            this.sendMu.Release();
+        }
+    }
+
+    private async Task SendBatchAsync(IReadOnlyList<AdapterMessage> messages, CancellationToken cancellationToken)
+    {
+        if (this.stream is null)
+            throw new InvalidOperationException("runtime stream is not connected");
+
+        await this.sendMu.WaitAsync(cancellationToken);
+        try
+        {
+            foreach (AdapterMessage message in messages)
+            {
+                this.TraceSend(message);
+                await this.stream.RequestStream.WriteAsync(message);
+            }
         }
         finally
         {
@@ -1026,6 +1069,74 @@ public sealed class RuntimeClient : IDisposable
         {
             this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "task_action_failed", ex), request.Capability);
         }
+    }
+
+    private void HandleWaitForPlayerAction(ActionRequest request)
+    {
+        try
+        {
+            RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
+            TaskOperationSource source = ProtocolMapper.RequireTaskOperationSource(request, world);
+            ProtocolMapper.RequireWaitForPlayerArgument(request);
+            TaskExecutionOutcome outcome = this.taskExecutionDriver.BeginWait(source, world, this.landmarkCatalog);
+            if (string.Equals(outcome.Result.Status, "succeeded", StringComparison.Ordinal) && !outcome.Replayed)
+            {
+                Landmark landmark = this.landmarkCatalog.Find(source.Contract.LandmarkId)
+                    ?? throw new InvalidOperationException("task landmark disappeared after wait admission");
+                if (!this.meetingWaitMonitor.Register(source, landmark.Position, world.NowTick))
+                    throw new InvalidOperationException("wait monitor rejected an admitted operation");
+            }
+            this.SendActionResult(
+                ProtocolMapper.BuildWaitRegisteredActionResult(request, source, outcome.Result, world),
+                request.Capability);
+        }
+        catch (ArgumentException ex)
+        {
+            this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_action_arguments", ex.Message), request.Capability);
+        }
+        catch (Exception ex)
+        {
+            this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "wait_registration_failed", ex), request.Capability);
+        }
+    }
+
+    private List<AdapterMessage> CollectWaitEvidence(RuntimeWorldSnapshot world)
+    {
+        List<AdapterMessage> messages = new();
+        WorldPosition? player = Context.IsWorldReady && Game1.player?.currentLocation is not null
+            ? new WorldPosition(Game1.player.currentLocation.NameOrUniqueName, Game1.player.TilePoint.X, Game1.player.TilePoint.Y)
+            : null;
+        foreach (OperationKey operation in this.meetingWaitMonitor.Operations.ToArray())
+        {
+            WorldPosition npcPosition;
+            bool owned;
+            try
+            {
+                npcPosition = this.taskExecutionDriver.ReadPosition(operation.NpcEntityId);
+                owned = this.taskExecutionDriver.OwnsWait(operation);
+            }
+            catch
+            {
+                npcPosition = new WorldPosition("unavailable", 0, 0);
+                owned = false;
+            }
+
+            WaitEvidence? evidence = this.meetingWaitMonitor.Observe(operation, world, new NpcWaitSample(npcPosition, owned), player);
+            if (evidence is null)
+                continue;
+
+            this.taskExecutionDriver.FinishWait(operation, evidence.Code);
+            GameEvent gameEvent = ProtocolMapper.BuildWaitEvidenceEvent(
+                evidence,
+                world,
+                unchecked((ulong)Interlocked.Increment(ref this.eventSequence)));
+            messages.Add(new AdapterMessage
+            {
+                MessageId = gameEvent.EventId,
+                Event = gameEvent,
+            });
+        }
+        return messages;
     }
 
     private void HandlePresentDialogueAction(ActionRequest request)

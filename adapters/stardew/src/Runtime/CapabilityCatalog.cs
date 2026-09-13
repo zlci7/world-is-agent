@@ -92,6 +92,15 @@ public static class CapabilityCatalog
                     ExecutionMode = ExecutionMode.Async,
                     ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
                 });
+                result.Capabilities.Add(new Capability
+                {
+                    Name = "wait_for_player",
+                    Version = "0.1.0",
+                    Description = "Registers an authoritative game-clock wait at the task landmark and returns immediately. The adapter reports met or expired independently of the model.",
+                    InputSchemaJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
+                    ExecutionMode = ExecutionMode.Sync,
+                    ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
+                });
             }
         }
 

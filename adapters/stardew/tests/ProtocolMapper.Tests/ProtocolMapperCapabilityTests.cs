@@ -60,6 +60,8 @@ public sealed class ProtocolMapperCapabilityTests
             .Capabilities.Single(capability => capability.Name == "resolve_meeting");
         Capability moveToLandmark = CapabilityCatalog.BuildEnvironmentCapabilities(LandmarkCatalog.Parse(json).Landmarks)
             .Capabilities.Single(capability => capability.Name == "move_to_landmark");
+        Capability waitForPlayer = CapabilityCatalog.BuildEnvironmentCapabilities(LandmarkCatalog.Parse(json).Landmarks)
+            .Capabilities.Single(capability => capability.Name == "wait_for_player");
 
         Assert.Equal(ExecutionMode.Sync, resolve.ExecutionMode);
         Assert.Equal(CapabilityConcurrencyMode.Sequential, resolve.ConcurrencyMode);
@@ -68,5 +70,7 @@ public sealed class ProtocolMapperCapabilityTests
         Assert.Equal(ExecutionMode.Async, moveToLandmark.ExecutionMode);
         Assert.Equal(CapabilityConcurrencyMode.Sequential, moveToLandmark.ConcurrencyMode);
         Assert.Contains("\"enum\":[\"beach_meeting_spot\"]", moveToLandmark.InputSchemaJson, StringComparison.Ordinal);
+        Assert.Equal(ExecutionMode.Sync, waitForPlayer.ExecutionMode);
+        Assert.Equal("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}", waitForPlayer.InputSchemaJson);
     }
 }

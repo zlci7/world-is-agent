@@ -61,6 +61,7 @@ public sealed class ModEntry : Mod
             new TaskOperationReceipts(),
             npcControlLease,
             new GameNpcDriver());
+        MeetingWaitMonitor meetingWaitMonitor = new();
         this.runtimeClient = new RuntimeClient(
             this.config,
             this.dispatcher,
@@ -74,6 +75,7 @@ public sealed class ModEntry : Mod
             landmarkCatalog,
             this.taskExecutionDriver,
             npcControlLease,
+            meetingWaitMonitor,
             this.Monitor
         );
         this.playerInteractProbe = new PlayerInteractProbe(

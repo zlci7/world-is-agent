@@ -24,8 +24,9 @@ public sealed class TaskTravelTests
         Assert.Equal("succeeded", completed.Result.Status);
         Assert.Equal(1, npc.StartCount);
         Assert.Equal(1, npc.PollCount);
-        Assert.Equal(1, npc.ReleaseCount);
+        Assert.Equal(0, npc.ReleaseCount);
         Assert.False(driver.IsActive(source.Operation));
+        Assert.True(driver.HasArrivalHandoff(source.Operation));
     }
 
     [Fact]
@@ -128,6 +129,64 @@ public sealed class TaskTravelTests
         Assert.Equal(1, npc.ReleaseCount);
     }
 
+    [Fact]
+    public void WaitAtomicallyTakesTheArrivalHandoffAndReleasesAtTerminalEvidence()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        TaskExecutionDriver driver = Driver(npc, () => 0);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson);
+        driver.BeginTravel(travel, World, "beach_meeting_spot", catalog);
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+        driver.Poll(travel.Operation, World);
+        TaskOperationSource wait = travel with { Operation = travel.Operation with { OperationId = "wait-a" } };
+
+        TaskExecutionOutcome registered = driver.BeginWait(wait, World, catalog);
+        bool released = driver.FinishWait(wait.Operation, "met");
+
+        Assert.Equal("succeeded", registered.Result.Status);
+        Assert.Equal("wait_registered", registered.Result.Code);
+        Assert.Equal(1, npc.TransferCount);
+        Assert.True(released);
+        Assert.Equal(1, npc.ReleaseCount);
+    }
+
+    [Fact]
+    public void WaitWithoutAnArrivalHandoffHasNoSideEffects()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Beach", 28, 36));
+        TaskExecutionDriver driver = Driver(npc, () => 0);
+        TaskOperationSource wait = TaskSourceContextStoreTests.Source() with
+        {
+            Operation = TaskSourceContextStoreTests.Source().Operation with { OperationId = "wait-a" },
+        };
+
+        TaskExecutionOutcome result = driver.BeginWait(wait, World, LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
+
+        Assert.Equal("rejected", result.Result.Status);
+        Assert.Equal("arrival_handoff_missing", result.Result.Code);
+        Assert.Equal(0, npc.TransferCount);
+    }
+
+    [Fact]
+    public void UnclaimedArrivalHandoffExpiresAfterTwoMinutes()
+    {
+        long elapsed = 0;
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        TaskExecutionDriver driver = Driver(npc, () => elapsed);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        driver.BeginTravel(travel, World, "beach_meeting_spot", LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+        driver.Poll(travel.Operation, World);
+        elapsed = TaskExecutionDriver.ArrivalHandoffTimeoutMilliseconds;
+
+        int expired = driver.ExpireArrivalHandoffs();
+
+        Assert.Equal(1, expired);
+        Assert.False(driver.HasArrivalHandoff(travel.Operation));
+        Assert.Equal(1, npc.ReleaseCount);
+    }
+
     private static TaskExecutionDriver Driver(FakeNpcDriver npc, Func<long> elapsed) =>
         new(new TaskSourceContextStore(), new TaskOperationReceipts(), new NpcControlLease(), npc, elapsed);
 
@@ -139,6 +198,7 @@ public sealed class TaskTravelTests
         public int StartCount { get; private set; }
         public int PollCount { get; private set; }
         public int ReleaseCount { get; private set; }
+        public int TransferCount { get; private set; }
 
         public WorldPosition ReadPosition(string npcEntityId) => this.Position;
         public DriverResult StartTravel(OperationKey operation, Landmark landmark)
@@ -153,5 +213,11 @@ public sealed class TaskTravelTests
             return this.Next;
         }
         public void Release(OperationKey operation, string reason) => this.ReleaseCount++;
+        public bool Transfer(OperationKey from, OperationKey to)
+        {
+            this.TransferCount++;
+            return true;
+        }
+        public bool Owns(OperationKey operation) => true;
     }
 }

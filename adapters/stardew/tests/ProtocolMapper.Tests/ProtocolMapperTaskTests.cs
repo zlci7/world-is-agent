@@ -146,6 +146,32 @@ public sealed class ProtocolMapperTaskTests
         Assert.Throws<ArgumentException>(() => ProtocolMapper.RequireMoveToLandmarkArgument(request));
     }
 
+    [Fact]
+    public void BuildsWaitRegistrationProgressAndTerminalEvidenceEvent()
+    {
+        ActionRequest request = TaskActionRequest();
+        request.Capability = "wait_for_player";
+        request.Arguments = new Struct();
+        request.TaskSource.OperationId = "wait-a";
+        TaskOperationSource source = ProtocolMapper.RequireTaskOperationSource(request, Snapshot);
+        DriverResult registered = new("succeeded", "wait_registered", new WorldPosition("Beach", 28, 36));
+
+        ProtocolMapper.RequireWaitForPlayerArgument(request);
+        ActionResult action = ProtocolMapper.BuildWaitRegisteredActionResult(request, source, registered, Snapshot);
+        WaitEvidence terminal = new(source, source.Contract.StartAt, "satisfied", "met", registered.Position);
+        GameEvent gameEvent = ProtocolMapper.BuildWaitEvidenceEvent(terminal, Snapshot, 42);
+
+        TaskEvidence progress = Assert.Single(action.TaskEvidence);
+        Assert.Equal("progress", progress.Outcome);
+        Assert.Equal(source.Contract.EndAt, progress.WaitUntil);
+        TaskEvidence fact = Assert.Single(gameEvent.TaskEvidence);
+        Assert.Equal("satisfied", fact.Outcome);
+        Assert.Equal((ulong)4, fact.StartRevision);
+        Assert.False(fact.HasWaitUntil);
+        Assert.Equal("npc:Linus", gameEvent.TargetEntityId);
+        Assert.Equal((ulong)42, gameEvent.Sequence);
+    }
+
     private static ActionRequest ResolveRequest()
     {
         return new ActionRequest

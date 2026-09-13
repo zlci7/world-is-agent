@@ -87,6 +87,21 @@ public sealed class GameNpcDriver : ITaskNpcDriver
             travel.Npc.Halt();
     }
 
+    public bool Transfer(OperationKey from, OperationKey to)
+    {
+        if (this.active.ContainsKey(to) || !this.active.Remove(from, out ActiveTravel? travel))
+            return false;
+        this.active.Add(to, travel);
+        return true;
+    }
+
+    public bool Owns(OperationKey operation)
+    {
+        return this.active.TryGetValue(operation, out ActiveTravel? travel) &&
+            ReferenceEquals(travel.Npc.controller, travel.Controller) &&
+            travel.Npc.temporaryController is null;
+    }
+
     private static NPC RequireNpc(string entityId)
     {
         const string Prefix = "npc:";

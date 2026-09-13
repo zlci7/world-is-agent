@@ -7,6 +7,7 @@ namespace GameAgent.Stardew.Tasks;
 public sealed class TaskExecutionDriver
 {
     public const long TravelTimeoutMilliseconds = 180_000;
+    public const long ArrivalHandoffTimeoutMilliseconds = 120_000;
 
     private readonly TaskSourceContextStore sources;
     private readonly TaskOperationReceipts receipts;
@@ -14,6 +15,8 @@ public sealed class TaskExecutionDriver
     private readonly ITaskNpcDriver? npcDriver;
     private readonly Func<long> elapsedMilliseconds;
     private readonly Dictionary<OperationKey, ActiveOperation> active = new();
+    private readonly Dictionary<OperationKey, HeldOperation> arrivalHandoffs = new();
+    private readonly Dictionary<OperationKey, LeaseToken> waiting = new();
 
     public TaskExecutionDriver(
         TaskSourceContextStore sources,
@@ -142,7 +145,11 @@ public sealed class TaskExecutionDriver
 
         DriverResult result = active.Poll();
         if (result.IsTerminal)
-            return this.Complete(operation, result);
+            return this.Complete(
+                operation,
+                result,
+                holdForArrivalHandoff: string.Equals(result.Status, "succeeded", StringComparison.Ordinal) &&
+                    string.Equals(result.Code, "arrived", StringComparison.Ordinal));
 
         TaskOperationSource source = this.sources.Find(operation) ?? throw new InvalidOperationException("active operation has no task source");
         if (world.NowTick >= source.Contract.StartAt)
@@ -157,14 +164,18 @@ public sealed class TaskExecutionDriver
         return this.Complete(operation, new DriverResult("cancelled", "cancelled", this.npcDriver?.ReadPosition(operation.NpcEntityId) ?? EmptyPosition(), reason));
     }
 
-    public TaskExecutionOutcome Complete(OperationKey operation, DriverResult result)
+    public TaskExecutionOutcome Complete(OperationKey operation, DriverResult result, bool holdForArrivalHandoff = false)
     {
         if (!this.active.Remove(operation, out ActiveOperation? active))
             return Rejected("operation_not_active", "operation is not active");
 
         TaskOperationSource source = this.sources.Find(operation) ?? throw new InvalidOperationException("active operation has no task source");
         TaskOperationReceipt receipt = this.receipts.Record(operation, active.Fingerprint, source.StartRevision, result);
-        if (receipt.Result.IsTerminal)
+        if (receipt.Result.IsTerminal && holdForArrivalHandoff)
+        {
+            this.arrivalHandoffs.Add(operation, new HeldOperation(active.Lease, this.elapsedMilliseconds()));
+        }
+        else if (receipt.Result.IsTerminal)
         {
             try
             {
@@ -177,7 +188,112 @@ public sealed class TaskExecutionDriver
         }
         else
             this.active.Add(operation, active);
-        return new TaskExecutionOutcome(receipt.Result, receipt.Result.IsTerminal ? null : active.Lease, false);
+        return new TaskExecutionOutcome(receipt.Result, receipt.Result.IsTerminal && !holdForArrivalHandoff ? null : active.Lease, false);
+    }
+
+    public TaskExecutionOutcome BeginWait(
+        TaskOperationSource source,
+        RuntimeWorldSnapshot world,
+        LandmarkCatalog catalog)
+    {
+        ITaskNpcDriver driver = this.npcDriver ?? throw new InvalidOperationException("task NPC driver is not configured");
+        const string Fingerprint = "wait_for_player:v1";
+        if (!ScopeMatches(source.Operation, world))
+            return Rejected("world_mismatch", "operation scope does not match the active world");
+        if (!this.sources.TryRegister(source, out _, out string sourceError))
+            return Rejected(sourceError, "operation task source changed");
+        ReceiptLookup lookup = this.receipts.Lookup(source.Operation, Fingerprint);
+        if (lookup.Status == ReceiptLookupStatus.Replay)
+        {
+            this.waiting.TryGetValue(source.Operation, out LeaseToken? replayLease);
+            return new TaskExecutionOutcome(lookup.Receipt!.Result, replayLease, true);
+        }
+        if (lookup.Status == ReceiptLookupStatus.Conflict)
+            return Rejected("idempotency_conflict", "operation was already used with different arguments");
+        if (world.NowTick >= source.Contract.EndAt)
+            return Rejected("meeting_window_expired", "meeting window has ended");
+
+        Landmark? landmark = catalog.Find(source.Contract.LandmarkId);
+        if (landmark is null)
+            return Rejected("landmark_not_found", "meeting landmark is not configured");
+        WorldPosition current = driver.ReadPosition(source.Operation.NpcEntityId);
+        if (current != landmark.Position)
+            return Rejected("npc_not_at_landmark", "NPC is not at the task landmark", current);
+
+        KeyValuePair<OperationKey, HeldOperation>? candidate = this.arrivalHandoffs
+            .Where(pair => SameTaskActor(pair.Key, source.Operation))
+            .Select(pair => (KeyValuePair<OperationKey, HeldOperation>?)pair)
+            .SingleOrDefault();
+        if (candidate is null)
+            return Rejected("arrival_handoff_missing", "no completed task travel is available for handoff", current);
+
+        OperationKey from = candidate.Value.Key;
+        HeldOperation held = candidate.Value.Value;
+        TaskOperationSource travelSource = this.sources.Find(from)
+            ?? throw new InvalidOperationException("arrival handoff has no task source");
+        if (travelSource.Contract != source.Contract)
+            return Rejected("task_source_conflict", "wait contract does not match the completed travel", current);
+        if (!driver.Transfer(from, source.Operation))
+            return Rejected("control_lost", "travel controller is no longer owned", current);
+        LeaseAttempt transfer = this.leases.Transfer(held.Lease, source.Operation, "waiting");
+        if (!transfer.Acquired)
+        {
+            driver.Transfer(source.Operation, from);
+            return Rejected(transfer.Code, "arrival lease could not be transferred", current);
+        }
+
+        this.arrivalHandoffs.Remove(from);
+        this.waiting.Add(source.Operation, transfer.Token!);
+        DriverResult result = new("succeeded", "wait_registered", current);
+        this.receipts.Record(source.Operation, Fingerprint, source.StartRevision, result);
+        return new TaskExecutionOutcome(result, transfer.Token, false);
+    }
+
+    public bool FinishWait(OperationKey operation, string reason)
+    {
+        if (!this.waiting.Remove(operation, out LeaseToken? lease))
+            return false;
+        try
+        {
+            this.npcDriver?.Release(operation, reason);
+        }
+        finally
+        {
+            this.leases.Release(lease, reason);
+        }
+        return true;
+    }
+
+    public bool OwnsWait(OperationKey operation) =>
+        this.waiting.TryGetValue(operation, out LeaseToken? lease) &&
+        this.leases.IsOwned(lease) &&
+        (this.npcDriver?.Owns(operation) ?? false);
+
+    public WorldPosition ReadPosition(string npcEntityId) =>
+        this.npcDriver?.ReadPosition(npcEntityId) ?? EmptyPosition();
+
+    public bool HasArrivalHandoff(OperationKey operation) => this.arrivalHandoffs.ContainsKey(operation);
+
+    public int ExpireArrivalHandoffs()
+    {
+        OperationKey[] expired = this.arrivalHandoffs
+            .Where(pair => this.elapsedMilliseconds() - pair.Value.HeldAtMilliseconds >= ArrivalHandoffTimeoutMilliseconds)
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (OperationKey operation in expired)
+        {
+            HeldOperation held = this.arrivalHandoffs[operation];
+            this.arrivalHandoffs.Remove(operation);
+            try
+            {
+                this.npcDriver?.Release(operation, "arrival_handoff_timeout");
+            }
+            finally
+            {
+                this.leases.Release(held.Lease, "arrival_handoff_timeout");
+            }
+        }
+        return expired.Length;
     }
 
     public bool IsActive(OperationKey operation)
@@ -198,7 +314,31 @@ public sealed class TaskExecutionDriver
                 this.leases.Release(operation.Lease, "world_cleared");
             }
         }
+        foreach ((OperationKey operation, HeldOperation held) in this.arrivalHandoffs)
+        {
+            try
+            {
+                this.npcDriver?.Release(operation, "world_cleared");
+            }
+            finally
+            {
+                this.leases.Release(held.Lease, "world_cleared");
+            }
+        }
+        foreach ((OperationKey operation, LeaseToken lease) in this.waiting)
+        {
+            try
+            {
+                this.npcDriver?.Release(operation, "world_cleared");
+            }
+            finally
+            {
+                this.leases.Release(lease, "world_cleared");
+            }
+        }
         this.active.Clear();
+        this.arrivalHandoffs.Clear();
+        this.waiting.Clear();
         this.sources.Clear();
         this.receipts.Clear();
     }
@@ -215,6 +355,13 @@ public sealed class TaskExecutionDriver
         return new TaskExecutionOutcome(new DriverResult("rejected", code, position ?? EmptyPosition(), message), null, false);
     }
 
+    private static bool SameTaskActor(OperationKey left, OperationKey right) =>
+        string.Equals(left.WorldId, right.WorldId, StringComparison.Ordinal) &&
+        string.Equals(left.WorldRunId, right.WorldRunId, StringComparison.Ordinal) &&
+        left.ExecutionGeneration == right.ExecutionGeneration &&
+        string.Equals(left.NpcEntityId, right.NpcEntityId, StringComparison.Ordinal) &&
+        string.Equals(left.TaskId, right.TaskId, StringComparison.Ordinal);
+
     private static WorldPosition EmptyPosition()
     {
         return new WorldPosition(string.Empty, 0, 0);
@@ -226,4 +373,6 @@ public sealed class TaskExecutionDriver
         Func<DriverResult>? Poll,
         Action<string>? Release,
         long StartedAtMilliseconds);
+
+    private sealed record HeldOperation(LeaseToken Lease, long HeldAtMilliseconds);
 }

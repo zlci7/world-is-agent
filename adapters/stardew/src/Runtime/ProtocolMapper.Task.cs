@@ -226,6 +226,75 @@ public static partial class ProtocolMapper
         return RequireStringField(arguments, "landmark_id", "move_to_landmark landmark_id");
     }
 
+    public static void RequireWaitForPlayerArgument(ActionRequest request)
+    {
+        Struct arguments = request.Arguments ?? throw new ArgumentException("missing required wait_for_player arguments");
+        if (arguments.Fields.Count != 0)
+            throw new ArgumentException("wait_for_player does not accept arguments");
+    }
+
+    public static ActionResult BuildWaitRegisteredActionResult(
+        ActionRequest request,
+        TaskOperationSource source,
+        DriverResult driver,
+        RuntimeWorldSnapshot world)
+    {
+        if (!string.Equals(driver.Status, "succeeded", StringComparison.Ordinal) ||
+            !string.Equals(driver.Code, "wait_registered", StringComparison.Ordinal))
+        {
+            return BuildTaskDriverActionResult(request, source, driver, world);
+        }
+
+        TaskEvidence evidence = BuildEvidence(
+            source,
+            world,
+            $"{source.Operation.TaskId}:{source.Operation.OperationId}:wait_registered",
+            "progress",
+            driver.Code,
+            driver.Position,
+            source.Contract.EndAt);
+        ActionResult result = new()
+        {
+            ActionId = request.ActionId,
+            Status = ActionStatus.Succeeded,
+            Output = BuildDriverDetails(driver),
+        };
+        result.TaskEvidence.Add(evidence);
+        return result;
+    }
+
+    public static GameEvent BuildWaitEvidenceEvent(WaitEvidence evidence, RuntimeWorldSnapshot world, ulong sequence)
+    {
+        if (!string.Equals(evidence.Source.Operation.WorldId, world.WorldId, StringComparison.Ordinal) ||
+            !string.Equals(evidence.Source.Operation.WorldRunId, world.WorldRunId, StringComparison.Ordinal) ||
+            evidence.Source.Operation.ExecutionGeneration != world.ExecutionGeneration)
+        {
+            throw new ArgumentException("wait evidence scope does not match the active world");
+        }
+
+        string factId = $"{evidence.Source.Operation.TaskId}:{evidence.Source.Operation.OperationId}:{evidence.Code}";
+        TaskEvidence fact = BuildEvidence(
+            evidence.Source,
+            world with { NowTick = evidence.OccurredAt },
+            factId,
+            evidence.Outcome,
+            evidence.Code,
+            evidence.NpcPosition,
+            evidence.WaitUntil);
+        GameEvent result = new()
+        {
+            EventId = "task_fact:" + factId,
+            EventType = "task_evidence",
+            WorldId = world.WorldId,
+            TargetEntityId = evidence.Source.Operation.NpcEntityId,
+            Sequence = sequence,
+        };
+        result.Entities.Add(BuildTaskEntity(evidence.Source.Operation.NpcEntityId, "npc", evidence.Source.Operation.NpcEntityId["npc:".Length..]));
+        result.Entities.Add(BuildTaskEntity(PlayerEntityId, "player", "Player"));
+        result.TaskEvidence.Add(fact);
+        return result;
+    }
+
     public static ActionResult BuildTaskDriverActionResult(
         ActionRequest request,
         TaskOperationSource source,
@@ -258,17 +327,14 @@ public static partial class ProtocolMapper
         }
         if (status == ActionStatus.Succeeded && string.Equals(driver.Code, "arrived", StringComparison.Ordinal))
         {
-            result.TaskEvidence.Add(new TaskEvidence
-            {
-                FactId = $"{source.Operation.TaskId}:{source.Operation.OperationId}:arrived",
-                TaskId = source.Operation.TaskId,
-                OperationId = source.Operation.OperationId,
-                Scope = BuildTaskScope(world),
-                StartRevision = source.StartRevision,
-                OccurredAt = world.NowTick,
-                Outcome = "progress",
-                Details = details,
-            });
+            result.TaskEvidence.Add(BuildEvidence(
+                source,
+                world,
+                $"{source.Operation.TaskId}:{source.Operation.OperationId}:arrived",
+                "progress",
+                driver.Code,
+                driver.Position,
+                null));
         }
         return result;
     }
@@ -317,6 +383,31 @@ public static partial class ProtocolMapper
                 }),
             },
         };
+    }
+
+    private static TaskEvidence BuildEvidence(
+        TaskOperationSource source,
+        RuntimeWorldSnapshot world,
+        string factId,
+        string outcome,
+        string code,
+        WorldPosition position,
+        long? waitUntil)
+    {
+        TaskEvidence result = new()
+        {
+            FactId = factId,
+            TaskId = source.Operation.TaskId,
+            OperationId = source.Operation.OperationId,
+            Scope = BuildTaskScope(world),
+            StartRevision = source.StartRevision,
+            OccurredAt = world.NowTick,
+            Outcome = outcome,
+            Details = BuildDriverDetails(new DriverResult("succeeded", code, position)),
+        };
+        if (waitUntil.HasValue)
+            result.WaitUntil = waitUntil.Value;
+        return result;
     }
 
     private static EntityRef BuildTaskEntity(string entityId, string entityType, string displayName)
