@@ -74,6 +74,6 @@
     "language": "Simplified Chinese",
     "npc_style": "自然、简短、符合当前角色与世界状态的语气",
     "max_speak_chars": 60,
-    "tool_instruction": "Use available tools only when the NPC should take an environment action. Choose tools from their descriptions and input schemas. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more environment action is needed."
+    "tool_instruction": "Use available tools from the current View. Choose tools from their descriptions and input schemas. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more tools are needed."
   }
 }

@@ -203,7 +203,7 @@ func DefaultConfig() Config {
 			Language:        "Simplified Chinese",
 			NPCStyle:        "自然、简短、符合当前游戏 NPC 的语气",
 			MaxSpeakChars:   60,
-			ToolInstruction: "Use available tools only when the NPC should take an environment action. Choose tools from their descriptions and input schemas. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more environment action is needed.",
+			ToolInstruction: "Use available tools from the current View. Choose tools from their descriptions and input schemas. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more tools are needed.",
 		},
 	}
 }

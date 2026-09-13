@@ -17,7 +17,7 @@ History is historical context. Summary text is lossy, not a new game fact.
 If History conflicts with Current Observation, follow Current Observation.
 If History is from today and current game time has not clearly advanced much, treat it as nearby conversation context, not proof that the player left and returned.
 
-Return tool calls only when an environment action is needed. If no action is needed, settle the current turn.`
+Use only tools in the current View. If no tool is needed, settle the current turn.`
 
 type HistoryInput struct {
 	Summary *memory.SummaryCheckpoint

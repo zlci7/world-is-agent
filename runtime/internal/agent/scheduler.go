@@ -128,6 +128,23 @@ func (s toolBatchScheduler) Run(
 				execution.RuntimeResult = &result
 			}
 		}
+		for i := range outcome.Executions {
+			execution := &outcome.Executions[i]
+			entry, ok := s.view.Lookup(execution.Call.Name)
+			if !ok {
+				continue
+			}
+			if _, ok := entry.Executor.(*tool.TaskTools); !ok {
+				continue
+			}
+			execution.Call.Arguments = nil
+			if execution.RuntimeResult != nil && execution.RuntimeResult.Status == toolResultStatusInvalid {
+				execution.RuntimeResult.Message = execution.RuntimeResult.Code
+			}
+			if i < len(outcome.Results) && outcome.Results[i].Status == toolResultStatusInvalid {
+				outcome.Results[i].Message = outcome.Results[i].Code
+			}
+		}
 	}()
 
 	plan, validationResults, validationFailed := s.preflight(worldID, entityID, calls)

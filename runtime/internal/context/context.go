@@ -40,7 +40,7 @@ Recent Memory is historical context.
 If Recent Memory conflicts with Current Observation, follow Current Observation.
 If Recent Memory is from today and current game time has not clearly advanced much, treat it as nearby conversation context, not proof that the player left and returned.
 
-Return tool calls only when an environment action is needed. If no action is needed, settle the current turn.`
+Use only tools in the current View. If no tool is needed, settle the current turn.`
 
 type BudgetConfig struct {
 	MaxRequestTokens              int
@@ -195,6 +195,7 @@ type ContextProjection struct {
 	CurrentEvent             EventProjection
 	CurrentEventContextFacts []ContextFactProjection
 	CurrentObservation       ObservationProjection
+	Task                     *TaskProjection
 
 	RecentMemory     []MemoryProjection
 	History          HistoryProjection
@@ -273,6 +274,10 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 	if err := validateEngineInput(input); err != nil {
 		return BuildResult{}, err
 	}
+	currentTask, err := projectTask(input.SessionKey, input.TurnToolView.RuntimeContext())
+	if err != nil {
+		return BuildResult{}, err
+	}
 
 	bounds := projectionBoundsFromEngineConfig(e.config)
 	currentTime := currentGameTimeFromEventObservation(input.Event, input.Observation)
@@ -308,6 +313,7 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 		CurrentEvent:             projectCurrentEvent(input.Event, input.CanonicalTarget),
 		CurrentEventContextFacts: projectCurrentEventContextFacts(input.Event.GetContextFacts()),
 		CurrentObservation:       projectCurrentObservation(input.Observation),
+		Task:                     currentTask,
 		RecentMemory:             recentMemory,
 		History:                  history,
 		historyEnabled:           input.History != nil,

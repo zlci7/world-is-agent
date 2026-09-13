@@ -44,6 +44,8 @@ type RuntimeCallContext struct {
 	Execution           task.ExecutionContext
 	InteractionSourceID string
 	ObservedTask        *task.Record
+	AuthorityEpoch      uint64
+	WakeReason          string
 }
 
 type RuntimeExecutor interface {

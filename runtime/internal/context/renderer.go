@@ -34,7 +34,7 @@ func (r Renderer) Render(projection ContextProjection) (model.Request, error) {
 		Controls: []model.ControlDefinition{
 			{
 				Kind:        model.ControlSettle,
-				Description: "Finish the current turn without an environment action.",
+				Description: "Finish the current turn when no further tool is needed.",
 			},
 		},
 	}, nil
@@ -105,6 +105,7 @@ func (r Renderer) renderUserMessage(projection ContextProjection) string {
 		history = RenderHistoryProjection(projection.History)
 	}
 	history += RenderRetrievedHistoryProjection(projection.RetrievedHistory)
+	history += renderTask(projection.Task)
 	return history + fmt.Sprintf(`[Game Definition]
 %s
 
@@ -138,6 +139,9 @@ func (r Renderer) renderUserMessage(projection ContextProjection) string {
 
 func renderAuthorityInstruction(projection ContextProjection) string {
 	instruction := projection.Instruction
+	if projection.Task != nil {
+		instruction += "\n\nTask Context is the current task snapshot. Use only tools in the current View. Confirm task creation only after create_task succeeds. If a task changes, decide again using the next Step's snapshot."
+	}
 	if len(projection.RetrievedHistory.Snippets) > 0 {
 		instruction += "\n\n" + retrievedHistoryAuthorityInstruction
 	}

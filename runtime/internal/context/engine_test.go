@@ -221,7 +221,7 @@ func TestEngineBuildProjectsAuthorityInstruction(t *testing.T) {
 		projection.Instruction,
 		"Current Observation is the current truth.",
 		"Recent Memory is historical context.",
-		"Return tool calls only when an environment action is needed.",
+		"Use only tools in the current View.",
 	)
 }
 

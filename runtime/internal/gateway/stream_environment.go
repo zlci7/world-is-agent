@@ -11,7 +11,8 @@ import (
 )
 
 type streamEnvironment struct {
-	stream protocolv1alpha2.GameAgentGateway_ConnectServer
+	taskAuthority *worldTaskAuthority
+	stream        protocolv1alpha2.GameAgentGateway_ConnectServer
 
 	sendSlot  chan struct{}
 	closed    chan struct{}

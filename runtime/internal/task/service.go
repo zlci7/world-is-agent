@@ -349,6 +349,38 @@ func (s *Service) List(ctx context.Context, owner session.AgentSessionKey, limit
 	return s.store.listTasksLimit(ctx, owner, limit)
 }
 
+func (s *Service) ListActive(ctx context.Context, owner session.AgentSessionKey, limit int) ([]Record, error) {
+	if err := validateService(s, ctx); err != nil {
+		return nil, err
+	}
+	if err := validateOwner(owner); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []Record{}, nil
+	}
+	if err := s.store.validateWorldTaskIdentityGraph(ctx, WorldKey{GameID: owner.GameID, WorldID: owner.WorldID}); err != nil {
+		return nil, err
+	}
+	rows, err := s.store.db.QueryContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? AND entity_id = ? AND state IN ('waiting', 'running', 'paused') ORDER BY task_id ASC LIMIT ?`, owner.GameID, owner.WorldID, owner.EntityID, limit)
+	if err != nil {
+		return nil, classifyStoreError(err)
+	}
+	defer rows.Close()
+	records := []Record{}
+	for rows.Next() {
+		record, err := scanTaskRow(rows)
+		if err != nil {
+			return nil, classifyStoreError(err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classifyStoreError(err)
+	}
+	return records, nil
+}
+
 func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent Intent) (Record, error) {
 	if err := validateService(s, ctx); err != nil {
 		return Record{}, err

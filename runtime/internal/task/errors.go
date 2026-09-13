@@ -30,9 +30,13 @@ const (
 )
 
 type Error struct {
-	Code  Code
-	cause error
+	Code      Code
+	cause     error
+	technical bool
 }
+
+// Technical reports sanitized infrastructure origin independently of the public code.
+func (e *Error) Technical() bool { return e != nil && e.technical }
 
 var (
 	ErrInvalidTaskSpec       = &Error{Code: CodeInvalidTaskSpec}
@@ -104,7 +108,12 @@ func (e *Error) Unwrap() error {
 
 // WrapError retains only causes that can be reduced to a payload-free classification.
 func WrapError(code Code, cause error) *Error {
-	return &Error{Code: code, cause: sanitizedCause(cause)}
+	var classified *Error
+	technical := cause != nil
+	if errors.As(cause, &classified) && classified != nil {
+		technical = classified.Technical()
+	}
+	return &Error{Code: code, cause: sanitizedCause(cause), technical: technical}
 }
 
 func sanitizedCause(cause error) error {
@@ -114,7 +123,7 @@ func sanitizedCause(cause error) error {
 
 	var taskErr *Error
 	if errors.As(cause, &taskErr) && taskErr != nil && taskErr.Code.Valid() {
-		return &Error{Code: taskErr.Code, cause: sanitizedCause(taskErr.cause)}
+		return &Error{Code: taskErr.Code, cause: sanitizedCause(taskErr.cause), technical: taskErr.Technical()}
 	}
 
 	switch {

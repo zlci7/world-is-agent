@@ -80,6 +80,15 @@ func (v TurnToolView) ExecuteRuntime(ctx context.Context, call model.ToolCall) (
 	return entry.Executor.Execute(ctx, cloneRuntimeCallContext(*v.runtimeContext), call)
 }
 
+// RuntimeContext returns the immutable authority snapshot captured by this view.
+func (v TurnToolView) RuntimeContext() *RuntimeCallContext {
+	if v.runtimeContext == nil {
+		return nil
+	}
+	value := cloneRuntimeCallContext(*v.runtimeContext)
+	return &value
+}
+
 func cloneRuntimeCallContext(value RuntimeCallContext) RuntimeCallContext {
 	value.Execution.Source = cloneRuntimeSource(value.Execution.Source)
 	if value.ObservedTask == nil {

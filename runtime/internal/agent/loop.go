@@ -230,7 +230,7 @@ func (l *Loop) HandleEvent(
 		return fmt.Errorf("environment tool catalog is required")
 	}
 	toolAdmission := catalog.BuildTurnToolView(l.toolAdmissionConfig())
-	return l.handleEventWithToolAdmission(ctx, env, conn, key, target, toolAdmission, event)
+	return l.handleEventWithToolAdmission(ctx, env, conn, key, target, toolAdmission, event, catalog)
 }
 
 func (l *Loop) handleEventWithToolAdmission(
@@ -241,6 +241,7 @@ func (l *Loop) handleEventWithToolAdmission(
 	target *protocolv1alpha2.EntityRef,
 	toolAdmission tool.ToolAdmissionResult,
 	event *protocolv1alpha2.GameEvent,
+	catalogs ...*tool.EnvironmentToolCatalog,
 ) error {
 	toolView := toolAdmission.View
 	tools := toolView.Available()
@@ -248,6 +249,13 @@ func (l *Loop) handleEventWithToolAdmission(
 	defer cancelTurn()
 
 	turnID := idgen.New("turn")
+	var taskContext *taskTurnContext
+	if len(catalogs) > 0 {
+		taskContext = l.beginTaskContext(env, key, event, turnID, catalogs[0])
+	}
+	if taskContext != nil {
+		defer taskContext.tools.Close()
+	}
 	ctx = context.WithValue(ctx, turnHistoryContextKey{}, &terminalHistoryState{collector: newTurnHistoryCollector(key, turnID, event)})
 	// 为本次有效 GameEvent 创建 TurnTracer。
 	turnTracer := trace.NewTurnTracerWithID(l.recorder, trace.TurnContext{
@@ -290,6 +298,14 @@ func (l *Loop) handleEventWithToolAdmission(
 	var retrieval *agentcontext.RetrievedHistoryInput
 	if l.historyStore != nil && l.config.MemoryEnabledValue() {
 		history = &agentcontext.HistoryInput{}
+		if taskContext != nil {
+			admission, err := taskContext.snapshot(ctx, l.toolAdmissionConfig())
+			if err != nil {
+				l.failTurn(ctx, env, turnTracer, key, event, turnID, "context", "task_context_failed", err, trace.EventData{})
+				return err
+			}
+			toolView, toolAdmission = admission.View, admission
+		}
 		_, report, buildErr := l.buildModelRequest(key, target, descriptor, event, obs, nil, toolView, toolAdmission.Report, nil, history)
 		if buildErr == nil {
 			available := max(0, min(l.config.MaxRequestTokens-report.FinalRequestSize.TotalEstimatedTokens-l.config.MaxTranscriptTokens,
@@ -300,7 +316,7 @@ func (l *Loop) handleEventWithToolAdmission(
 			retrieval = l.prepareRetrieval(ctx, turnTracer, prepared.Snapshot, memory.CurrentGameTime(event, obs), event)
 		}
 	}
-	return l.runBoundedSteps(ctx, env, key, target, descriptor, event, obs, recentMemories, toolView, toolAdmission.Report, turnID, turnTracer, history, retrieval)
+	return l.runBoundedSteps(ctx, env, key, target, descriptor, event, obs, recentMemories, toolView, toolAdmission.Report, turnID, turnTracer, history, retrieval, taskContext)
 }
 
 func (l *Loop) runBoundedSteps(
@@ -318,7 +334,12 @@ func (l *Loop) runBoundedSteps(
 	turnTracer trace.TurnTracer,
 	history *agentcontext.HistoryInput,
 	retrieval *agentcontext.RetrievedHistoryInput,
+	taskContexts ...*taskTurnContext,
 ) error {
+	var taskContext *taskTurnContext
+	if len(taskContexts) > 0 {
+		taskContext = taskContexts[0]
+	}
 	transcript := make([]model.Message, 0)
 	successfulActions := make([]completedToolAction, 0)
 	totalToolCalls := 0
@@ -333,6 +354,14 @@ func (l *Loop) runBoundedSteps(
 		if err := ctx.Err(); err != nil {
 			l.failTurn(ctx, env, turnTracer, key, event, turnID, "turn", "turn_cancelled", err, trace.EventData{})
 			return err
+		}
+		if taskContext != nil {
+			admission, err := taskContext.snapshot(ctx, l.toolAdmissionConfig())
+			if err != nil {
+				l.failTurn(ctx, env, turnTracer, key, event, turnID, "context", "task_context_failed", err, trace.EventData{})
+				return err
+			}
+			toolView, toolAdmissionReport = admission.View, admission.Report
 		}
 		req, buildReport, err := l.buildModelRequestWithRetrieval(key, target, descriptor, event, obs, recentMemories, toolView, toolAdmissionReport, transcript, history, retrieval)
 		if err != nil {
@@ -387,7 +416,9 @@ func (l *Loop) runBoundedSteps(
 		})
 
 		decision := rep.Decision
-		turnHistoryFromContext(ctx).collector.Decision(stepIndex, decision)
+		historyDecision := decision
+		historyDecision.ToolCalls = redactTaskCalls(decision.ToolCalls, toolView)
+		turnHistoryFromContext(ctx).collector.Decision(stepIndex, historyDecision)
 		if err := validateControlDirective(decision.Control); err != nil {
 			turnTracer.Emit(trace.EventAgentStepFailed, trace.EventData{
 				Fields: trace.Fields{"step_index": stepIndex, "reason": "invalid_model_response"},
@@ -467,7 +498,7 @@ func (l *Loop) runBoundedSteps(
 
 		transcript = append(transcript, model.Message{
 			Role:      model.RoleAssistant,
-			ToolCalls: copyToolCallsForTranscript(calls),
+			ToolCalls: redactTaskCalls(calls, toolView),
 		})
 		for _, call := range calls {
 			turnTracer.Emit(trace.EventToolCallSelected, trace.EventData{
@@ -489,7 +520,7 @@ func (l *Loop) runBoundedSteps(
 		})
 		if hasPriorStepDuplicateID {
 			executions := make([]memory.HistoryExecution, len(calls))
-			for i, call := range calls {
+			for i, call := range redactTaskCalls(calls, toolView) {
 				result := idValidationResults[i]
 				executions[i] = memory.HistoryExecution{Call: call, RuntimeResult: &result}
 			}
@@ -512,6 +543,9 @@ func (l *Loop) runBoundedSteps(
 		}
 		scheduler := l.newToolBatchScheduler(turnTracer, stepIndex, event, turnID, toolView, asyncActionsStarted >= l.config.MaxAsyncActionsPerTurn)
 		outcome, err := scheduler.Run(ctx, env, key.WorldID, key.EntityID, calls)
+		if err == nil && taskContext != nil {
+			err = taskContext.captureProposals(ctx, &outcome)
+		}
 		turnHistoryFromContext(ctx).collector.Executions(stepIndex, outcome.Executions)
 		if err != nil {
 			successfulActions = append(successfulActions, outcome.SuccessfulActions...)

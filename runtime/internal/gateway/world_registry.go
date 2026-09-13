@@ -19,12 +19,13 @@ const taskExtension = "gameagent.tasks.v1"
 
 // WorldEntry is a defensive snapshot; Environment and Lanes are fenced lifecycle handles.
 type WorldEntry struct {
-	Head         task.Head
-	ConnectionID string
-	Entities     map[string]*protocol.EntityRef
-	Catalog      tool.TurnToolView
-	Environment  agent.Environment
-	Lanes        *session.LaneStore
+	Head           task.Head
+	AuthorityEpoch uint64
+	ConnectionID   string
+	Entities       map[string]*protocol.EntityRef
+	Catalog        tool.TurnToolView
+	Environment    agent.Environment
+	Lanes          *session.LaneStore
 }
 
 type worldConnection struct {
@@ -39,14 +40,15 @@ type worldConnection struct {
 }
 
 type worldSlot struct {
-	lifecycle sync.Mutex
-	mu        sync.Mutex
-	owner     *worldConnection
-	head      task.Head
-	entities  map[string]*protocol.EntityRef
-	ready     bool
-	saving    bool
-	failed    bool
+	lifecycle      sync.Mutex
+	mu             sync.Mutex
+	owner          *worldConnection
+	head           task.Head
+	entities       map[string]*protocol.EntityRef
+	ready          bool
+	saving         bool
+	failed         bool
+	authorityEpoch uint64
 }
 
 type WorldRegistry struct {
@@ -76,7 +78,7 @@ func (s *worldSlot) snapshot() WorldEntry {
 	for id, entity := range s.entities {
 		entities[id] = cloneEntityRef(entity)
 	}
-	return WorldEntry{Head: s.head, ConnectionID: s.owner.id, Entities: entities, Catalog: s.owner.catalog.Snapshot(), Environment: s.owner.env, Lanes: s.owner.lanes}
+	return WorldEntry{Head: s.head, AuthorityEpoch: s.authorityEpoch, ConnectionID: s.owner.id, Entities: entities, Catalog: s.owner.catalog.Snapshot(), Environment: s.owner.env, Lanes: s.owner.lanes}
 }
 
 func (r *WorldRegistry) Current(world task.WorldKey) (WorldEntry, bool) {
@@ -157,6 +159,9 @@ func (r *WorldRegistry) SetSaveBarrier(env *streamEnvironment, binding task.Bind
 	}
 	if !slot.ready {
 		return task.ErrWorldNotReady
+	}
+	if saving && !slot.saving {
+		slot.authorityEpoch++
 	}
 	slot.saving = saving
 	return nil
@@ -239,6 +244,7 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 		return task.Head{}, task.ErrSaveInProgress
 	}
 	oldHead := slot.head
+	slot.authorityEpoch++
 	slot.ready = false
 	slot.mu.Unlock()
 	if rebinding {
@@ -276,6 +282,7 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 	slot.mu.Lock()
 	slot.owner = conn
 	slot.head = head
+	conn.env.taskAuthority = &worldTaskAuthority{registry: r, env: conn.env, world: head.Binding.World}
 	slot.entities = entities
 	slot.saving = false
 	world := value.Binding.World
@@ -339,6 +346,7 @@ func (r *WorldRegistry) UpdateClock(ctx context.Context, env *streamEnvironment,
 		return task.ErrClockMismatch
 	}
 	if clock.Sequence == current.Sequence && clock != current {
+		slot.authorityEpoch++
 		slot.ready = false
 		slot.head.Status = "paused"
 		slot.head.Reason = "clock_mismatch"
@@ -379,6 +387,7 @@ func (r *WorldRegistry) disconnect(ctx context.Context, conn *worldConnection, r
 	}
 	slot.ready = false
 	head := slot.head
+	slot.authorityEpoch++
 	slot.mu.Unlock()
 	conn.env.close()
 	conn.lanes.CloseAndWait()
