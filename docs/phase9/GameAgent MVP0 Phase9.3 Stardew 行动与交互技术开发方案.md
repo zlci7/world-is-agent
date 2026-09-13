@@ -1,8 +1,8 @@
 # GameAgent MVP0 Phase9.3 Stardew 行动与交互技术开发方案
 
-> **Status:** Implementation Plan Draft
-> **Date:** 2026-09-10
-> **执行方式:** 每个独立审查单元先完成测试、聚焦验证、阶段回归和 `git diff --check`，再以实现及其测试创建一个本地提交并交由独立任务 CR；CR 修正使用独立 `fix:` 本地提交，通过后自动继续。Phase9.5 保留最终整分支/系统 review。
+> **Status:** Implementation Plan — 开发基线；实现与验收状态以验收记录为准
+> **Date:** 2026-09-13
+> **执行方式:** 每个独立模块完成相关测试和 `git diff --check` 后创建本地提交，暂停并交付聚焦 CR；CR 修正使用独立 `fix:` 本地提交，复验通过并经用户确认后继续下一模块。9.3 收口执行阶段整体回归和实机验证；Phase9.5 执行最终整分支/系统审查。
 > **Goal:** NPC 能真实赴约、等待和接近玩家，并在交互结束后继续当前原生日程。
 > **Architecture:** Adapter 管理当前世界效果及控制权；未来任务和唤醒始终由 Runtime 管理。
 > **Tech Stack:** C# / .NET 6、SMAPI、游戏原生寻路与 UI；纯逻辑使用 xUnit。
@@ -29,7 +29,7 @@
 | 文件 | 责任 |
 | --- | --- |
 | `src/Tasks/GameClock.cs`、`MeetingContract.cs`、`LandmarkCatalog.cs` | 纯时间转换、不可变约定、点位配置校验 |
-| `assets/landmarks.json` | 9.0 实测后的沙滩、酒馆、广场配置及行程预留 |
+| `assets/landmarks.json` | 已验证的沙滩、酒馆、广场配置及行程预留 |
 | `src/Tasks/TaskExecutionDriver.cs`、`GameNpcDriver.cs` | 当前跨地图路径、进展、操作终态与游戏 API 隔离 |
 | `src/Tasks/MeetingWaitMonitor.cs` | 当前等待监听、[start,end) 判定及一次性事实 |
 | `src/Tasks/TaskSourceContextStore.cs`、`TaskOperationReceipts.cs` | 背景/到达来源校验、当前 run 回执去重 |
@@ -45,6 +45,8 @@
 | `tests/TaskExecution.Tests/TaskExecution.Tests.csproj` | 新增纯逻辑测试项目，不引用游戏 DLL |
 
 新测试项目沿用既有 net6.0、xUnit 2.9.2、runner 2.8.2、Test SDK 17.11.1；需要协议映射时复用现有 Google.Protobuf/Grpc.Tools 版本。只链接纯模型和 fake driver，真实游戏包装留在主项目。
+
+仓库根目录下的配套修改：`runtime/config/games/stardew-valley/agent.json` 配置有限行动/Turn 预算，`runtime/internal/agent/config_test.go` 验证实际配置加载，`runtime/internal/gateway/task_e2e_test.go` 复用 9.2 夹具验证长路线与等待登记。归入 9.3-A/B，不新增协调组件。
 
 ## 3. 时钟、约定与语义点位
 
@@ -71,11 +73,27 @@ SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新�
 
 每个配置项包含 landmark_id、display_name、location、tile{x,y}、open_start/open_end、supported_routes、departure_lead_minutes。
 
-生产项固定为 beach_meeting_spot、saloon_meeting_spot、town_square。坐标、过图路线和提前量由 9.0 实测填写，不能拿 fake 地图测试坐标部署；加载时校验唯一 ID、整数坐标、开放窗口和正的 10 分钟倍数提前量。
+生产项固定为 beach_meeting_spot、saloon_meeting_spot、town_square。坐标、过图路线和提前量按实测填写，不能拿 fake 地图测试坐标部署；加载时校验唯一 ID、整数坐标、开放窗口和正的 10 分钟倍数提前量。
+
+沙滩路线基线见[开发与验收记录第 3 节](./GameAgent%20MVP0%20Phase9%20开发与验收记录.md#3-跨地图与原生日程恢复)：Linus 从 Mountain 经 Town 到 Beach (28,36)，三次行程 143.132–157.915 秒、200–220 游戏分钟；该路线 departure_lead_minutes=240。该证据限定于记录中的 NPC、路线和游戏条件，不扩展为任意起点的可达性保证。
+
+9.3-A 收集酒馆、广场及新增起点的候选点位，9.3-B 在各路线进入生产配置前验证过图、离屏推进、行程耗时和原生日程恢复。用户可提供地图名、整数格坐标及 NPC/日期/时间，开发侧核对游戏 API 和实际路线；候选坐标不等于路线已验证。未验证路线不进入 supported_routes，创建或出发时遇到未支持路线明确拒绝。三处生产点位的有效配置与证据均属于 9.3 交接条件。
 
 提前量至少覆盖已测最慢正常行程并增加一个 10 分钟游戏刻度余量。若真实路线在已配置 Action/Turn 时间预算下无法完成，先调整受支持路线或有限技术预算并记录实测，不能把预约等待时间放进同一 Action。
 
 静态 schema 公开 landmark_id 和名称；模型不需要地图坐标。实际坐标合法性、可达性、开放状态在 Game 主线程校验。
+
+### 3.4 生产执行预算
+
+Stardew 的生产预算使用现有配置覆盖机制，Runtime 通用默认值和模型/token/Step 上限保持原合同：
+
+| 层级 | 配置位置 | 有限预算 |
+| --- | --- | --- |
+| 当前跨地图行程 | TaskExecutionDriver | 180 秒；业务 start_at 截止仍独立生效 |
+| Runtime Async Action | runtime/config/games/stardew-valley/agent.json 的 async_action_timeout_ms | 190000，包含行程终态回传余量 |
+| Runtime Turn | 同文件的 turn_timeout_ms | 270000，包含一次异步行程、最多 3 个 Step 的模型调用、观察和等待登记余量 |
+
+预算覆盖整个调用链，不能仅延长 Adapter 行程而保留更短的 Runtime 截止。普通交互的 120 秒技术等待、阅读/输入规则及到达后的 120 秒交接占用保持各自合同。wait_for_player 登记后立即结束 Action，预约窗口由游戏时钟和有界监听管理；任何超时都不能被解释为玩家爽约。
 
 ## 4. 能力与结果合同
 
@@ -191,6 +209,8 @@ Acquire 冲突返回稳定的 npc_control_busy；Transfer 先校验旧 token、�
 
 TaskSourceContextStore 保存当前 TaskActionSource 及独立 InteractionSource。背景 Task 来源只允许约定内的当下移动/等待，不允许远程打开玩家 UI。
 
+TaskActionSource.start_revision 在 C# 中映射为 StartRevision，来源存储按 operation 保存该启动版本。TaskOperationReceipts 及后续 TaskEvidence.start_revision 使用同一 operation 保存的值；Task 当前 revision 或其他 operation 的新来源不覆盖它。回执经 ActionResult、GameEvent、Observation 发送或再次查询时均保留原启动版本。
+
 met 时在主线程生成 task_arrival 来源，关联 source_id/world/run/generation/NPC/player/task/operation；发送真实 GameEvent。EventAck ACCEPTED 后才提交交互来源，动作时再次校验实际状态。Task 已 succeeded 不撤销该来源。
 
 普通交互同样生成 kind=player 的 InteractionSource，并保留原 InteractionContextStore 的 event/turn 生命周期。模型不能通过填写 task_id 获得新的玩家来源。
@@ -244,10 +264,12 @@ Saving/Saved 的完整交接在 Phase9.4 实现。此阶段读取到已有但无
 - [ ] 创建 TaskExecution.Tests，链接 GameClock/MeetingContract/LandmarkCatalog。
 - [ ] 编写跨季/跨年、2400/2600 当前时钟、非法 HHMM、非法日期、目标日节日、开放时间和等价键测试。
 - [ ] 实现 resolve_meeting schema/参数校验及 TaskProposal 映射；失败时不返回有效 proposal。
-- [ ] 把 9.0 已验证配置作为资源输出，验证缺失/重复/非法点位明确失败。
+- [ ] 输出已验证的沙滩配置，收集酒馆/广场候选坐标；验证缺失/重复/非法点位与未支持路线明确失败，候选项不进入生产可用集合。
+- [ ] 配置第 3.4 节的 Stardew 覆盖值；TestStardewTaskExecutionBudget 验证实际加载为 Async 190 秒 / Turn 270 秒，通用默认仍为 45 秒 / 90 秒，模型/token/Step 上限保持不变。
 
 ```powershell
 dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj --filter "FullyQualifiedName~GameClockTests|FullyQualifiedName~MeetingContractTests|FullyQualifiedName~LandmarkCatalogTests"
+go test ./runtime/internal/agent -run '^TestStardewTaskExecutionBudget$' -count=1
 ```
 
 ### 9.3-B：租约、跨地图及等待
@@ -256,8 +278,11 @@ dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.cspro
 
 - [ ] 先用 fake driver 测 Acquire/Transfer/Release、同 operation 重试、第三方接管。
 - [ ] 实现 GameNpcDriver 与 TaskExecutionDriver；通过 9.0 路线验证，禁止在 production 分支使用 fake 成功回执。
+- [ ] 验证酒馆/广场及所支持起点的真实路线、开放条件和行程预留，将通过的配置与 travel 提交一起交付；复用沙滩探针证据，并验证生产能力路径。
+- [ ] TestTaskTravelBudget 使用可控时钟验证 158 秒行程能在有效业务窗口内完成，后续等待登记和 Turn 均结束；行程超过 180 秒只中断并释放自身控制，不生成 unsatisfied。覆盖 Runtime 有限超时、取消及旧 move_to 回归，不在测试中真实等待数分钟。
 - [ ] 实现 wait_for_player 和 MeetingWaitMonitor，确保 Sync Action 返回后仍有有限世界监听。
 - [ ] 更新 Observation 与 TaskEvidence；对同 operation 只产生一次终态 fact_id。
+- [ ] TaskSourceContextStoreTests 与 TaskOperationReceiptsTests 覆盖启动版本保留：来源 start_revision=4，任务后续版本为 5，原 operation 的进展、终态及重复查询回执仍为 4；通过 C# Mapper 和协议序列化往返后保持不变。
 
 ```text
 MeetingWaitMonitorTests
@@ -269,7 +294,8 @@ MeetingWaitMonitorTests
 ```
 
 ```powershell
-dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj --filter "FullyQualifiedName~NpcControlLeaseTests|FullyQualifiedName~TaskExecutionDriverTests|FullyQualifiedName~MeetingWaitMonitorTests"
+dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj --filter "FullyQualifiedName~NpcControlLeaseTests|FullyQualifiedName~TaskExecutionDriverTests|FullyQualifiedName~MeetingWaitMonitorTests|FullyQualifiedName~TaskSourceContextStoreTests|FullyQualifiedName~TaskOperationReceiptsTests"
+go test ./runtime/internal/gateway -run '^TestTaskTravelBudget$' -count=1
 ```
 
 ### 9.3-C：approach_player
@@ -335,7 +361,8 @@ dotnet build adapters/stardew/GameAgent.Stardew.csproj --configuration Debug
 ## 8. 交接条件
 
 - [ ] 连续运行下预约 → 出发 → 等待 → met/expired 的真实行为成立，玩家无需跟随。
+- [ ] 沙滩、酒馆、广场的生产点位、受支持路线、行程预留和实际加载预算均有对应证据；未验证路线保持不可用。
 - [ ] 四个能力、来源和租约测试通过；旧 move_to / 对话/取消回归通过。
 - [ ] NPC 恢复原生行为有真实移动证据，而非仅日志和 controller=null。
 - [ ] 无重复终态、第三方控制器误清理或永久停留。
-- [ ] 保存未接通的能力边界在验收记录中明确；完成最后一个本阶段提交及其独立任务 CR 后自动进入 Phase9.4 完成检查点与认知闭环。
+- [ ] 保存未接通的能力边界在验收记录中明确；各模块完成本地提交和聚焦 CR 后，交付 9.3 阶段结果并暂停，用户确认后进入 Phase9.4。

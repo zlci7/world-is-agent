@@ -1,7 +1,7 @@
 # GameAgent MVP0 Phase9 技术开发与验收方案
 
 > **Status:** Implementation Plan Draft
-> **Date:** 2026-09-10
+> **Date:** 2026-09-13
 > **Phase:** Phase9 Runtime Durable Task & Appointment Vertical Slice
 > **目标:** 以跨天预约完成持久意图、到期认知、真实行动、结果记忆和存档回退的最小闭环
 > **Code Inspection Baseline:** `main` @ `daf4f98`；实现分支基点：`e482923`；开发分支：`codex/phase9-durable-task`；Phase8.1、Phase8.2、Phase8.3 Accepted，保留各自验收限制
@@ -79,7 +79,7 @@
 | 单 Turn | 90 秒；最多 3 Steps、每 Step 4 / 每 Turn 6 次工具调用 |
 | Async Action | 默认 45 秒；每 Turn 最多 1 个异步动作 |
 
-`keep_recent_tokens` 是压缩后近期原文目标，不是“聊天超过 8000 tokens 必然触发压缩”的阈值。任务等待不通过延长 Turn 或模型超时实现；路线所需动作时长在 9.0 测量后按游戏配置调整。
+`keep_recent_tokens` 是压缩后近期原文目标，不是“聊天超过 8000 tokens 必然触发压缩”的阈值。上表为开发前配置基线。9.3 在 `runtime/config/games/stardew-valley/agent.json` 将 async_action_timeout_ms 配为 190000、turn_timeout_ms 配为 270000，Adapter 当前行程上限为 180 秒；预算覆盖行程、回执、模型调用、观察和等待登记。Runtime 通用默认值及模型/token/Step 上限保持原值。预约等待由有限监听和持久 wake 管理，不占用长 Turn/Action；具体配置与测试见 9.3 第 3.4 节。
 
 ## 3. 架构与三个生命周期
 
@@ -174,7 +174,7 @@ Phase9 支持显式建立新连接并重新绑定同一运行实例，以验证 
 | `WorldClockUpdate` | Adapter → Runtime | 当前绑定、clock_id、now_tick、sequence |
 | `CheckpointPrepare` / `CheckpointPrepared` | Adapter ↔ Runtime | save_request_id、当前绑定、采样 clock、保存收尾的 final_evidence；返回 checkpoint_id、schema、checksum、新 generation 或明确失败 |
 | `CheckpointFinish` | Adapter → Runtime | save_request_id、saved / aborted；解除对应保存屏障 |
-| `TaskActionSource` | ActionRequest 可选字段 | task_id、task_revision、wake_id、operation_id、world_run_id、execution_generation，以及原样转发的不可变 task_contract |
+| `TaskActionSource` | ActionRequest 可选字段 | task_id、start_revision、wake_id、operation_id、world_run_id、execution_generation，以及原样转发的不可变 task_contract |
 | `InteractionSource` | GameEvent 可选字段 | source_id、绑定、玩家身份、player / task_arrival；到达来源关联 Task/operation，执行时由 Adapter 校验 |
 | `TaskControlRequest` / `TaskControlResult` | Runtime ↔ Adapter | 按 Task/operation/绑定执行幂等 release，并报告 released / handed_off / unconfirmed；不用于提交新行动 |
 | `TaskProposal` | ActionResult 可选字段 | 规范化 clock、wake_at、deadline_at、参与者、等价约定键、opaque payload |
@@ -184,7 +184,7 @@ TaskProposal 是世界任务的当次校验结果，不是已注册任务，也�
 
 `wait_until` 是 progress 证据对当前操作已经进入有界等待的规范化回执，使用任务同一 clock 的逻辑时间；在证据发生时刻之后且不超过 deadline。Runtime 接纳该回执时原子提交 waiting 与后续 wake；处理时已到截止则立即协调，不延后原约定。Runtime 不解析 opaque 的 `waiting / met` 字样。结果确认由已登记 operation、当前时间线及 TaskSpec 的结果合同约束；普通移动成功不能被升级为任务目标已满足。
 
-TaskActionSource 由 Runtime 注入，模型参数不包含 task_revision、generation 或 operation_id。原 source_event_id / source_turn_id 继续表达当前来源；内部 wake 使用 Runtime trigger 身份，不伪造玩家点击。
+TaskActionSource 由 Runtime 注入，模型参数不包含 start_revision、generation 或 operation_id。start_revision 取自已登记的 Operation.StartRevision，表示该动作启动时的任务版本；TaskEvidence.start_revision 原样承接同一 operation 的启动版本。原 source_event_id / source_turn_id 继续表达当前来源；内部 wake 使用 Runtime trigger 身份，不伪造玩家点击。
 
 预约的 task_contract 来自已持久保存的 Proposal，包含参与者、规范化时间约束及 opaque 约定。Runtime 原样传递，Adapter 用它校验当下命令的点位和窗口；Adapter 无需查询或保存未来任务列表。没有世界约定的内部任务不携带此字段。
 
@@ -214,6 +214,8 @@ TaskSpec 是创建输入，TaskRecord 是持久状态。Phase9 的规范化结�
 
 本地工具注册为 `KindRuntime`，由独立执行器调用 TaskService，不封装为发往 Adapter 的 ActionRequest。Tool View、schema 验证、调用预算、结果裁剪和 Trace 沿用通用工具链；catalog 名称冲突明确拒绝。
 
+工具层负责模型参数解析、proposal_ref 和结果封装，TaskService 保留通用状态接口。Registry 只合并条目并复用现有准入；Scheduler 在构造 ActionRequest 前按 kind 分流。Environment 同步/异步发送前的操作登记检查可以返回错误并阻止发送。
+
 | 工具 | 模型输入 | 执行与返回 |
 | --- | --- | --- |
 | `create_task` | `proposal_ref`、`instruction` | 验证当前 owner、校验结果与时效；复制权威 proposal；事务创建 Task 与首次 wake，返回 task_id、revision、waiting、created |
@@ -229,9 +231,13 @@ Phase9 的 `create_task` 只接受本次有效交互中已经校验的 proposal_
 
 owner、expected_revision、当前运行代次、claim 和访问来源由 Runtime 执行上下文注入，不进入模型输入 schema。expected_revision 使用本次上下文已经读取的任务版本；若在决策期间发生变化，返回 `task_changed` 并刷新上下文，不能偷偷换成最新版本覆盖新事实。两项工具返回已提交的 task_id、revision、state、next_wakeup_at 和已知结果。
 
+任务提交使用当前有效绑定的权威 Clock，重新校验预约/等待窗口；expected_revision 保持模型实际观察值。Clock 更新与读取当前 Clock 后的任务提交在同 world 的短临界区串行完成，模型思考和网络等待位于临界区之外；绑定失效时拒绝旧调用。
+
 ### 5.3 TaskService：状态与结果入口
 
 服务内部提供创建 TaskSpec、提交意图、接纳 Evidence、协调 Wake、保存/恢复 Checkpoint 的接口。调用者携带 Runtime 验证后的身份与执行上下文，接口保留通用 owner、时钟、幂等和版本校验；模型工具只是其中一个调用方。
+
+9.2 增加两项内部只读查询：ListActive(ctx, owner, limit) 按 owner 筛选 waiting/running/paused，按 task_id 排序后限制数量；InspectWake(ctx, binding, wakeID) 在同一数据库读事务快照中返回 Head、Wake 和对应 Task，并校验绑定与记录关联。原 List 保持全部状态列表语义，BeginWake 保持 enqueued → running 状态转换。查询不赋予执行资格，不新增模型工具、协议消息、数据库表或任务状态；精确合同见 9.2 第 4.4.1、5.1.1 节。
 
 Phase9 预约的成功由属于本 Task、当前时间线、已接纳且满足结果合同的 `satisfied` 证据触发。`unsatisfied` 触发失败；`interrupted` 或确定性 Runtime 错误按已知结果结束或暂停。进展文字、创建结果、到达固定移动终点及模型自述均不能冒充见面证据。结果映射直接由代码提交，无需 Agent 再调用工具声明成功或失败。
 
@@ -295,6 +301,8 @@ waiting / running / paused ──有效取消───────────�
 
 复用 lane Task 的 admission 屏障：队列项在 enqueued 持久提交前不得调用模型或执行动作；提交失败则撤销执行资格并保留重试项。
 
+提交结果不明确时先调用 InspectWake：pending 交回正常调度，claimed 核对原领取身份后继续入队确认或释放，enqueued 才能重试 BeginWake，running 使用已提交的 Task 版本进入证据协调与 FinishAttempt，consumed 结束旧项。查询后状态变化仍由后续操作的身份/版本校验拒绝，running 不再次启动或重放动作。无法确认则停止该 world 新任务准入并报告。投递入口负责有界重试与停止条件，具体状态表见 9.2 第 5.1 节；持续错误可以明确暂停，保留原数据供显式恢复。
+
 - 入队成功不删除 Task，也不等于 wake 已完成。
 - 队列满时保留持久投递项，使用有界退避；不能丢任务，也不能忙循环。
 - 唤醒协调与玩家输入共用同一 lane，同 NPC 不并发执行任务意图或认知；其他 NPC 可以独立执行。
@@ -306,7 +314,7 @@ waiting / running / paused ──有效取消───────────�
 - 接纳确证结果后的状态提交和 cleanup 不经过 LLM。确定性路径直接消费 wake；需要决策的路径分配新 turn_id，在工具执行前取得新 Observation。
 - 终态过滤只停止 Task wake。同一事实附带的有效到达交互按交互入口入 lane；可在结果提交后继续对话，同一 fact_id 的重复事件不重复创建交互。
 
-TaskEvidence 里的 task_revision 是世界操作的启动版本。接纳时按已登记且仍相关的 operation 校验证据；Task 从 running 更新到 waiting 后，原等待操作的到达证据仍有效。Task 修改及 wake 执行继续使用最新 revision 的 CAS，不能把正常业务更新误判为世界结果过期。
+关联 operation 的 TaskEvidence.start_revision 是该世界操作的启动版本。Adapter 按 operation 保存接收到的 TaskActionSource.start_revision，后续回执沿用该值；接纳时与已登记且仍相关的 Operation.StartRevision 比较。Task 从 running 更新到 waiting 后，原等待操作的到达证据仍有效。Task.Revision、ExpectedRevision 和 Result.Revision 保持各自当前状态、修改校验和结果版本语义；无 operation 的 Evidence 沿用 9.1 的当前任务版本校验规则。
 
 本阶段为单实例 SQLite 调度，不增加分布式锁服务。进程实例标识和 CAS 防止并发扫描重复认领；同一任务库同时由多个 Runtime 服务写入应拒绝启动。
 
@@ -328,7 +336,7 @@ Runtime 在下发有世界效果的命令前，先持久记录 `operation_id`、
 
 ### 7.1 语义点位与当前事实
 
-`adapters/stardew/assets/landmarks.json` 保存 `landmark_id`、名称、地图、停留格、开放窗口、受支持路线和 `departure_lead_minutes`。提供 `beach_meeting_spot`、`saloon_meeting_spot`、`town_square`；9.0 用真实游戏确定坐标、路径与行程预留。
+`adapters/stardew/assets/landmarks.json` 保存 `landmark_id`、名称、地图、停留格、开放窗口、受支持路线和 `departure_lead_minutes`。提供 `beach_meeting_spot`、`saloon_meeting_spot`、`town_square`。9.0 验收记录中的 Linus：Mountain → Town → Beach (28,36) 为沙滩路线基线，departure_lead_minutes=240。9.3-A 收集酒馆、广场及新增起点的候选坐标，9.3-B 验证真实路线、耗时和原生恢复后纳入生产配置；用户可提供点位，开发侧完成路线验证。未验证路线不进入 supported_routes，三处生产点位与对应证据均为 9.3 交接要求。
 
 静态 schema 提供稳定 ID 和含义，动态可达性在动作执行时重新校验。模型不传地图坐标；真实玩家/NPC 位置复用现有 Observation，无需独立位置查询工具。
 
@@ -514,15 +522,16 @@ Runtime 当前任务工作集持续提交到 SQLite；每次游戏保存另外�
 ```text
 Saving：暂停本世界的新任务修改及世界命令，清理本次保存的临时游戏占用
 → CheckpointPrepare(save_request_id, binding, clock)
-→ Runtime 接纳保存收尾的 final_evidence，再 fence 旧执行，事务复制完整任务快照并持久提交
-→ CheckpointPrepared(checkpoint_id, checksum)
+→ Runtime 在 world 短临界区内同步采样 Clock，再由 PrepareCheckpoint 事务接纳 final_evidence、fence 旧执行并持久化快照
+→ CheckpointPrepared(新 generation, checkpoint_id, checksum)，执行准入仍关闭
 → Adapter 在本次 SaveData 中写引用 → 游戏完成保存
-→ Saved / aborted → CheckpointFinish → 解除屏障、重新观察在途 Task
+→ Saved / aborted → 使用 Prepared 新代次的 CheckpointFinish
+→ 同 run 的 WorldBinding / WorldBindingReady 握手 → 重新观察未确认操作后调度
 ```
 
 屏障覆盖当前世界的任务创建/更新、wake 投递和 Action 发送；其他世界不受影响。已经发生的效果保留，未确定结果记为待协调。旧 LLM 返回不能在屏障后提交到新 generation。
 
-Adapter 从本次 Prepared / WorldBindingReady 取得新 generation 后才恢复执行准入；超时或失配则保持 Task 执行暂停，普通游戏继续。解除保存屏障不等于绕过世界绑定 ready 检查。
+Prepared 只确认持久快照和新 generation，Adapter 在保存结束后的当前 WorldBindingReady 才恢复执行准入；Finish 发送完成不等于 Runtime 确认。首次 Prepare 前同步 Clock，同请求重试保留原参数并走内核幂等路径。Prepared 超时/丢失时写 unconfirmed，不猜测代次发送 Finish；同 run 通过有界屏障兜底和绑定恢复选择 working head，仍不改写磁盘标记，新 run 加载 unconfirmed 仍暂停。加载引用、迟到回复和握手合同见 9.4 第 3.4 节。
 
 保存不等待模型完成，也不要求所有 Task 终态。SMAPI 主线程只进行有限保存交接，网络接收和 SQLite 快照不依赖主线程回调；请求必须有有限超时，超时写 unconfirmed 并允许游戏保存。具体 Saving / Saved 时序与有界等待的可行性在 9.0 实测，禁止引入主线程—网络相互等待的死锁。
 
@@ -596,6 +605,8 @@ Game API、存档读取、位置和 controller 操作都在主线程。网络线
 
 当前 Task Context 包含目标、权威进展、wake_reason、游戏时间、最近证据及终态结果、剩余窗口和恢复状态，参与现有 Context 预算。需要决策的 Task Turn 使用新 Observation；只处理已经确认的结果时不额外调用模型或 Observe。恢复/截止但证据不足时由协调器读取当前 Observation，不把创建时的快照固定复用到未来。
 
+9.2 为普通玩家交互和 Task Turn 提供同一最小任务投影：task_id、目标、state/revision、next_wakeup_at、deadline_at，以及入口所需的 wake_reason/暂停原因，计入既有请求预算。普通交互调用 ListActive(owner, 1)，先筛选非终态再限制数量；Task Turn 按自身 task_id 读取并核对执行上下文。9.4 在同一读取入口和投影上扩展近期结果、恢复信息及 Task Context 分项预算。9.4-D 增加内部 ListRecentResults(ctx, owner, limit)，从当前工作集按 owner 筛选已确认终态结果，以 OccurredAt 倒序、Result.ID 升序排序后限制数量；投影取最多三条。读档后不合并旧 checkpoint/History 的回档外结果，保持 List / ListActive 语义，不新增协议、表或协调组件；接口、并发边界与测试见 9.4 第 6.1 节。
+
 History 增加通用 `task_result` 来源类型，接收 TaskService 已提交的不可变结果；不创建空模型 Turn，不伪造 NPC 台词或 terminal_turn：
 
 - 来源包含 owner、result_id、task_id、结果对应的 revision、发生游戏时间、outcome/reason、证据 refs 与真实 ContextFact；已有关联 event/turn/operation 时保留这些 ID。
@@ -618,16 +629,19 @@ TaskEvidence 接纳、业务终态和 History 写入分别可诊断。History �
 | 目录 / 文件 | 类型 | 责任 |
 | --- | --- | --- |
 | `runtime/internal/task/model.go`、`store.go`、`sqlite_store.go` | 新增 | TaskSpec / TaskRecord / Wake / Evidence / Result 值对象、事务、幂等、working head |
-| `runtime/internal/task/service.go` | 新增 | 内部创建/意图/证据入口、确定性状态转换、服务端 CAS 与结果生成 |
-| `runtime/internal/task/tools.go`、`admission.go` | 新增 | Runtime Tool schema 与本地执行、预约准入校验、TaskSpec 构造；不污染通用状态机 |
+| `runtime/internal/task/service.go` | 新增 | 内部创建/意图/证据入口、确定性状态转换、服务端 CAS 与结果生成；9.2-B2 增加 ListActive 及 sqlite_store 查询 |
+| `runtime/internal/task/wake.go` | 扩展 | 9.2-C2 增加 InspectWake，model.go 定义 WakeInspection；保持既有 wake 状态转换 |
+| `runtime/internal/task/admission.go` | 新增 | 通用任务准入、owner 数量限制与幂等校验 |
+| `runtime/internal/tool/task_tools.go`、`proposal.go`、`runtime_tool.go` | 新增 | Runtime Tool schema、参数解析、校验结果引用、TaskSpec 构造与 TaskService 调用 |
 | `runtime/internal/task/dispatcher.go`、`checkpoint.go` | 新增 | 扫描认领、协调/认知分流、恢复分类、全量快照和保存屏障 |
 | `runtime/internal/task/result_history.go` | 新增 | 已提交结果到通用 History 来源的投影与写入，保留失败诊断 |
 | `runtime/internal/gateway/world_registry.go`、`task_dispatch.go` | 新增 | 活动世界、内部 trigger、lane 绑定和控制消息 |
 | `runtime/internal/gateway/gateway.go`、`runtime/cmd/server/main.go` | 修改 | 进程级服务装配、连接解绑、任务库生命周期 |
 | `runtime/internal/session/lane.go` | 修改 | 安全复用 admission / abort；保持 FIFO 和维护任务合同 |
-| `runtime/internal/tool/registry.go` | 新增 | 合并 Runtime 与 Environment 注册项；按显式 kind 查找，统一准入预算及名称冲突检查 |
+| `runtime/internal/tool/registry.go` | 新增 | 合并 Runtime 与 Environment 注册项，按显式 kind 查找；复用现有准入预算，拒绝同名冲突 |
 | `runtime/internal/tool/types.go`、`environment_catalog.go` | 修改 | KindRuntime、共用 Tool View / policy 与现有 Environment catalog 接入 |
 | `runtime/internal/agent/scheduler.go`、`loop.go` | 修改 | kind 执行分流、Task Turn、状态收敛后的认知停止、操作提交前记录与结果关联 |
+| `runtime/internal/agent/task_context.go` | 新增 | 普通交互与 Task Turn 共用的当前任务快照；9.4 扩展结果与恢复信息 |
 | `runtime/internal/context/`、`runtime/internal/trace/` | 修改 | 有界 Task Context、通用关联字段及诊断 |
 | `runtime/internal/memory/history.go`、`history_text.go`、`in_memory_history.go`、`sqlite_history.go` | 修改 | task_result 来源校验、存取及文本投影；保持 Phase8 来源键、指纹和策略兼容 |
 | `protocol/proto/gameagent.proto`、`protocol/gen/go/` | 修改 / 生成 | 第 4.3 节合同、兼容和生成结果 |
@@ -647,20 +661,22 @@ TaskEvidence 接纳、业务终态和 History 写入分别可诊断。History �
 
 测试目标：
 
-- 新增 `runtime/internal/task/{service,admission,tools,sqlite_store,dispatcher,checkpoint,result_history}_test.go`；通用 TaskSpec、意图/证据分离、纯时钟、事务、重启和故障注入。
+- 新增 `runtime/internal/task/{service,admission,sqlite_store,dispatcher,checkpoint,result_history}_test.go`；通用 TaskSpec、意图/证据分离、纯时钟、事务、重启和故障注入。
+- 9.2-B2 在 service/sqlite_store tests 覆盖 ListActive 的筛选顺序、暂停任务、边界和 owner 隔离；9.2-C2 在 wake/dispatcher/gateway tests 覆盖 InspectWake 的只读一致快照、BeginWake 提交成功但调用结果不确定及查询后状态变化。
 - 新增 `runtime/internal/gateway/task_dispatch_test.go`、`world_binding_test.go`；内部 wake、queue full、第二 NPC/world。
-- 新增 `runtime/internal/tool/registry_test.go`，修改 scheduler / loop / Context tests；新增 `runtime/internal/agent/task_loop_test.go`，使用非 Stardew 名称证明 kind 路由和策略通用性。
+- 新增 `runtime/internal/tool/registry_test.go`、`task_tools_test.go`，修改 scheduler / loop / Context tests；新增 `runtime/internal/agent/task_context_test.go`、`task_loop_test.go`，覆盖新对话取消当前任务，使用非 Stardew 名称证明 kind 路由和策略通用性。
+- `runtime/internal/gateway/task_e2e_test.go` 在 9.2 使用真实 gRPC/临时 SQLite 与 fake environment/model 证明阶段闭环，9.5 扩展 History、保存和交互生命周期组合场景。
 - 新增 `runtime/internal/memory/task_result_history_test.go`；覆盖无 Turn 来源、幂等冲突、旧数据读取、时间可见性、文本检索及混合来源 Summary 回归。
 - 新增 `adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj`；链接纯模型、Fake Driver、时钟、选点、等待、控制权及保存桥接逻辑，不依赖游戏 DLL。
 - 在该项目增加 `MeetingContractTests`、`MeetingWaitMonitorTests`、`AdjacentTileSelectorTests`、`TaskSourceContextStoreTests`、`TaskCheckpointBridgeTests`。
 - 扩展现有 `ProtocolMapper.Tests`、`PlayerInteractProbe.Tests`、`ActionCancellationRegistry.Tests`，覆盖新合同、UI 接续和旧能力回归。
 - 同步 `adapters/stardew/tests/check-context-static.ps1`、Protocol checks 与架构检查；真实 pathfinding / SMAPI 保存时序另做实机验收。
 
-## 13. 连续开发流程与子阶段
+## 13. 分模块开发流程与子阶段
 
-Phase9 使用 9.0 前置可行性门和 9.1–9.5 五个开发子阶段。每个可独立审查的单元都遵循同一闭环：涉及代码时先写失败测试，再实现；完成聚焦验证与该阶段应有的回归后，运行 `git diff --check`，创建一个包含实现及其测试的本地提交；随后由独立任务执行 CR。CR 修正以独立 `fix:` 本地提交提交，并在通过 CR 后自动继续下一个单元，不等待用户逐项确认。协议生成文件与其协议变更必须处于同一提交。每个提交始终保持可构建、可测试。
+Phase9 使用 9.0 前置可行性门和 9.1–9.5 五个开发子阶段。每个独立模块涉及代码时先写失败测试，再实现；完成相关测试、直接受影响的回归及 `git diff --check` 后，创建一个包含实现与测试的本地提交，暂停并交付提交号、验证结果和聚焦 CR。CR 修正使用独立 `fix:` 本地提交；复验通过并经用户确认后继续下一模块。协议与生成文件处于同一提交，每个提交保持可构建、可测试。
 
-所有本地提交均不得 `git push`，除非用户明确授权。增量任务 CR 不替代 Phase9.5 在全部增量 CR 完成后的整分支/系统审查，也不替代真实游戏验收。
+模块内按改动范围验证，子阶段收口执行阶段整体回归，Phase9.5 执行最终整分支/系统审查和真实游戏验收。所有本地提交均不得 `git push`，除非用户明确授权。
 
 ### 13.1 子方案与交付顺序
 
@@ -668,12 +684,16 @@ Phase9 使用 9.0 前置可行性门和 9.1–9.5 五个开发子阶段。每个
 | --- | --- | --- |
 | 9.0 基线与可行性 | 本节的代码基线、跨地图、原生日程恢复及保存交接探针 | 明确真实游戏 API 和可行性；不存在瞬移、无期限占用或保存死锁 |
 | 9.1 Task 内核 | [Runtime Task 内核](./GameAgent%20MVP0%20Phase9.1%20Runtime%20Task%20内核技术开发方案.md)：值对象、内部服务、SQLite、revision、幂等、wake 和全量快照 | 纯内核与故障测试通过；公开接口可供 9.2 调用 |
-| 9.2 Runtime 接入 | [Runtime Tools 与调度接入](./GameAgent%20MVP0%20Phase9.2%20Runtime%20Tools%20与调度接入技术开发方案.md)：固定协议、Registry、工具、Clock、世界绑定、lane、Task Turn | fake 环境完整驱动新 Turn；确定性结果无需模型；旧链路回归通过 |
+| 9.2 Runtime 接入 | [Runtime Tools 与调度接入](./GameAgent%20MVP0%20Phase9.2%20Runtime%20Tools%20与调度接入技术开发方案.md)：协议、工具分流、Clock、世界绑定、lane、Task Turn 与最小当前任务上下文 | 创建 Turn 结束后独立唤醒；普通对话可取消任务；确定性结果无需模型；阶段回归通过 |
 | 9.3 游戏闭环 | [Stardew 行动与交互](./GameAgent%20MVP0%20Phase9.3%20Stardew%20行动与交互技术开发方案.md)：点位、校验、移动、等待、接近、来源、租约、UI 结束和原生恢复 | 9.0 已通过；当前运行中的真实预约行为成立；游戏侧自动化通过 |
-| 9.4 恢复与认知 | [检查点与结果记忆](./GameAgent%20MVP0%20Phase9.4%20检查点与结果记忆技术开发方案.md)：保存桥接、精确恢复、结果 History、Task Context | 9.0 已通过；跨日保存/加载和故障窗口通过；后续请求含实际结果 |
+| 9.4 恢复与认知 | [检查点与结果记忆](./GameAgent%20MVP0%20Phase9.4%20检查点与结果记忆技术开发方案.md)：保存桥接、精确恢复、结果 History，扩展既有 Task Context 的结果与恢复投影 | 9.0 已通过；跨日保存/加载和故障窗口通过；后续请求含实际结果 |
 | 9.5 验收与交付 | [联调验收与交付](./GameAgent%20MVP0%20Phase9.5%20联调验收与交付技术方案.md)：全量回归、真实模型/游戏、整分支/系统 review、修复和复验 | 成功赴约/爽约各连续三次，无阻断 review 问题，最终产物与证据一致 |
 
 公共约束由本总方案定义；9.1 固定内核接口，9.2 固定 wire 与工具合同，9.3 固定游戏执行接口，9.4 固定保存与 History 接入，9.5 固定最终验收。跨阶段接口变更时同步实现、调用方、测试与相关文档，不让两个阶段保留不同合同。
+
+9.1 保持 Accepted；当前阶段所需的最小通用接口扩展归入当前阶段。后续开发按用户确认的模块推进，阶段交接也需交付验收结果并暂停。9.2 的提交顺序固定为 A1 协议 → A2 映射 → B1 工具分流 → C1 绑定/Clock → B2 任务工具/上下文 → C2 持久投递 → D 阶段闭环。
+
+ListActive 的实现与测试纳入 B2，InspectWake 的实现与测试纳入 C2，提交模块数量保持七个。9.2 完成 TaskControl 的 Runtime 侧和 Checkpoint 协议/映射；真实行动、等待与释放在 9.3 实现，完整保存桥接、恢复和结果记忆在 9.4 实现。
 
 ### 13.2 9.0 前置可行性门
 
@@ -689,15 +709,15 @@ Phase9 使用 9.0 前置可行性门和 9.1–9.5 五个开发子阶段。每个
 
 若缺少游戏环境，可先完成不依赖实机结论的 9.1/9.2 和纯逻辑测试；9.0 保持未通过。9.3/9.4 中依赖真实游戏的代码以 9.0 通过为硬前提，涉及真实 API 的结论不能以 fake 替代。发现跨地图、恢复或保存边界不可行时报告具体阻断，不擅自取消这些验收条件。
 
-### 13.3 AI 连续执行指令
+### 13.3 分模块执行约定
 
-读取仓库 AGENTS.md、本总方案和五份 9.1–9.5 子方案，以 `e482923` 为实现分支基点，在 `codex/phase9-durable-task` 上连续完成 Phase9，并保留 `daf4f98` 作为已检查的代码基线。先执行 9.0 可行性检查，再按 9.1 → 9.2 → 9.3 → 9.4 → 9.5 实现。每个独立审查单元完成测试、聚焦验证、阶段回归和 `git diff --check` 后创建一个包含实现与测试的本地提交，交由独立任务 CR；CR 修正另以 `fix:` 本地提交并完成复验。通过该单元 CR 后自动继续。Phase9.5 在所有增量 CR 后执行整分支/系统 review，发现问题后修复并复验实际交付产物。
+开发沿用以 `e482923` 为基点的 `codex/phase9-durable-task` 分支，`daf4f98` 为已检查代码基线。执行前读取仓库 AGENTS.md、本总方案和当前子方案；按已确认模块开展工作，已验收阶段保持其结论。每个模块完成相关测试和 `git diff --check` 后本地提交并暂停 CR，复验通过且用户确认后继续。Phase9.5 在全部模块 CR 后执行最终整分支/系统审查、修复和交付产物复验。
 
 保持 Runtime TaskService、Runtime Tools、Environment Capabilities 的分层。保留跨天任务、完整检查点回退、真实跨地图行走、固定目标 approach_player 和真实 UI 结束后的原生日程恢复。禁止通过假回执、瞬移、跳过测试、修改既有通过标准或改成仅当天任务完成交付。
 
-只在缺少权限、游戏环境、凭据或出现需要改变产品规则的真实阻断时请求协助；可以继续不依赖阻断的工作，但不得声称相关门槛已通过。保留用户现有修改；按本节创建本地提交，但未经用户明确授权绝不 `git push`。仓库默认任务配置保持 `enabled=false`；专用演示/本地配置显式启用任务功能，不提交凭据或私有本地配置。开发过程与真实证据写入 `docs/phase9/GameAgent MVP0 Phase9 开发与验收记录.md`；总方案和子方案保持最终合同，不混入调试过程。
+缺少权限、游戏环境、凭据或需要改变产品规则时报告具体阻断；仅在当前已授权模块内继续不依赖阻断的工作，不跨越 CR 暂停点。保留用户现有修改；本地提交限于已授权的开发范围，未经用户明确授权绝不 `git push`。仓库默认任务配置保持 `enabled=false`；专用演示/本地配置显式启用，不提交凭据或私有配置。真实执行结果写入 `docs/phase9/GameAgent MVP0 Phase9 开发与验收记录.md`；总方案和子方案保持最终合同。
 
-代码完成、自动化通过、实机通过和独立 review 通过分别记录。只有全部满足第 14–15 节条件后，才提供 Phase9 Accepted 的确认材料。
+代码完成、自动化通过、实机通过和独立 review 通过分别记录。9.5 第 4.4 节分别指定自动化与实机必需证据：路径、原生恢复、实际保存/加载和 UI 使用实机验证，查询排序、版本冲突及重复回执使用自动化精确断言。成功/爽约各三次是已记录 NPC、路线、日期和配置条件下的独立生产闭环验收，不代表任意游戏条件的普遍可靠性。只有全部满足第 14–15 节条件后，才提供 Phase9 Accepted 的确认材料。
 
 ## 14. 验收矩阵与演示
 
