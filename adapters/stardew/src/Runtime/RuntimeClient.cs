@@ -1318,7 +1318,7 @@ public sealed class RuntimeClient : IDisposable
                 : this.taskInteractionConversations.FindTaskEvent(interaction.ConversationId) ?? string.Empty;
             bool finalDialogue = input.ReplyOptions.Count == 0 && !input.AllowFreeText;
             if (!string.IsNullOrWhiteSpace(taskInteractionEventId))
-                this.taskInteractionConversations.MarkPresentation(request.SourceEventId);
+                this.taskInteractionConversations.MarkPresentation(request.SourceEventId, interaction!.ConversationId);
             this.presentDialogueCapability.Present(
                 guardedNpc,
                 Game1.player,

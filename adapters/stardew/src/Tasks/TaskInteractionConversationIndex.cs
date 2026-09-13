@@ -3,7 +3,8 @@ namespace GameAgent.Stardew.Tasks;
 public sealed class TaskInteractionConversationIndex
 {
     private readonly Dictionary<string, string> taskEventByConversation = new(StringComparer.Ordinal);
-    private readonly HashSet<string> turnsWithPresentation = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> presentationConversationByTurn = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> deferredConversationByTurn = new(StringComparer.Ordinal);
 
     public void Register(string conversationId, string taskEventId)
     {
@@ -15,16 +16,23 @@ public sealed class TaskInteractionConversationIndex
         return this.taskEventByConversation.TryGetValue(conversationId, out string? eventId) ? eventId : null;
     }
 
-    public void MarkPresentation(string turnEventId)
+    public void MarkPresentation(string turnEventId, string conversationId)
     {
-        this.turnsWithPresentation.Add(turnEventId);
+        this.presentationConversationByTurn[turnEventId] = conversationId;
     }
 
     public bool ShouldReleaseAtTurnCompletion(string turnEventId, string conversationId)
     {
         if (!this.taskEventByConversation.ContainsKey(conversationId))
             return false;
-        return !this.turnsWithPresentation.Remove(turnEventId);
+        if (this.deferredConversationByTurn.ContainsKey(turnEventId))
+            return false;
+        if (this.presentationConversationByTurn.Remove(turnEventId))
+        {
+            this.deferredConversationByTurn[turnEventId] = conversationId;
+            return false;
+        }
+        return true;
     }
 
     public void RemoveTaskEvent(string taskEventId)
@@ -34,17 +42,30 @@ public sealed class TaskInteractionConversationIndex
             .Select(pair => pair.Key)
             .ToArray();
         foreach (string conversationId in conversations)
-            this.taskEventByConversation.Remove(conversationId);
+            this.RemoveConversation(conversationId);
     }
 
     public void RemoveConversation(string conversationId)
     {
         this.taskEventByConversation.Remove(conversationId);
+        RemoveTurnsForConversation(this.presentationConversationByTurn, conversationId);
+        RemoveTurnsForConversation(this.deferredConversationByTurn, conversationId);
     }
 
     public void Clear()
     {
         this.taskEventByConversation.Clear();
-        this.turnsWithPresentation.Clear();
+        this.presentationConversationByTurn.Clear();
+        this.deferredConversationByTurn.Clear();
+    }
+
+    private static void RemoveTurnsForConversation(Dictionary<string, string> turns, string conversationId)
+    {
+        string[] matching = turns
+            .Where(pair => string.Equals(pair.Value, conversationId, StringComparison.Ordinal))
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (string turnEventId in matching)
+            turns.Remove(turnEventId);
     }
 }

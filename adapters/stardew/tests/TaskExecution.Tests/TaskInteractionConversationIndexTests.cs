@@ -13,7 +13,8 @@ public sealed class TaskInteractionConversationIndexTests
 
         Assert.True(index.ShouldReleaseAtTurnCompletion("turn-without-ui", "conversation"));
 
-        index.MarkPresentation("turn-with-ui");
+        index.MarkPresentation("turn-with-ui", "conversation");
+        Assert.False(index.ShouldReleaseAtTurnCompletion("turn-with-ui", "conversation"));
         Assert.False(index.ShouldReleaseAtTurnCompletion("turn-with-ui", "conversation"));
         Assert.Equal("arrival-event", index.FindTaskEvent("conversation"));
     }
