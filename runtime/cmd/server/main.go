@@ -11,7 +11,6 @@ import (
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/definition"
-	"gameagent/runtime/internal/gateway"
 	"gameagent/runtime/internal/llm"
 	"gameagent/runtime/internal/trace"
 
@@ -61,10 +60,13 @@ func main() {
 
 	agentLoop := agent.NewLoop(modelProvider, traceRecorder, agentConfig, agent.WithDefinitionCatalog(definitionCatalog))
 
-	gatewayServer := gateway.NewServer(agentLoop)
+	process, err := newGatewayRuntime(context.Background(), agentLoop, agentConfig.Task)
+	if err != nil {
+		log.Fatalf("open task runtime failed: %v", err)
+	}
 
 	grpcServer := grpc.NewServer()
-	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, gatewayServer)
+	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, process.gateway)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:50051")
 	if err != nil {
@@ -84,5 +86,7 @@ func main() {
 	<-stop
 
 	log.Println("shutting down GameAgent Runtime")
-	grpcServer.GracefulStop()
+	if err := process.shutdown(context.Background(), grpcServer); err != nil {
+		log.Printf("shutdown task runtime: %v", err)
+	}
 }

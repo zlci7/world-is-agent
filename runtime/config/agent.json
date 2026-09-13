@@ -1,4 +1,12 @@
 {
+  "task": {
+    "enabled": false,
+    "db_path": "runtime/.local/tasks/tasks.sqlite",
+    "scan_interval_ms": 1000,
+    "dispatch_batch": 32,
+    "retry_min_ms": 1000,
+    "retry_max_ms": 30000
+  },
   "turn_timeout_ms": 90000,
   "llm_timeout_ms": 8000,
   "observe_timeout_ms": 3000,

@@ -7,12 +7,14 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/session"
+	"gameagent/runtime/internal/task"
 	"gameagent/runtime/internal/tool"
 )
 
@@ -20,7 +22,11 @@ import (
 type Server struct {
 	protocolv1alpha2.UnimplementedGameAgentGatewayServer
 
-	agentLoop eventHandler
+	agentLoop   eventHandler
+	worlds      *WorldRegistry
+	mu          sync.Mutex
+	connections map[*worldConnection]struct{}
+	stopped     bool
 }
 
 type eventHandler interface {
@@ -31,10 +37,61 @@ type historyMaintainer interface {
 	MaintainHistory(context.Context, session.AgentSessionKey, *memory.GameTimeSnapshot)
 }
 
-func NewServer(agentLoop eventHandler) *Server {
-	return &Server{
-		agentLoop: agentLoop,
+type ServerOption func(*Server)
+
+func WithTaskService(service *task.Service) ServerOption {
+	return func(s *Server) {
+		if service != nil {
+			s.worlds = NewWorldRegistry(service)
+		}
 	}
+}
+
+func NewServer(agentLoop eventHandler, options ...ServerOption) *Server {
+	s := &Server{
+		agentLoop:   agentLoop,
+		connections: make(map[*worldConnection]struct{}),
+	}
+	for _, option := range options {
+		option(s)
+	}
+	return s
+}
+
+func (s *Server) WorldRegistry() *WorldRegistry { return s.worlds }
+
+func (s *Server) StopTaskAdmission() {
+	s.mu.Lock()
+	s.stopped = true
+	s.mu.Unlock()
+	if s.worlds != nil {
+		s.worlds.StopAdmission()
+	}
+}
+
+func (s *Server) Close(ctx context.Context) error {
+	s.StopTaskAdmission()
+	s.mu.Lock()
+	connections := make([]*worldConnection, 0, len(s.connections))
+	for c := range s.connections {
+		connections = append(connections, c)
+	}
+	s.mu.Unlock()
+	var result error
+	for _, c := range connections {
+		result = errors.Join(result, s.closeConnection(ctx, c))
+	}
+	return result
+}
+
+func (s *Server) closeConnection(ctx context.Context, c *worldConnection) error {
+	if s.worlds != nil {
+		return s.worlds.disconnect(ctx, c, "connection_closed")
+	}
+	c.env.close()
+	c.transport.close()
+	c.lanes.CloseAndWait()
+	return nil
 }
 
 // Connect 管理一条 Adapter stream 的完整生命周期。
@@ -51,6 +108,16 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 	if hello == nil {
 		return fmt.Errorf("expected adapter hello as first message")
 	}
+	acceptedExtensions := []string{}
+	if s.worlds != nil {
+		for _, extension := range hello.SupportedExtensions {
+			if extension == taskExtension {
+				acceptedExtensions = append(acceptedExtensions, extension)
+				break
+			}
+		}
+	}
+	tasksNegotiated := len(acceptedExtensions) != 0
 
 	// EnvironmentReady 只表示协议连接已经建立；Runtime 是否能执行
 	// AgentRun，还要等 capability discovery 完成。
@@ -59,8 +126,9 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 		MessageId: readyMessageID,
 		Payload: &protocolv1alpha2.RuntimeMessage_EnvironmentReady{
 			EnvironmentReady: &protocolv1alpha2.EnvironmentReady{
-				SessionId:        hello.SessionId,
-				ServerTimeUnixMs: time.Now().UnixMilli(),
+				SessionId:          hello.SessionId,
+				AcceptedExtensions: acceptedExtensions,
+				ServerTimeUnixMs:   time.Now().UnixMilli(),
 			},
 		},
 	}
@@ -109,9 +177,25 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 	if err != nil {
 		return err
 	}
-	defer func() {
+	connection := &worldConnection{id: newMessageID("connection"), hello: hello, env: env, lanes: laneStore, catalog: catalog}
+	connection.transport = newStreamEnvironment(stream)
+	connection.transport.sendSlot = env.sendSlot
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
 		env.close()
 		laneStore.CloseAndWait()
+		return task.ErrWorldNotReady
+	}
+	s.connections[connection] = struct{}{}
+	s.mu.Unlock()
+	defer func() {
+		if err := s.closeConnection(context.Background(), connection); err != nil {
+			log.Printf("task disconnect: %s", logSafeError(err))
+		}
+		s.mu.Lock()
+		delete(s.connections, connection)
+		s.mu.Unlock()
 	}()
 	seenEventIDs := make(map[string]struct{})
 
@@ -127,10 +211,72 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 
 		// Event 会启动新的 AgentRun；Observation / ActionResult 用来唤醒
 		// 已经在 streamEnvironment 中等待的同步调用。
+		env, laneStore = connection.env, connection.lanes
+		if hasInlineTaskPayload(msg) {
+			ready := false
+			if tasksNegotiated && connection.world != nil {
+				_, ready = s.worlds.Current(*connection.world)
+			}
+			if !ready {
+				if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		switch payload := msg.Payload.(type) {
+		case *protocolv1alpha2.AdapterMessage_WorldBinding:
+			if !tasksNegotiated {
+				if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+					return err
+				}
+				continue
+			}
+			head, bindErr := s.worlds.bind(stream.Context(), connection, payload.WorldBinding)
+			status := "ready"
+			if bindErr != nil {
+				status = "paused"
+			}
+			response := &protocolv1alpha2.WorldBindingReady{Scope: taskScopeToProtocol(head.Binding), Status: status, Error: taskErrorToProtocol(bindErr)}
+			if err := connection.transport.send(&protocolv1alpha2.RuntimeMessage{MessageId: newMessageID("world_ready"), CorrelationId: msg.MessageId, Payload: &protocolv1alpha2.RuntimeMessage_WorldBindingReady{WorldBindingReady: response}}); err != nil {
+				return err
+			}
+			if bindErr == nil {
+				if err := s.worlds.markReady(connection, head); err != nil {
+					return err
+				}
+			}
+		case *protocolv1alpha2.AdapterMessage_WorldClock:
+			clockErr := error(task.ErrWorldNotReady)
+			if tasksNegotiated && connection.world != nil {
+				clockErr = s.worlds.UpdateClock(stream.Context(), env, payload.WorldClock)
+			}
+			if clockErr != nil {
+				if err := env.send(taskProtocolError(msg.MessageId, clockErr)); err != nil {
+					return err
+				}
+			}
+		case *protocolv1alpha2.AdapterMessage_CheckpointPrepare, *protocolv1alpha2.AdapterMessage_CheckpointFinish, *protocolv1alpha2.AdapterMessage_TaskControlResult:
+			if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+				return err
+			}
 		case *protocolv1alpha2.AdapterMessage_Event:
 			if payload.Event == nil {
 				continue
+			}
+			if tasksNegotiated {
+				if connection.world == nil {
+					if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+						return err
+					}
+					continue
+				}
+				if _, ok := s.worlds.Current(*connection.world); !ok {
+					if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+						return err
+					}
+					continue
+				}
 			}
 			if err := s.dispatchGameEvent(env, laneStore, seenEventIDs, conn, catalog, msg.MessageId, payload.Event); err != nil {
 				return err
@@ -165,6 +311,14 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 		}
 	}
 
+}
+
+func taskProtocolError(correlationID string, err error) *protocolv1alpha2.RuntimeMessage {
+	return &protocolv1alpha2.RuntimeMessage{MessageId: newMessageID("task_error"), CorrelationId: correlationID, Payload: &protocolv1alpha2.RuntimeMessage_Error{Error: taskErrorToProtocol(err)}}
+}
+
+func hasInlineTaskPayload(msg *protocolv1alpha2.AdapterMessage) bool {
+	return len(msg.GetEvent().GetTaskEvidence()) != 0 || len(msg.GetObservation().GetTaskEvidence()) != 0 || len(msg.GetActionResult().GetTaskEvidence()) != 0 || msg.GetActionResult().GetTaskProposal() != nil
 }
 
 // dispatchGameEvent 处理单个 GameEvent 的 admission 全流程：

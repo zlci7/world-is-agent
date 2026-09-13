@@ -40,6 +40,7 @@ var removedByteBudgetFields = []removedBudgetField{
 }
 
 type Config struct {
+	Task                          TaskConfig
 	TurnTimeout                   time.Duration
 	LLMTimeout                    time.Duration
 	ObserveTimeout                time.Duration
@@ -82,6 +83,7 @@ type Config struct {
 }
 
 type fileConfig struct {
+	Task                          TaskConfig            `json:"task"`
 	TurnTimeoutMS                 int64                 `json:"turn_timeout_ms"`
 	LLMTimeoutMS                  int64                 `json:"llm_timeout_ms"`
 	ObserveTimeoutMS              int64                 `json:"observe_timeout_ms"`
@@ -153,6 +155,7 @@ type memoryStoreFileConfig struct {
 func DefaultConfig() Config {
 	budget := agentcontext.DefaultBudgetConfig()
 	return Config{
+		Task:               DefaultTaskConfig(),
 		TurnTimeout:        90 * time.Second,
 		LLMTimeout:         8 * time.Second,
 		ObserveTimeout:     3 * time.Second,
@@ -235,6 +238,7 @@ func LoadConfigFile(path string) (Config, error) {
 	}
 
 	cfg := Config{
+		Task:                          raw.Task,
 		MemoryEnabled:                 raw.MemoryEnabled,
 		TurnTimeout:                   durationMS(raw.TurnTimeoutMS),
 		LLMTimeout:                    durationMS(raw.LLMTimeoutMS),
@@ -376,13 +380,14 @@ func (c MemoryStoreConfig) Validate() error {
 }
 
 func (c Config) Validate() error {
-	return errors.Join(c.MemoryStore.Validate(), c.History.Validate(), c.Compaction.Validate(), c.Retrieval.Validate(), c.validateHistoryRuntimeBounds())
+	return errors.Join(c.Task.Validate(), c.MemoryStore.Validate(), c.History.Validate(), c.Compaction.Validate(), c.Retrieval.Validate(), c.validateHistoryRuntimeBounds())
 }
 
 // WithDefaults 为 Agent Config 补齐缺省字段。
 // Memory 配置和 Runtime 预算在这里统一归一化，避免 Loop 初始化时处理零值分支。
 func (c Config) WithDefaults() Config {
 	defaults := DefaultConfig()
+	c.Task = c.Task.WithDefaults()
 	if c.MemoryEnabled == nil {
 		c.MemoryEnabled = boolPtr(defaults.MemoryEnabledValue())
 	}
