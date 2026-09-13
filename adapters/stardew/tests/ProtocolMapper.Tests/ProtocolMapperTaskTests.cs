@@ -172,6 +172,32 @@ public sealed class ProtocolMapperTaskTests
         Assert.Equal((ulong)42, gameEvent.Sequence);
     }
 
+    [Fact]
+    public void ApproachResultKeepsStartTargetAndReportsCurrentAdjacency()
+    {
+        ActionRequest request = TaskActionRequest();
+        request.Capability = "approach_player";
+        request.Arguments = new Struct();
+        ApproachPlayerStart start = new(
+            new WorldPosition("Beach", 30, 36),
+            new WorldPosition("Beach", 29, 36),
+            new WorldPosition("Beach", 28, 36),
+            false);
+        ApproachPlayerResult completed = new(
+            start.PlayerPositionAtStart,
+            start.Target,
+            new WorldPosition("Beach", 29, 36),
+            PlayerIsAdjacent: false);
+
+        ProtocolMapper.RequireApproachPlayerArgument(request);
+        ActionResult result = ProtocolMapper.BuildApproachPlayerSucceededActionResult(request, completed);
+
+        Assert.Equal(ActionStatus.Succeeded, result.Status);
+        Assert.Equal(30, result.Output.Fields["player_position_at_start"].StructValue.Fields["x"].NumberValue);
+        Assert.Equal(29, result.Output.Fields["target_tile"].StructValue.Fields["x"].NumberValue);
+        Assert.False(result.Output.Fields["player_is_adjacent"].BoolValue);
+    }
+
     private static ActionRequest ResolveRequest()
     {
         return new ActionRequest

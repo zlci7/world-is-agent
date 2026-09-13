@@ -28,6 +28,7 @@ public sealed class RuntimeClient : IDisposable
     private readonly PresentDialogueCapability presentDialogueCapability;
     private readonly FacePlayerCapability facePlayerCapability;
     private readonly MoveToCapability moveToCapability;
+    private readonly ApproachPlayerCapability approachPlayerCapability;
     private readonly ResolveMeetingCapability resolveMeetingCapability;
     private readonly LandmarkCatalog landmarkCatalog;
     private readonly TaskExecutionDriver taskExecutionDriver;
@@ -63,6 +64,7 @@ public sealed class RuntimeClient : IDisposable
         PresentDialogueCapability presentDialogueCapability,
         FacePlayerCapability facePlayerCapability,
         MoveToCapability moveToCapability,
+        ApproachPlayerCapability approachPlayerCapability,
         ResolveMeetingCapability resolveMeetingCapability,
         LandmarkCatalog landmarkCatalog,
         TaskExecutionDriver taskExecutionDriver,
@@ -79,6 +81,7 @@ public sealed class RuntimeClient : IDisposable
         this.presentDialogueCapability = presentDialogueCapability;
         this.facePlayerCapability = facePlayerCapability;
         this.moveToCapability = moveToCapability;
+        this.approachPlayerCapability = approachPlayerCapability;
         this.resolveMeetingCapability = resolveMeetingCapability;
         this.landmarkCatalog = landmarkCatalog;
         this.taskExecutionDriver = taskExecutionDriver;
@@ -647,6 +650,12 @@ public sealed class RuntimeClient : IDisposable
                     return;
                 }
 
+                if (request.Capability == "approach_player")
+                {
+                    this.HandleApproachPlayerAction(request);
+                    return;
+                }
+
                 result = request.Capability switch
                 {
                     "emote" => this.HandleEmoteAction(request),
@@ -1173,6 +1182,109 @@ public sealed class RuntimeClient : IDisposable
         {
             this.monitor.Log($"GameAgent present_dialogue failed: {ex.Message}", LogLevel.Error);
             this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "action_failed", ex), request.Capability);
+        }
+    }
+
+    private void HandleApproachPlayerAction(ActionRequest request)
+    {
+        LeaseToken? lease = null;
+        try
+        {
+            if (request.TaskSource is not null)
+            {
+                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(
+                    request,
+                    "interaction_context_missing",
+                    "background task actions cannot approach the player without an interaction source"), request.Capability);
+                return;
+            }
+            if (!this.TryGuardInteractionContext(request, requireProximity: false, out NPC? npc, out _, out ActionResult? rejected))
+            {
+                this.SendActionResult(rejected ?? throw new InvalidOperationException("interaction guard rejected without ActionResult"), request.Capability);
+                return;
+            }
+            ProtocolMapper.RequireApproachPlayerArgument(request);
+            if (this.actionCancellationRegistry.TryConsumeCancelled(request.ActionId))
+            {
+                this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, "action cancelled before execution"), request.Capability);
+                return;
+            }
+
+            RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
+            OperationKey operation = new(
+                world.WorldId,
+                world.WorldRunId,
+                world.ExecutionGeneration,
+                request.EntityId,
+                "interaction:" + request.SourceEventId,
+                request.ActionId);
+            LeaseAttempt attempt = this.npcControlLease.Acquire(operation, "approach");
+            if (!attempt.Acquired)
+            {
+                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, attempt.Code, "NPC is controlled by another operation"), request.Capability);
+                return;
+            }
+            lease = attempt.Token;
+            NPC guardedNpc = npc ?? throw new InvalidOperationException("interaction guard passed without NPC");
+            ApproachPlayerStart start = this.approachPlayerCapability.Start(
+                request.ActionId,
+                guardedNpc,
+                Game1.player,
+                isCancelled: () => this.actionCancellationRegistry.IsCancelled(request.ActionId),
+                onSucceeded: result =>
+                {
+                    this.npcControlLease.Release(lease!, "arrived");
+                    this.actionCancellationRegistry.Clear(request.ActionId);
+                    this.SendActionResult(ProtocolMapper.BuildApproachPlayerSucceededActionResult(request, result), request.Capability);
+                },
+                onCancelled: reason =>
+                {
+                    this.npcControlLease.Release(lease!, "cancelled");
+                    this.actionCancellationRegistry.Clear(request.ActionId);
+                    this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, reason), request.Capability);
+                },
+                onFailed: (code, ex) =>
+                {
+                    this.npcControlLease.Release(lease!, code);
+                    this.actionCancellationRegistry.Clear(request.ActionId);
+                    this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, code, ex), request.Capability);
+                });
+
+            Struct metadata = ProtocolMapper.BuildApproachPlayerStatusMetadata(start);
+            this.SendActionStatusUpdate(request, ActionStatus.Accepted, metadata);
+            this.SendActionStatusUpdate(request, ActionStatus.Running, metadata);
+            if (start.AlreadyAtTarget)
+            {
+                this.npcControlLease.Release(lease!, "already_at_target");
+                this.actionCancellationRegistry.Clear(request.ActionId);
+                ApproachPlayerResult result = ApproachPlayerCapability.CompleteAlreadyAtTarget(start, guardedNpc, Game1.player);
+                this.SendActionResult(ProtocolMapper.BuildApproachPlayerSucceededActionResult(request, result), request.Capability);
+            }
+        }
+        catch (ApproachPlayerException ex)
+        {
+            if (lease is not null)
+                this.npcControlLease.Release(lease, ex.Code);
+            this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, ex.Code, ex.Message), request.Capability);
+        }
+        catch (ArgumentException ex)
+        {
+            if (lease is not null)
+                this.npcControlLease.Release(lease, "invalid_action_arguments");
+            this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_action_arguments", ex.Message), request.Capability);
+        }
+        catch (OperationCanceledException ex)
+        {
+            if (lease is not null)
+                this.npcControlLease.Release(lease, "cancelled");
+            this.actionCancellationRegistry.Clear(request.ActionId);
+            this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, ex.Message), request.Capability);
+        }
+        catch (Exception ex)
+        {
+            if (lease is not null)
+                this.npcControlLease.Release(lease, "approach_failed");
+            this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "approach_failed", ex), request.Capability);
         }
     }
 

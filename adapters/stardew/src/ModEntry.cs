@@ -25,6 +25,7 @@ public sealed class ModEntry : Mod
     private PresentDialogueCapability? presentDialogueCapability;
     private FacePlayerCapability? facePlayerCapability;
     private MoveToCapability? moveToCapability;
+    private ApproachPlayerCapability? approachPlayerCapability;
     private ResolveMeetingCapability? resolveMeetingCapability;
     private TaskExecutionDriver? taskExecutionDriver;
     private PlayerInteractProbe? playerInteractProbe;
@@ -52,6 +53,7 @@ public sealed class ModEntry : Mod
         this.presentDialogueCapability = new PresentDialogueCapability(this.conversationStore, this.dialogueController);
         this.facePlayerCapability = new FacePlayerCapability();
         this.moveToCapability = new MoveToCapability();
+        this.approachPlayerCapability = new ApproachPlayerCapability(this.moveToCapability);
         string landmarkJson = File.ReadAllText(Path.Combine(helper.DirectoryPath, "assets", "landmarks.json"));
         LandmarkCatalog landmarkCatalog = LandmarkCatalog.Parse(landmarkJson);
         this.resolveMeetingCapability = new ResolveMeetingCapability(landmarkCatalog);
@@ -71,6 +73,7 @@ public sealed class ModEntry : Mod
             this.presentDialogueCapability,
             this.facePlayerCapability,
             this.moveToCapability,
+            this.approachPlayerCapability,
             this.resolveMeetingCapability,
             landmarkCatalog,
             this.taskExecutionDriver,

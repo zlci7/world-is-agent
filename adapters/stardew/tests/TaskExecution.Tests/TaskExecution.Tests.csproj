@@ -25,5 +25,6 @@
     <Compile Include="..\..\src\Tasks\TaskNpcDriver.cs" Link="TaskNpcDriver.cs" />
     <Compile Include="..\..\src\Tasks\TaskTravelPolicy.cs" Link="TaskTravelPolicy.cs" />
     <Compile Include="..\..\src\Tasks\MeetingWaitMonitor.cs" Link="MeetingWaitMonitor.cs" />
+    <Compile Include="..\..\src\Tasks\AdjacentTileSelector.cs" Link="AdjacentTileSelector.cs" />
   </ItemGroup>
 </Project>

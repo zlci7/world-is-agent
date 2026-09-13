@@ -65,6 +65,15 @@ public static class CapabilityCatalog
                     ExecutionMode = ExecutionMode.Async,
                     ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
                 },
+                new Capability
+                {
+                    Name = "approach_player",
+                    Version = "0.1.0",
+                    Description = "Moves the NPC to one fixed reachable tile adjacent to the player position observed when the action starts. The target is not recomputed if the player moves.",
+                    InputSchemaJson = FacePlayerInputSchemaJson,
+                    ExecutionMode = ExecutionMode.Async,
+                    ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
+                },
             },
         };
 

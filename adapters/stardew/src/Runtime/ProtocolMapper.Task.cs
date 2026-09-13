@@ -233,6 +233,45 @@ public static partial class ProtocolMapper
             throw new ArgumentException("wait_for_player does not accept arguments");
     }
 
+    public static void RequireApproachPlayerArgument(ActionRequest request)
+    {
+        Struct arguments = request.Arguments ?? throw new ArgumentException("missing required approach_player arguments");
+        if (arguments.Fields.Count != 0)
+            throw new ArgumentException("approach_player does not accept arguments");
+    }
+
+    public static ActionResult BuildApproachPlayerSucceededActionResult(ActionRequest request, ApproachPlayerResult result)
+    {
+        return new ActionResult
+        {
+            ActionId = request.ActionId,
+            Status = ActionStatus.Succeeded,
+            Output = new Struct
+            {
+                Fields =
+                {
+                    ["player_position_at_start"] = Value.ForStruct(BuildPosition(result.PlayerPositionAtStart, includeLocation: true)),
+                    ["target_tile"] = Value.ForStruct(BuildPosition(result.Target, includeLocation: false)),
+                    ["final_position"] = Value.ForStruct(BuildPosition(result.FinalPosition, includeLocation: true)),
+                    ["player_is_adjacent"] = Value.ForBool(result.PlayerIsAdjacent),
+                },
+            },
+        };
+    }
+
+    public static Struct BuildApproachPlayerStatusMetadata(ApproachPlayerStart start)
+    {
+        return new Struct
+        {
+            Fields =
+            {
+                ["player_position_at_start"] = Value.ForStruct(BuildPosition(start.PlayerPositionAtStart, includeLocation: true)),
+                ["target_tile"] = Value.ForStruct(BuildPosition(start.Target, includeLocation: false)),
+                ["current_position"] = Value.ForStruct(BuildPosition(start.CurrentPosition, includeLocation: true)),
+            },
+        };
+    }
+
     public static ActionResult BuildWaitRegisteredActionResult(
         ActionRequest request,
         TaskOperationSource source,
@@ -383,6 +422,21 @@ public static partial class ProtocolMapper
                 }),
             },
         };
+    }
+
+    private static Struct BuildPosition(WorldPosition position, bool includeLocation)
+    {
+        Struct result = new()
+        {
+            Fields =
+            {
+                ["x"] = Value.ForNumber(position.X),
+                ["y"] = Value.ForNumber(position.Y),
+            },
+        };
+        if (includeLocation)
+            result.Fields.Add("location", Value.ForString(position.Location));
+        return result;
     }
 
     private static TaskEvidence BuildEvidence(

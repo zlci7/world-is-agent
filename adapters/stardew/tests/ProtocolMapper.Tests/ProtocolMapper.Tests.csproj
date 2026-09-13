@@ -32,6 +32,7 @@
     <Compile Include="..\..\src\Tasks\TaskExecutionContracts.cs" Link="TaskExecutionContracts.cs" />
     <Compile Include="..\..\src\Tasks\NpcControlLease.cs" Link="NpcControlLease.cs" />
     <Compile Include="..\..\src\Tasks\MeetingWaitMonitor.cs" Link="MeetingWaitMonitor.cs" />
+    <Compile Include="..\..\src\Tasks\ApproachPlayerContracts.cs" Link="ApproachPlayerContracts.cs" />
     <Compile Include="..\..\src\Capabilities\FacePlayerDirection.cs" Link="FacePlayerDirection.cs" />
     <Compile Include="..\..\src\Capabilities\MoveToInput.cs" Link="MoveToInput.cs" />
     <Compile Include="..\..\src\Dialogue\DialoguePresentationFlow.cs" Link="DialoguePresentationFlow.cs" />
