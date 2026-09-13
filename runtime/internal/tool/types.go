@@ -1,8 +1,11 @@
 package tool
 
 import (
+	"context"
+
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/model"
+	"gameagent/runtime/internal/task"
 
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -11,6 +14,7 @@ type Kind string
 
 const (
 	KindEnvironment Kind = "environment"
+	KindRuntime     Kind = "runtime"
 )
 
 type ConcurrencyMode string
@@ -33,6 +37,17 @@ type Entry struct {
 	Concurrency ConcurrencyMode
 	Execution   ExecutionMode
 	Policy      ToolPolicy
+	Executor    RuntimeExecutor
+}
+
+type RuntimeCallContext struct {
+	Execution           task.ExecutionContext
+	InteractionSourceID string
+	ObservedTask        *task.Record
+}
+
+type RuntimeExecutor interface {
+	Execute(context.Context, RuntimeCallContext, model.ToolCall) (model.ToolResult, error)
 }
 
 type ToolPolicy struct {

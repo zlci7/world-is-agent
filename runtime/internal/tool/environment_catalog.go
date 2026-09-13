@@ -78,11 +78,13 @@ const (
 )
 
 type EnvironmentToolCatalog struct {
-	tools map[string]Entry
+	tools          map[string]Entry
+	duplicateNames []string
 }
 
 type TurnToolView struct {
-	tools map[string]Entry
+	tools          map[string]Entry
+	runtimeContext *RuntimeCallContext
 }
 
 func BuildEnvironmentToolCatalog(list *protocolv1alpha2.CapabilityList) (*EnvironmentToolCatalog, BootstrapDiagnostics, error) {
@@ -150,7 +152,7 @@ func BuildEnvironmentToolCatalog(list *protocolv1alpha2.CapabilityList) (*Enviro
 	diagnostics.AcceptedToolCount = len(diagnostics.AcceptedToolNames)
 	diagnostics.CatalogToolCount = len(tools)
 
-	return &EnvironmentToolCatalog{tools: tools}, diagnostics, nil
+	return &EnvironmentToolCatalog{tools: tools, duplicateNames: append([]string(nil), diagnostics.DuplicateToolNames...)}, diagnostics, nil
 }
 
 func (c *EnvironmentToolCatalog) Available() []model.ToolDefinition {
@@ -171,14 +173,18 @@ func (c *EnvironmentToolCatalog) Snapshot() TurnToolView {
 
 func (c *EnvironmentToolCatalog) BuildTurnToolView(config ToolAdmissionConfig) ToolAdmissionResult {
 	requireEnvironmentToolCatalog(c)
+	return buildTurnToolView(c.tools, config)
+}
+
+func buildTurnToolView(entries map[string]Entry, config ToolAdmissionConfig) ToolAdmissionResult {
 	config = config.withDefaults()
 
 	admitted := make(map[string]Entry)
 	report := ToolAdmissionReport{}
 	totalSchemaEstimatedTokens := 0
 
-	for _, name := range sortedMapKeys(c.tools) {
-		entry := c.tools[name]
+	for _, name := range sortedMapKeys(entries) {
+		entry := entries[name]
 		descriptionEstimatedTokens := tokenestimate.EstimateText(entry.Definition.Description)
 		schemaEstimatedTokens, err := tokenestimate.EstimateJSONDocument(entry.Definition.InputSchema)
 		if err != nil {

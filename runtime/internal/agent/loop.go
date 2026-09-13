@@ -230,6 +230,18 @@ func (l *Loop) HandleEvent(
 		return fmt.Errorf("environment tool catalog is required")
 	}
 	toolAdmission := catalog.BuildTurnToolView(l.toolAdmissionConfig())
+	return l.handleEventWithToolAdmission(ctx, env, conn, key, target, toolAdmission, event)
+}
+
+func (l *Loop) handleEventWithToolAdmission(
+	ctx context.Context,
+	env Environment,
+	conn ConnectionContext,
+	key session.AgentSessionKey,
+	target *protocolv1alpha2.EntityRef,
+	toolAdmission tool.ToolAdmissionResult,
+	event *protocolv1alpha2.GameEvent,
+) error {
 	toolView := toolAdmission.View
 	tools := toolView.Available()
 	ctx, cancelTurn := context.WithTimeout(ctx, l.config.TurnTimeout)
