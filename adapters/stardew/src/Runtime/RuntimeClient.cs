@@ -306,8 +306,11 @@ public sealed class RuntimeClient : IDisposable
         {
             this.conversationStore.DiscardPending(eventId);
             this.interactionContextStore.DiscardPending(eventId);
-            this.AbortTaskConversation(worldId, npcEntityId, submission.ConversationId, taskInteractionEventId, "event_send_failed");
-            this.CloseWaitingForNpcOnMainThread(npcEntityId);
+            this.dispatcher.Enqueue(() =>
+            {
+                this.AbortTaskConversation(worldId, npcEntityId, submission.ConversationId, taskInteractionEventId, "event_send_failed");
+                this.presentDialogueCapability.CloseWaitingForNpc(npcEntityId);
+            });
             throw;
         }
 
