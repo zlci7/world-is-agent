@@ -18,11 +18,13 @@ message AdapterHello {
   string game_id = 4;
   string game_version = 5;
   string session_id = 6;
+  repeated string supported_extensions = 7;
 }
 
 message EnvironmentReady {
   string session_id = 1;
   int64 server_time_unix_ms = 2;
+  repeated string accepted_extensions = 3;
 }
 
 message EntityRef {
@@ -51,6 +53,125 @@ message ContextFact {
   google.protobuf.Struct attributes = 7;
 }
 
+message TaskScope {
+  string game_id = 1;
+  string world_id = 2;
+  string world_run_id = 3;
+  uint64 execution_generation = 4;
+}
+
+message WorldClock {
+  string clock_id = 1;
+  int64 now_tick = 2;
+  uint64 sequence = 3;
+}
+
+message TaskCheckpointRef {
+  uint32 schema_version = 1;
+  string game_id = 2;
+  string world_id = 3;
+  string status = 4;
+  string checkpoint_id = 5;
+  string checksum = 6;
+  string reason = 7;
+}
+
+message WorldBinding {
+  TaskScope scope = 1;
+  WorldClock clock = 2;
+  repeated EntityRef entities = 3;
+  TaskCheckpointRef checkpoint = 4;
+}
+
+message WorldBindingReady {
+  TaskScope scope = 1;
+  string status = 2;
+  Error error = 3;
+}
+
+message WorldClockUpdate {
+  TaskScope scope = 1;
+  WorldClock clock = 2;
+}
+
+message TaskProposal {
+  WorldClock clock = 1;
+  int64 wake_at = 2;
+  int64 deadline_at = 3;
+  repeated string participant_entity_ids = 4;
+  string equivalence_key = 5;
+  google.protobuf.Struct payload = 6;
+}
+
+message TaskEvidence {
+  string fact_id = 1;
+  string task_id = 2;
+  string operation_id = 3;
+  TaskScope scope = 4;
+  uint64 start_revision = 5;
+  int64 occurred_at = 6;
+  string outcome = 7;
+  optional int64 wait_until = 8;
+  google.protobuf.Struct details = 9;
+  GameTime game_time = 10;
+  repeated ContextFact context_facts = 11;
+}
+
+message TaskActionSource {
+  string task_id = 1;
+  uint64 start_revision = 2;
+  string wake_id = 3;
+  string operation_id = 4;
+  TaskScope scope = 5;
+  TaskProposal task_contract = 6;
+}
+
+message InteractionSource {
+  string source_id = 1;
+  TaskScope scope = 2;
+  string player_entity_id = 3;
+  string task_id = 4;
+  string operation_id = 5;
+  string kind = 6;
+}
+
+message TaskControlRequest {
+  TaskScope scope = 1;
+  string task_id = 2;
+  string operation_id = 3;
+  string request_id = 4;
+  string reason = 5;
+}
+
+message TaskControlResult {
+  TaskScope scope = 1;
+  string task_id = 2;
+  string operation_id = 3;
+  string request_id = 4;
+  string status = 5;
+  Error error = 6;
+}
+
+message CheckpointPrepare {
+  TaskScope scope = 1;
+  WorldClock clock = 2;
+  string save_request_id = 3;
+  repeated TaskEvidence final_evidence = 4;
+}
+
+message CheckpointPrepared {
+  TaskScope scope = 1;
+  string save_request_id = 2;
+  TaskCheckpointRef checkpoint = 3;
+  Error error = 4;
+}
+
+message CheckpointFinish {
+  TaskScope scope = 1;
+  string save_request_id = 2;
+  bool saved = 3;
+}
+
 message GameEvent {
   string event_id = 1;
   string event_type = 2;
@@ -61,6 +182,8 @@ message GameEvent {
   string world_id = 7;
   string target_entity_id = 8;
   repeated ContextFact context_facts = 9;
+  repeated TaskEvidence task_evidence = 10;
+  InteractionSource interaction_source = 11;
 }
 
 enum EventAckStatus {
@@ -89,6 +212,7 @@ message Observation {
   repeated EntityRef nearby_entities = 5;
   google.protobuf.Struct extensions = 6;
   string world_id = 7;
+  repeated TaskEvidence task_evidence = 8;
 }
 
 enum ExecutionMode {
@@ -132,6 +256,7 @@ message ActionRequest {
   string world_id = 6;
   string source_event_id = 7;
   string source_turn_id = 8;
+  TaskActionSource task_source = 9;
 }
 
 enum ActionStatus {
@@ -157,6 +282,8 @@ message ActionResult {
   ActionStatus status = 2;
   google.protobuf.Struct output = 3;
   Error error = 4;
+  TaskProposal task_proposal = 5;
+  repeated TaskEvidence task_evidence = 6;
 }
 
 message CancelActionRequest {
@@ -204,6 +331,11 @@ message AdapterMessage {
     ActionResult action_result = 15;
     Heartbeat heartbeat = 16;
     Error error = 17;
+    WorldBinding world_binding = 18;
+    WorldClockUpdate world_clock = 19;
+    CheckpointPrepare checkpoint_prepare = 20;
+    CheckpointFinish checkpoint_finish = 21;
+    TaskControlResult task_control_result = 22;
   }
 }
 
@@ -220,5 +352,8 @@ message RuntimeMessage {
     EventAck event_ack = 15;
     Error error = 16;
     TurnCompletion turn_completion = 17;
+    WorldBindingReady world_binding_ready = 18;
+    CheckpointPrepared checkpoint_prepared = 19;
+    TaskControlRequest task_control = 20;
   }
 }

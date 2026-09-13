@@ -292,15 +292,16 @@ func (TurnCompletionStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 type AdapterHello struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	AdapterId       string                 `protobuf:"bytes,1,opt,name=adapter_id,json=adapterId,proto3" json:"adapter_id,omitempty"`
-	AdapterVersion  string                 `protobuf:"bytes,2,opt,name=adapter_version,json=adapterVersion,proto3" json:"adapter_version,omitempty"`
-	ProtocolVersion string                 `protobuf:"bytes,3,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	GameId          string                 `protobuf:"bytes,4,opt,name=game_id,json=gameId,proto3" json:"game_id,omitempty"`
-	GameVersion     string                 `protobuf:"bytes,5,opt,name=game_version,json=gameVersion,proto3" json:"game_version,omitempty"`
-	SessionId       string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	AdapterId           string                 `protobuf:"bytes,1,opt,name=adapter_id,json=adapterId,proto3" json:"adapter_id,omitempty"`
+	AdapterVersion      string                 `protobuf:"bytes,2,opt,name=adapter_version,json=adapterVersion,proto3" json:"adapter_version,omitempty"`
+	ProtocolVersion     string                 `protobuf:"bytes,3,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	GameId              string                 `protobuf:"bytes,4,opt,name=game_id,json=gameId,proto3" json:"game_id,omitempty"`
+	GameVersion         string                 `protobuf:"bytes,5,opt,name=game_version,json=gameVersion,proto3" json:"game_version,omitempty"`
+	SessionId           string                 `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SupportedExtensions []string               `protobuf:"bytes,7,rep,name=supported_extensions,json=supportedExtensions,proto3" json:"supported_extensions,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *AdapterHello) Reset() {
@@ -375,12 +376,20 @@ func (x *AdapterHello) GetSessionId() string {
 	return ""
 }
 
+func (x *AdapterHello) GetSupportedExtensions() []string {
+	if x != nil {
+		return x.SupportedExtensions
+	}
+	return nil
+}
+
 type EnvironmentReady struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	ServerTimeUnixMs int64                  `protobuf:"varint,2,opt,name=server_time_unix_ms,json=serverTimeUnixMs,proto3" json:"server_time_unix_ms,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SessionId          string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ServerTimeUnixMs   int64                  `protobuf:"varint,2,opt,name=server_time_unix_ms,json=serverTimeUnixMs,proto3" json:"server_time_unix_ms,omitempty"`
+	AcceptedExtensions []string               `protobuf:"bytes,3,rep,name=accepted_extensions,json=acceptedExtensions,proto3" json:"accepted_extensions,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *EnvironmentReady) Reset() {
@@ -425,6 +434,13 @@ func (x *EnvironmentReady) GetServerTimeUnixMs() int64 {
 		return x.ServerTimeUnixMs
 	}
 	return 0
+}
+
+func (x *EnvironmentReady) GetAcceptedExtensions() []string {
+	if x != nil {
+		return x.AcceptedExtensions
+	}
+	return nil
 }
 
 type EntityRef struct {
@@ -671,24 +687,1158 @@ func (x *ContextFact) GetAttributes() *structpb.Struct {
 	return nil
 }
 
-type GameEvent struct {
+type TaskScope struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	GameId              string                 `protobuf:"bytes,1,opt,name=game_id,json=gameId,proto3" json:"game_id,omitempty"`
+	WorldId             string                 `protobuf:"bytes,2,opt,name=world_id,json=worldId,proto3" json:"world_id,omitempty"`
+	WorldRunId          string                 `protobuf:"bytes,3,opt,name=world_run_id,json=worldRunId,proto3" json:"world_run_id,omitempty"`
+	ExecutionGeneration uint64                 `protobuf:"varint,4,opt,name=execution_generation,json=executionGeneration,proto3" json:"execution_generation,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *TaskScope) Reset() {
+	*x = TaskScope{}
+	mi := &file_gameagent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskScope) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskScope) ProtoMessage() {}
+
+func (x *TaskScope) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskScope.ProtoReflect.Descriptor instead.
+func (*TaskScope) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *TaskScope) GetGameId() string {
+	if x != nil {
+		return x.GameId
+	}
+	return ""
+}
+
+func (x *TaskScope) GetWorldId() string {
+	if x != nil {
+		return x.WorldId
+	}
+	return ""
+}
+
+func (x *TaskScope) GetWorldRunId() string {
+	if x != nil {
+		return x.WorldRunId
+	}
+	return ""
+}
+
+func (x *TaskScope) GetExecutionGeneration() uint64 {
+	if x != nil {
+		return x.ExecutionGeneration
+	}
+	return 0
+}
+
+type WorldClock struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClockId       string                 `protobuf:"bytes,1,opt,name=clock_id,json=clockId,proto3" json:"clock_id,omitempty"`
+	NowTick       int64                  `protobuf:"varint,2,opt,name=now_tick,json=nowTick,proto3" json:"now_tick,omitempty"`
+	Sequence      uint64                 `protobuf:"varint,3,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorldClock) Reset() {
+	*x = WorldClock{}
+	mi := &file_gameagent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorldClock) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorldClock) ProtoMessage() {}
+
+func (x *WorldClock) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorldClock.ProtoReflect.Descriptor instead.
+func (*WorldClock) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *WorldClock) GetClockId() string {
+	if x != nil {
+		return x.ClockId
+	}
+	return ""
+}
+
+func (x *WorldClock) GetNowTick() int64 {
+	if x != nil {
+		return x.NowTick
+	}
+	return 0
+}
+
+func (x *WorldClock) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+type TaskCheckpointRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SchemaVersion uint32                 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	GameId        string                 `protobuf:"bytes,2,opt,name=game_id,json=gameId,proto3" json:"game_id,omitempty"`
+	WorldId       string                 `protobuf:"bytes,3,opt,name=world_id,json=worldId,proto3" json:"world_id,omitempty"`
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
+	CheckpointId  string                 `protobuf:"bytes,5,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	Checksum      string                 `protobuf:"bytes,6,opt,name=checksum,proto3" json:"checksum,omitempty"`
+	Reason        string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskCheckpointRef) Reset() {
+	*x = TaskCheckpointRef{}
+	mi := &file_gameagent_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskCheckpointRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskCheckpointRef) ProtoMessage() {}
+
+func (x *TaskCheckpointRef) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskCheckpointRef.ProtoReflect.Descriptor instead.
+func (*TaskCheckpointRef) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *TaskCheckpointRef) GetSchemaVersion() uint32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *TaskCheckpointRef) GetGameId() string {
+	if x != nil {
+		return x.GameId
+	}
+	return ""
+}
+
+func (x *TaskCheckpointRef) GetWorldId() string {
+	if x != nil {
+		return x.WorldId
+	}
+	return ""
+}
+
+func (x *TaskCheckpointRef) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *TaskCheckpointRef) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *TaskCheckpointRef) GetChecksum() string {
+	if x != nil {
+		return x.Checksum
+	}
+	return ""
+}
+
+func (x *TaskCheckpointRef) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type WorldBinding struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Clock         *WorldClock            `protobuf:"bytes,2,opt,name=clock,proto3" json:"clock,omitempty"`
+	Entities      []*EntityRef           `protobuf:"bytes,3,rep,name=entities,proto3" json:"entities,omitempty"`
+	Checkpoint    *TaskCheckpointRef     `protobuf:"bytes,4,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorldBinding) Reset() {
+	*x = WorldBinding{}
+	mi := &file_gameagent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorldBinding) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorldBinding) ProtoMessage() {}
+
+func (x *WorldBinding) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorldBinding.ProtoReflect.Descriptor instead.
+func (*WorldBinding) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *WorldBinding) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *WorldBinding) GetClock() *WorldClock {
+	if x != nil {
+		return x.Clock
+	}
+	return nil
+}
+
+func (x *WorldBinding) GetEntities() []*EntityRef {
+	if x != nil {
+		return x.Entities
+	}
+	return nil
+}
+
+func (x *WorldBinding) GetCheckpoint() *TaskCheckpointRef {
+	if x != nil {
+		return x.Checkpoint
+	}
+	return nil
+}
+
+type WorldBindingReady struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Error         *Error                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorldBindingReady) Reset() {
+	*x = WorldBindingReady{}
+	mi := &file_gameagent_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorldBindingReady) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorldBindingReady) ProtoMessage() {}
+
+func (x *WorldBindingReady) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorldBindingReady.ProtoReflect.Descriptor instead.
+func (*WorldBindingReady) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *WorldBindingReady) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *WorldBindingReady) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *WorldBindingReady) GetError() *Error {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+type WorldClockUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Clock         *WorldClock            `protobuf:"bytes,2,opt,name=clock,proto3" json:"clock,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorldClockUpdate) Reset() {
+	*x = WorldClockUpdate{}
+	mi := &file_gameagent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorldClockUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorldClockUpdate) ProtoMessage() {}
+
+func (x *WorldClockUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorldClockUpdate.ProtoReflect.Descriptor instead.
+func (*WorldClockUpdate) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *WorldClockUpdate) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *WorldClockUpdate) GetClock() *WorldClock {
+	if x != nil {
+		return x.Clock
+	}
+	return nil
+}
+
+type TaskProposal struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Clock                *WorldClock            `protobuf:"bytes,1,opt,name=clock,proto3" json:"clock,omitempty"`
+	WakeAt               int64                  `protobuf:"varint,2,opt,name=wake_at,json=wakeAt,proto3" json:"wake_at,omitempty"`
+	DeadlineAt           int64                  `protobuf:"varint,3,opt,name=deadline_at,json=deadlineAt,proto3" json:"deadline_at,omitempty"`
+	ParticipantEntityIds []string               `protobuf:"bytes,4,rep,name=participant_entity_ids,json=participantEntityIds,proto3" json:"participant_entity_ids,omitempty"`
+	EquivalenceKey       string                 `protobuf:"bytes,5,opt,name=equivalence_key,json=equivalenceKey,proto3" json:"equivalence_key,omitempty"`
+	Payload              *structpb.Struct       `protobuf:"bytes,6,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *TaskProposal) Reset() {
+	*x = TaskProposal{}
+	mi := &file_gameagent_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskProposal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskProposal) ProtoMessage() {}
+
+func (x *TaskProposal) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskProposal.ProtoReflect.Descriptor instead.
+func (*TaskProposal) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *TaskProposal) GetClock() *WorldClock {
+	if x != nil {
+		return x.Clock
+	}
+	return nil
+}
+
+func (x *TaskProposal) GetWakeAt() int64 {
+	if x != nil {
+		return x.WakeAt
+	}
+	return 0
+}
+
+func (x *TaskProposal) GetDeadlineAt() int64 {
+	if x != nil {
+		return x.DeadlineAt
+	}
+	return 0
+}
+
+func (x *TaskProposal) GetParticipantEntityIds() []string {
+	if x != nil {
+		return x.ParticipantEntityIds
+	}
+	return nil
+}
+
+func (x *TaskProposal) GetEquivalenceKey() string {
+	if x != nil {
+		return x.EquivalenceKey
+	}
+	return ""
+}
+
+func (x *TaskProposal) GetPayload() *structpb.Struct {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type TaskEvidence struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FactId        string                 `protobuf:"bytes,1,opt,name=fact_id,json=factId,proto3" json:"fact_id,omitempty"`
+	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	OperationId   string                 `protobuf:"bytes,3,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Scope         *TaskScope             `protobuf:"bytes,4,opt,name=scope,proto3" json:"scope,omitempty"`
+	StartRevision uint64                 `protobuf:"varint,5,opt,name=start_revision,json=startRevision,proto3" json:"start_revision,omitempty"`
+	OccurredAt    int64                  `protobuf:"varint,6,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
+	Outcome       string                 `protobuf:"bytes,7,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	WaitUntil     *int64                 `protobuf:"varint,8,opt,name=wait_until,json=waitUntil,proto3,oneof" json:"wait_until,omitempty"`
+	Details       *structpb.Struct       `protobuf:"bytes,9,opt,name=details,proto3" json:"details,omitempty"`
+	GameTime      *GameTime              `protobuf:"bytes,10,opt,name=game_time,json=gameTime,proto3" json:"game_time,omitempty"`
+	ContextFacts  []*ContextFact         `protobuf:"bytes,11,rep,name=context_facts,json=contextFacts,proto3" json:"context_facts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskEvidence) Reset() {
+	*x = TaskEvidence{}
+	mi := &file_gameagent_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskEvidence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskEvidence) ProtoMessage() {}
+
+func (x *TaskEvidence) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskEvidence.ProtoReflect.Descriptor instead.
+func (*TaskEvidence) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *TaskEvidence) GetFactId() string {
+	if x != nil {
+		return x.FactId
+	}
+	return ""
+}
+
+func (x *TaskEvidence) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskEvidence) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *TaskEvidence) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *TaskEvidence) GetStartRevision() uint64 {
+	if x != nil {
+		return x.StartRevision
+	}
+	return 0
+}
+
+func (x *TaskEvidence) GetOccurredAt() int64 {
+	if x != nil {
+		return x.OccurredAt
+	}
+	return 0
+}
+
+func (x *TaskEvidence) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *TaskEvidence) GetWaitUntil() int64 {
+	if x != nil && x.WaitUntil != nil {
+		return *x.WaitUntil
+	}
+	return 0
+}
+
+func (x *TaskEvidence) GetDetails() *structpb.Struct {
+	if x != nil {
+		return x.Details
+	}
+	return nil
+}
+
+func (x *TaskEvidence) GetGameTime() *GameTime {
+	if x != nil {
+		return x.GameTime
+	}
+	return nil
+}
+
+func (x *TaskEvidence) GetContextFacts() []*ContextFact {
+	if x != nil {
+		return x.ContextFacts
+	}
+	return nil
+}
+
+type TaskActionSource struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	StartRevision uint64                 `protobuf:"varint,2,opt,name=start_revision,json=startRevision,proto3" json:"start_revision,omitempty"`
+	WakeId        string                 `protobuf:"bytes,3,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
+	OperationId   string                 `protobuf:"bytes,4,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Scope         *TaskScope             `protobuf:"bytes,5,opt,name=scope,proto3" json:"scope,omitempty"`
+	TaskContract  *TaskProposal          `protobuf:"bytes,6,opt,name=task_contract,json=taskContract,proto3" json:"task_contract,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskActionSource) Reset() {
+	*x = TaskActionSource{}
+	mi := &file_gameagent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskActionSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskActionSource) ProtoMessage() {}
+
+func (x *TaskActionSource) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskActionSource.ProtoReflect.Descriptor instead.
+func (*TaskActionSource) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *TaskActionSource) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskActionSource) GetStartRevision() uint64 {
+	if x != nil {
+		return x.StartRevision
+	}
+	return 0
+}
+
+func (x *TaskActionSource) GetWakeId() string {
+	if x != nil {
+		return x.WakeId
+	}
+	return ""
+}
+
+func (x *TaskActionSource) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *TaskActionSource) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *TaskActionSource) GetTaskContract() *TaskProposal {
+	if x != nil {
+		return x.TaskContract
+	}
+	return nil
+}
+
+type InteractionSource struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	EventId        string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	EventType      string                 `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
-	Entities       []*EntityRef           `protobuf:"bytes,3,rep,name=entities,proto3" json:"entities,omitempty"`
-	GameTime       *GameTime              `protobuf:"bytes,4,opt,name=game_time,json=gameTime,proto3" json:"game_time,omitempty"`
-	Payload        *structpb.Struct       `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
-	Sequence       uint64                 `protobuf:"varint,6,opt,name=sequence,proto3" json:"sequence,omitempty"`
-	WorldId        string                 `protobuf:"bytes,7,opt,name=world_id,json=worldId,proto3" json:"world_id,omitempty"`
-	TargetEntityId string                 `protobuf:"bytes,8,opt,name=target_entity_id,json=targetEntityId,proto3" json:"target_entity_id,omitempty"`
-	ContextFacts   []*ContextFact         `protobuf:"bytes,9,rep,name=context_facts,json=contextFacts,proto3" json:"context_facts,omitempty"`
+	SourceId       string                 `protobuf:"bytes,1,opt,name=source_id,json=sourceId,proto3" json:"source_id,omitempty"`
+	Scope          *TaskScope             `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	PlayerEntityId string                 `protobuf:"bytes,3,opt,name=player_entity_id,json=playerEntityId,proto3" json:"player_entity_id,omitempty"`
+	TaskId         string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	OperationId    string                 `protobuf:"bytes,5,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Kind           string                 `protobuf:"bytes,6,opt,name=kind,proto3" json:"kind,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
+func (x *InteractionSource) Reset() {
+	*x = InteractionSource{}
+	mi := &file_gameagent_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InteractionSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InteractionSource) ProtoMessage() {}
+
+func (x *InteractionSource) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InteractionSource.ProtoReflect.Descriptor instead.
+func (*InteractionSource) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *InteractionSource) GetSourceId() string {
+	if x != nil {
+		return x.SourceId
+	}
+	return ""
+}
+
+func (x *InteractionSource) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *InteractionSource) GetPlayerEntityId() string {
+	if x != nil {
+		return x.PlayerEntityId
+	}
+	return ""
+}
+
+func (x *InteractionSource) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *InteractionSource) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *InteractionSource) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+type TaskControlRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	OperationId   string                 `protobuf:"bytes,3,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskControlRequest) Reset() {
+	*x = TaskControlRequest{}
+	mi := &file_gameagent_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskControlRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskControlRequest) ProtoMessage() {}
+
+func (x *TaskControlRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskControlRequest.ProtoReflect.Descriptor instead.
+func (*TaskControlRequest) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *TaskControlRequest) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *TaskControlRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskControlRequest) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *TaskControlRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *TaskControlRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type TaskControlResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	OperationId   string                 `protobuf:"bytes,3,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	RequestId     string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	Error         *Error                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskControlResult) Reset() {
+	*x = TaskControlResult{}
+	mi := &file_gameagent_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskControlResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskControlResult) ProtoMessage() {}
+
+func (x *TaskControlResult) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskControlResult.ProtoReflect.Descriptor instead.
+func (*TaskControlResult) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *TaskControlResult) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *TaskControlResult) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskControlResult) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *TaskControlResult) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *TaskControlResult) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *TaskControlResult) GetError() *Error {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+type CheckpointPrepare struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	Clock         *WorldClock            `protobuf:"bytes,2,opt,name=clock,proto3" json:"clock,omitempty"`
+	SaveRequestId string                 `protobuf:"bytes,3,opt,name=save_request_id,json=saveRequestId,proto3" json:"save_request_id,omitempty"`
+	FinalEvidence []*TaskEvidence        `protobuf:"bytes,4,rep,name=final_evidence,json=finalEvidence,proto3" json:"final_evidence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointPrepare) Reset() {
+	*x = CheckpointPrepare{}
+	mi := &file_gameagent_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointPrepare) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointPrepare) ProtoMessage() {}
+
+func (x *CheckpointPrepare) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointPrepare.ProtoReflect.Descriptor instead.
+func (*CheckpointPrepare) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *CheckpointPrepare) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *CheckpointPrepare) GetClock() *WorldClock {
+	if x != nil {
+		return x.Clock
+	}
+	return nil
+}
+
+func (x *CheckpointPrepare) GetSaveRequestId() string {
+	if x != nil {
+		return x.SaveRequestId
+	}
+	return ""
+}
+
+func (x *CheckpointPrepare) GetFinalEvidence() []*TaskEvidence {
+	if x != nil {
+		return x.FinalEvidence
+	}
+	return nil
+}
+
+type CheckpointPrepared struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	SaveRequestId string                 `protobuf:"bytes,2,opt,name=save_request_id,json=saveRequestId,proto3" json:"save_request_id,omitempty"`
+	Checkpoint    *TaskCheckpointRef     `protobuf:"bytes,3,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"`
+	Error         *Error                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointPrepared) Reset() {
+	*x = CheckpointPrepared{}
+	mi := &file_gameagent_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointPrepared) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointPrepared) ProtoMessage() {}
+
+func (x *CheckpointPrepared) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointPrepared.ProtoReflect.Descriptor instead.
+func (*CheckpointPrepared) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *CheckpointPrepared) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *CheckpointPrepared) GetSaveRequestId() string {
+	if x != nil {
+		return x.SaveRequestId
+	}
+	return ""
+}
+
+func (x *CheckpointPrepared) GetCheckpoint() *TaskCheckpointRef {
+	if x != nil {
+		return x.Checkpoint
+	}
+	return nil
+}
+
+func (x *CheckpointPrepared) GetError() *Error {
+	if x != nil {
+		return x.Error
+	}
+	return nil
+}
+
+type CheckpointFinish struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Scope         *TaskScope             `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
+	SaveRequestId string                 `protobuf:"bytes,2,opt,name=save_request_id,json=saveRequestId,proto3" json:"save_request_id,omitempty"`
+	Saved         bool                   `protobuf:"varint,3,opt,name=saved,proto3" json:"saved,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointFinish) Reset() {
+	*x = CheckpointFinish{}
+	mi := &file_gameagent_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointFinish) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointFinish) ProtoMessage() {}
+
+func (x *CheckpointFinish) ProtoReflect() protoreflect.Message {
+	mi := &file_gameagent_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointFinish.ProtoReflect.Descriptor instead.
+func (*CheckpointFinish) Descriptor() ([]byte, []int) {
+	return file_gameagent_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *CheckpointFinish) GetScope() *TaskScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+func (x *CheckpointFinish) GetSaveRequestId() string {
+	if x != nil {
+		return x.SaveRequestId
+	}
+	return ""
+}
+
+func (x *CheckpointFinish) GetSaved() bool {
+	if x != nil {
+		return x.Saved
+	}
+	return false
+}
+
+type GameEvent struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	EventId           string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	EventType         string                 `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"`
+	Entities          []*EntityRef           `protobuf:"bytes,3,rep,name=entities,proto3" json:"entities,omitempty"`
+	GameTime          *GameTime              `protobuf:"bytes,4,opt,name=game_time,json=gameTime,proto3" json:"game_time,omitempty"`
+	Payload           *structpb.Struct       `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
+	Sequence          uint64                 `protobuf:"varint,6,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	WorldId           string                 `protobuf:"bytes,7,opt,name=world_id,json=worldId,proto3" json:"world_id,omitempty"`
+	TargetEntityId    string                 `protobuf:"bytes,8,opt,name=target_entity_id,json=targetEntityId,proto3" json:"target_entity_id,omitempty"`
+	ContextFacts      []*ContextFact         `protobuf:"bytes,9,rep,name=context_facts,json=contextFacts,proto3" json:"context_facts,omitempty"`
+	TaskEvidence      []*TaskEvidence        `protobuf:"bytes,10,rep,name=task_evidence,json=taskEvidence,proto3" json:"task_evidence,omitempty"`
+	InteractionSource *InteractionSource     `protobuf:"bytes,11,opt,name=interaction_source,json=interactionSource,proto3" json:"interaction_source,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
 func (x *GameEvent) Reset() {
 	*x = GameEvent{}
-	mi := &file_gameagent_proto_msgTypes[5]
+	mi := &file_gameagent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -700,7 +1850,7 @@ func (x *GameEvent) String() string {
 func (*GameEvent) ProtoMessage() {}
 
 func (x *GameEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[5]
+	mi := &file_gameagent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -713,7 +1863,7 @@ func (x *GameEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GameEvent.ProtoReflect.Descriptor instead.
 func (*GameEvent) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{5}
+	return file_gameagent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *GameEvent) GetEventId() string {
@@ -779,6 +1929,20 @@ func (x *GameEvent) GetContextFacts() []*ContextFact {
 	return nil
 }
 
+func (x *GameEvent) GetTaskEvidence() []*TaskEvidence {
+	if x != nil {
+		return x.TaskEvidence
+	}
+	return nil
+}
+
+func (x *GameEvent) GetInteractionSource() *InteractionSource {
+	if x != nil {
+		return x.InteractionSource
+	}
+	return nil
+}
+
 type EventAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
@@ -790,7 +1954,7 @@ type EventAck struct {
 
 func (x *EventAck) Reset() {
 	*x = EventAck{}
-	mi := &file_gameagent_proto_msgTypes[6]
+	mi := &file_gameagent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -802,7 +1966,7 @@ func (x *EventAck) String() string {
 func (*EventAck) ProtoMessage() {}
 
 func (x *EventAck) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[6]
+	mi := &file_gameagent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -815,7 +1979,7 @@ func (x *EventAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EventAck.ProtoReflect.Descriptor instead.
 func (*EventAck) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{6}
+	return file_gameagent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *EventAck) GetEventId() string {
@@ -849,7 +2013,7 @@ type ObserveRequest struct {
 
 func (x *ObserveRequest) Reset() {
 	*x = ObserveRequest{}
-	mi := &file_gameagent_proto_msgTypes[7]
+	mi := &file_gameagent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -861,7 +2025,7 @@ func (x *ObserveRequest) String() string {
 func (*ObserveRequest) ProtoMessage() {}
 
 func (x *ObserveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[7]
+	mi := &file_gameagent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -874,7 +2038,7 @@ func (x *ObserveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObserveRequest.ProtoReflect.Descriptor instead.
 func (*ObserveRequest) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{7}
+	return file_gameagent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ObserveRequest) GetEntityId() string {
@@ -900,13 +2064,14 @@ type Observation struct {
 	NearbyEntities []*EntityRef           `protobuf:"bytes,5,rep,name=nearby_entities,json=nearbyEntities,proto3" json:"nearby_entities,omitempty"`
 	Extensions     *structpb.Struct       `protobuf:"bytes,6,opt,name=extensions,proto3" json:"extensions,omitempty"`
 	WorldId        string                 `protobuf:"bytes,7,opt,name=world_id,json=worldId,proto3" json:"world_id,omitempty"`
+	TaskEvidence   []*TaskEvidence        `protobuf:"bytes,8,rep,name=task_evidence,json=taskEvidence,proto3" json:"task_evidence,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Observation) Reset() {
 	*x = Observation{}
-	mi := &file_gameagent_proto_msgTypes[8]
+	mi := &file_gameagent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -918,7 +2083,7 @@ func (x *Observation) String() string {
 func (*Observation) ProtoMessage() {}
 
 func (x *Observation) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[8]
+	mi := &file_gameagent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -931,7 +2096,7 @@ func (x *Observation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Observation.ProtoReflect.Descriptor instead.
 func (*Observation) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{8}
+	return file_gameagent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Observation) GetEntityId() string {
@@ -983,6 +2148,13 @@ func (x *Observation) GetWorldId() string {
 	return ""
 }
 
+func (x *Observation) GetTaskEvidence() []*TaskEvidence {
+	if x != nil {
+		return x.TaskEvidence
+	}
+	return nil
+}
+
 type Capability struct {
 	state           protoimpl.MessageState    `protogen:"open.v1"`
 	Name            string                    `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -998,7 +2170,7 @@ type Capability struct {
 
 func (x *Capability) Reset() {
 	*x = Capability{}
-	mi := &file_gameagent_proto_msgTypes[9]
+	mi := &file_gameagent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1010,7 +2182,7 @@ func (x *Capability) String() string {
 func (*Capability) ProtoMessage() {}
 
 func (x *Capability) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[9]
+	mi := &file_gameagent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1023,7 +2195,7 @@ func (x *Capability) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Capability.ProtoReflect.Descriptor instead.
 func (*Capability) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{9}
+	return file_gameagent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Capability) GetName() string {
@@ -1084,7 +2256,7 @@ type CapabilityRequest struct {
 
 func (x *CapabilityRequest) Reset() {
 	*x = CapabilityRequest{}
-	mi := &file_gameagent_proto_msgTypes[10]
+	mi := &file_gameagent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1096,7 +2268,7 @@ func (x *CapabilityRequest) String() string {
 func (*CapabilityRequest) ProtoMessage() {}
 
 func (x *CapabilityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[10]
+	mi := &file_gameagent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1109,7 +2281,7 @@ func (x *CapabilityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CapabilityRequest.ProtoReflect.Descriptor instead.
 func (*CapabilityRequest) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{10}
+	return file_gameagent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CapabilityRequest) GetEntityId() string {
@@ -1130,7 +2302,7 @@ type CapabilityList struct {
 
 func (x *CapabilityList) Reset() {
 	*x = CapabilityList{}
-	mi := &file_gameagent_proto_msgTypes[11]
+	mi := &file_gameagent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1142,7 +2314,7 @@ func (x *CapabilityList) String() string {
 func (*CapabilityList) ProtoMessage() {}
 
 func (x *CapabilityList) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[11]
+	mi := &file_gameagent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1155,7 +2327,7 @@ func (x *CapabilityList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CapabilityList.ProtoReflect.Descriptor instead.
 func (*CapabilityList) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{11}
+	return file_gameagent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CapabilityList) GetEntityId() string {
@@ -1189,13 +2361,14 @@ type ActionRequest struct {
 	WorldId       string                 `protobuf:"bytes,6,opt,name=world_id,json=worldId,proto3" json:"world_id,omitempty"`
 	SourceEventId string                 `protobuf:"bytes,7,opt,name=source_event_id,json=sourceEventId,proto3" json:"source_event_id,omitempty"`
 	SourceTurnId  string                 `protobuf:"bytes,8,opt,name=source_turn_id,json=sourceTurnId,proto3" json:"source_turn_id,omitempty"`
+	TaskSource    *TaskActionSource      `protobuf:"bytes,9,opt,name=task_source,json=taskSource,proto3" json:"task_source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ActionRequest) Reset() {
 	*x = ActionRequest{}
-	mi := &file_gameagent_proto_msgTypes[12]
+	mi := &file_gameagent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1207,7 +2380,7 @@ func (x *ActionRequest) String() string {
 func (*ActionRequest) ProtoMessage() {}
 
 func (x *ActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[12]
+	mi := &file_gameagent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1220,7 +2393,7 @@ func (x *ActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionRequest.ProtoReflect.Descriptor instead.
 func (*ActionRequest) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{12}
+	return file_gameagent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ActionRequest) GetActionId() string {
@@ -1279,6 +2452,13 @@ func (x *ActionRequest) GetSourceTurnId() string {
 	return ""
 }
 
+func (x *ActionRequest) GetTaskSource() *TaskActionSource {
+	if x != nil {
+		return x.TaskSource
+	}
+	return nil
+}
+
 type ActionStatusUpdate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ActionId      string                 `protobuf:"bytes,1,opt,name=action_id,json=actionId,proto3" json:"action_id,omitempty"`
@@ -1290,7 +2470,7 @@ type ActionStatusUpdate struct {
 
 func (x *ActionStatusUpdate) Reset() {
 	*x = ActionStatusUpdate{}
-	mi := &file_gameagent_proto_msgTypes[13]
+	mi := &file_gameagent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1302,7 +2482,7 @@ func (x *ActionStatusUpdate) String() string {
 func (*ActionStatusUpdate) ProtoMessage() {}
 
 func (x *ActionStatusUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[13]
+	mi := &file_gameagent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1315,7 +2495,7 @@ func (x *ActionStatusUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionStatusUpdate.ProtoReflect.Descriptor instead.
 func (*ActionStatusUpdate) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{13}
+	return file_gameagent_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ActionStatusUpdate) GetActionId() string {
@@ -1345,13 +2525,15 @@ type ActionResult struct {
 	Status        ActionStatus           `protobuf:"varint,2,opt,name=status,proto3,enum=gameagent.protocol.v1alpha2.ActionStatus" json:"status,omitempty"`
 	Output        *structpb.Struct       `protobuf:"bytes,3,opt,name=output,proto3" json:"output,omitempty"`
 	Error         *Error                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	TaskProposal  *TaskProposal          `protobuf:"bytes,5,opt,name=task_proposal,json=taskProposal,proto3" json:"task_proposal,omitempty"`
+	TaskEvidence  []*TaskEvidence        `protobuf:"bytes,6,rep,name=task_evidence,json=taskEvidence,proto3" json:"task_evidence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ActionResult) Reset() {
 	*x = ActionResult{}
-	mi := &file_gameagent_proto_msgTypes[14]
+	mi := &file_gameagent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1363,7 +2545,7 @@ func (x *ActionResult) String() string {
 func (*ActionResult) ProtoMessage() {}
 
 func (x *ActionResult) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[14]
+	mi := &file_gameagent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1376,7 +2558,7 @@ func (x *ActionResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionResult.ProtoReflect.Descriptor instead.
 func (*ActionResult) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{14}
+	return file_gameagent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ActionResult) GetActionId() string {
@@ -1407,6 +2589,20 @@ func (x *ActionResult) GetError() *Error {
 	return nil
 }
 
+func (x *ActionResult) GetTaskProposal() *TaskProposal {
+	if x != nil {
+		return x.TaskProposal
+	}
+	return nil
+}
+
+func (x *ActionResult) GetTaskEvidence() []*TaskEvidence {
+	if x != nil {
+		return x.TaskEvidence
+	}
+	return nil
+}
+
 type CancelActionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ActionId      string                 `protobuf:"bytes,1,opt,name=action_id,json=actionId,proto3" json:"action_id,omitempty"`
@@ -1417,7 +2613,7 @@ type CancelActionRequest struct {
 
 func (x *CancelActionRequest) Reset() {
 	*x = CancelActionRequest{}
-	mi := &file_gameagent_proto_msgTypes[15]
+	mi := &file_gameagent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1429,7 +2625,7 @@ func (x *CancelActionRequest) String() string {
 func (*CancelActionRequest) ProtoMessage() {}
 
 func (x *CancelActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[15]
+	mi := &file_gameagent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1442,7 +2638,7 @@ func (x *CancelActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelActionRequest.ProtoReflect.Descriptor instead.
 func (*CancelActionRequest) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{15}
+	return file_gameagent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CancelActionRequest) GetActionId() string {
@@ -1473,7 +2669,7 @@ type TurnCompletion struct {
 
 func (x *TurnCompletion) Reset() {
 	*x = TurnCompletion{}
-	mi := &file_gameagent_proto_msgTypes[16]
+	mi := &file_gameagent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1485,7 +2681,7 @@ func (x *TurnCompletion) String() string {
 func (*TurnCompletion) ProtoMessage() {}
 
 func (x *TurnCompletion) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[16]
+	mi := &file_gameagent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1498,7 +2694,7 @@ func (x *TurnCompletion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TurnCompletion.ProtoReflect.Descriptor instead.
 func (*TurnCompletion) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{16}
+	return file_gameagent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *TurnCompletion) GetTurnId() string {
@@ -1554,7 +2750,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_gameagent_proto_msgTypes[17]
+	mi := &file_gameagent_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1566,7 +2762,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[17]
+	mi := &file_gameagent_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1579,7 +2775,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{17}
+	return file_gameagent_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *Error) GetCode() string {
@@ -1613,7 +2809,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_gameagent_proto_msgTypes[18]
+	mi := &file_gameagent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1625,7 +2821,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[18]
+	mi := &file_gameagent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1638,7 +2834,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{18}
+	return file_gameagent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *Heartbeat) GetTimestampUnixMs() int64 {
@@ -1669,6 +2865,11 @@ type AdapterMessage struct {
 	//	*AdapterMessage_ActionResult
 	//	*AdapterMessage_Heartbeat
 	//	*AdapterMessage_Error
+	//	*AdapterMessage_WorldBinding
+	//	*AdapterMessage_WorldClock
+	//	*AdapterMessage_CheckpointPrepare
+	//	*AdapterMessage_CheckpointFinish
+	//	*AdapterMessage_TaskControlResult
 	Payload       isAdapterMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1676,7 +2877,7 @@ type AdapterMessage struct {
 
 func (x *AdapterMessage) Reset() {
 	*x = AdapterMessage{}
-	mi := &file_gameagent_proto_msgTypes[19]
+	mi := &file_gameagent_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1688,7 +2889,7 @@ func (x *AdapterMessage) String() string {
 func (*AdapterMessage) ProtoMessage() {}
 
 func (x *AdapterMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[19]
+	mi := &file_gameagent_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1701,7 +2902,7 @@ func (x *AdapterMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdapterMessage.ProtoReflect.Descriptor instead.
 func (*AdapterMessage) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{19}
+	return file_gameagent_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *AdapterMessage) GetMessageId() string {
@@ -1797,6 +2998,51 @@ func (x *AdapterMessage) GetError() *Error {
 	return nil
 }
 
+func (x *AdapterMessage) GetWorldBinding() *WorldBinding {
+	if x != nil {
+		if x, ok := x.Payload.(*AdapterMessage_WorldBinding); ok {
+			return x.WorldBinding
+		}
+	}
+	return nil
+}
+
+func (x *AdapterMessage) GetWorldClock() *WorldClockUpdate {
+	if x != nil {
+		if x, ok := x.Payload.(*AdapterMessage_WorldClock); ok {
+			return x.WorldClock
+		}
+	}
+	return nil
+}
+
+func (x *AdapterMessage) GetCheckpointPrepare() *CheckpointPrepare {
+	if x != nil {
+		if x, ok := x.Payload.(*AdapterMessage_CheckpointPrepare); ok {
+			return x.CheckpointPrepare
+		}
+	}
+	return nil
+}
+
+func (x *AdapterMessage) GetCheckpointFinish() *CheckpointFinish {
+	if x != nil {
+		if x, ok := x.Payload.(*AdapterMessage_CheckpointFinish); ok {
+			return x.CheckpointFinish
+		}
+	}
+	return nil
+}
+
+func (x *AdapterMessage) GetTaskControlResult() *TaskControlResult {
+	if x != nil {
+		if x, ok := x.Payload.(*AdapterMessage_TaskControlResult); ok {
+			return x.TaskControlResult
+		}
+	}
+	return nil
+}
+
 type isAdapterMessage_Payload interface {
 	isAdapterMessage_Payload()
 }
@@ -1833,6 +3079,26 @@ type AdapterMessage_Error struct {
 	Error *Error `protobuf:"bytes,17,opt,name=error,proto3,oneof"`
 }
 
+type AdapterMessage_WorldBinding struct {
+	WorldBinding *WorldBinding `protobuf:"bytes,18,opt,name=world_binding,json=worldBinding,proto3,oneof"`
+}
+
+type AdapterMessage_WorldClock struct {
+	WorldClock *WorldClockUpdate `protobuf:"bytes,19,opt,name=world_clock,json=worldClock,proto3,oneof"`
+}
+
+type AdapterMessage_CheckpointPrepare struct {
+	CheckpointPrepare *CheckpointPrepare `protobuf:"bytes,20,opt,name=checkpoint_prepare,json=checkpointPrepare,proto3,oneof"`
+}
+
+type AdapterMessage_CheckpointFinish struct {
+	CheckpointFinish *CheckpointFinish `protobuf:"bytes,21,opt,name=checkpoint_finish,json=checkpointFinish,proto3,oneof"`
+}
+
+type AdapterMessage_TaskControlResult struct {
+	TaskControlResult *TaskControlResult `protobuf:"bytes,22,opt,name=task_control_result,json=taskControlResult,proto3,oneof"`
+}
+
 func (*AdapterMessage_Hello) isAdapterMessage_Payload() {}
 
 func (*AdapterMessage_Event) isAdapterMessage_Payload() {}
@@ -1849,6 +3115,16 @@ func (*AdapterMessage_Heartbeat) isAdapterMessage_Payload() {}
 
 func (*AdapterMessage_Error) isAdapterMessage_Payload() {}
 
+func (*AdapterMessage_WorldBinding) isAdapterMessage_Payload() {}
+
+func (*AdapterMessage_WorldClock) isAdapterMessage_Payload() {}
+
+func (*AdapterMessage_CheckpointPrepare) isAdapterMessage_Payload() {}
+
+func (*AdapterMessage_CheckpointFinish) isAdapterMessage_Payload() {}
+
+func (*AdapterMessage_TaskControlResult) isAdapterMessage_Payload() {}
+
 type RuntimeMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
@@ -1863,6 +3139,9 @@ type RuntimeMessage struct {
 	//	*RuntimeMessage_EventAck
 	//	*RuntimeMessage_Error
 	//	*RuntimeMessage_TurnCompletion
+	//	*RuntimeMessage_WorldBindingReady
+	//	*RuntimeMessage_CheckpointPrepared
+	//	*RuntimeMessage_TaskControl
 	Payload       isRuntimeMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1870,7 +3149,7 @@ type RuntimeMessage struct {
 
 func (x *RuntimeMessage) Reset() {
 	*x = RuntimeMessage{}
-	mi := &file_gameagent_proto_msgTypes[20]
+	mi := &file_gameagent_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1882,7 +3161,7 @@ func (x *RuntimeMessage) String() string {
 func (*RuntimeMessage) ProtoMessage() {}
 
 func (x *RuntimeMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_gameagent_proto_msgTypes[20]
+	mi := &file_gameagent_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1895,7 +3174,7 @@ func (x *RuntimeMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeMessage.ProtoReflect.Descriptor instead.
 func (*RuntimeMessage) Descriptor() ([]byte, []int) {
-	return file_gameagent_proto_rawDescGZIP(), []int{20}
+	return file_gameagent_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *RuntimeMessage) GetMessageId() string {
@@ -1991,6 +3270,33 @@ func (x *RuntimeMessage) GetTurnCompletion() *TurnCompletion {
 	return nil
 }
 
+func (x *RuntimeMessage) GetWorldBindingReady() *WorldBindingReady {
+	if x != nil {
+		if x, ok := x.Payload.(*RuntimeMessage_WorldBindingReady); ok {
+			return x.WorldBindingReady
+		}
+	}
+	return nil
+}
+
+func (x *RuntimeMessage) GetCheckpointPrepared() *CheckpointPrepared {
+	if x != nil {
+		if x, ok := x.Payload.(*RuntimeMessage_CheckpointPrepared); ok {
+			return x.CheckpointPrepared
+		}
+	}
+	return nil
+}
+
+func (x *RuntimeMessage) GetTaskControl() *TaskControlRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*RuntimeMessage_TaskControl); ok {
+			return x.TaskControl
+		}
+	}
+	return nil
+}
+
 type isRuntimeMessage_Payload interface {
 	isRuntimeMessage_Payload()
 }
@@ -2027,6 +3333,18 @@ type RuntimeMessage_TurnCompletion struct {
 	TurnCompletion *TurnCompletion `protobuf:"bytes,17,opt,name=turn_completion,json=turnCompletion,proto3,oneof"`
 }
 
+type RuntimeMessage_WorldBindingReady struct {
+	WorldBindingReady *WorldBindingReady `protobuf:"bytes,18,opt,name=world_binding_ready,json=worldBindingReady,proto3,oneof"`
+}
+
+type RuntimeMessage_CheckpointPrepared struct {
+	CheckpointPrepared *CheckpointPrepared `protobuf:"bytes,19,opt,name=checkpoint_prepared,json=checkpointPrepared,proto3,oneof"`
+}
+
+type RuntimeMessage_TaskControl struct {
+	TaskControl *TaskControlRequest `protobuf:"bytes,20,opt,name=task_control,json=taskControl,proto3,oneof"`
+}
+
 func (*RuntimeMessage_EnvironmentReady) isRuntimeMessage_Payload() {}
 
 func (*RuntimeMessage_Observe) isRuntimeMessage_Payload() {}
@@ -2043,11 +3361,17 @@ func (*RuntimeMessage_Error) isRuntimeMessage_Payload() {}
 
 func (*RuntimeMessage_TurnCompletion) isRuntimeMessage_Payload() {}
 
+func (*RuntimeMessage_WorldBindingReady) isRuntimeMessage_Payload() {}
+
+func (*RuntimeMessage_CheckpointPrepared) isRuntimeMessage_Payload() {}
+
+func (*RuntimeMessage_TaskControl) isRuntimeMessage_Payload() {}
+
 var File_gameagent_proto protoreflect.FileDescriptor
 
 const file_gameagent_proto_rawDesc = "" +
 	"\n" +
-	"\x0fgameagent.proto\x12\x1bgameagent.protocol.v1alpha2\x1a\x1cgoogle/protobuf/struct.proto\"\xdc\x01\n" +
+	"\x0fgameagent.proto\x12\x1bgameagent.protocol.v1alpha2\x1a\x1cgoogle/protobuf/struct.proto\"\x8f\x02\n" +
 	"\fAdapterHello\x12\x1d\n" +
 	"\n" +
 	"adapter_id\x18\x01 \x01(\tR\tadapterId\x12'\n" +
@@ -2056,11 +3380,13 @@ const file_gameagent_proto_rawDesc = "" +
 	"\agame_id\x18\x04 \x01(\tR\x06gameId\x12!\n" +
 	"\fgame_version\x18\x05 \x01(\tR\vgameVersion\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x06 \x01(\tR\tsessionId\"`\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\x121\n" +
+	"\x14supported_extensions\x18\a \x03(\tR\x13supportedExtensions\"\x91\x01\n" +
 	"\x10EnvironmentReady\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12-\n" +
-	"\x13server_time_unix_ms\x18\x02 \x01(\x03R\x10serverTimeUnixMs\"\x91\x01\n" +
+	"\x13server_time_unix_ms\x18\x02 \x01(\x03R\x10serverTimeUnixMs\x12/\n" +
+	"\x13accepted_extensions\x18\x03 \x03(\tR\x12acceptedExtensions\"\x91\x01\n" +
 	"\tEntityRef\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x1f\n" +
 	"\ventity_type\x18\x02 \x01(\tR\n" +
@@ -2089,7 +3415,109 @@ const file_gameagent_proto_rawDesc = "" +
 	"\x05label\x18\x06 \x01(\tR\x05label\x127\n" +
 	"\n" +
 	"attributes\x18\a \x01(\v2\x17.google.protobuf.StructR\n" +
-	"attributes\"\xb0\x03\n" +
+	"attributes\"\x94\x01\n" +
+	"\tTaskScope\x12\x17\n" +
+	"\agame_id\x18\x01 \x01(\tR\x06gameId\x12\x19\n" +
+	"\bworld_id\x18\x02 \x01(\tR\aworldId\x12 \n" +
+	"\fworld_run_id\x18\x03 \x01(\tR\n" +
+	"worldRunId\x121\n" +
+	"\x14execution_generation\x18\x04 \x01(\x04R\x13executionGeneration\"^\n" +
+	"\n" +
+	"WorldClock\x12\x19\n" +
+	"\bclock_id\x18\x01 \x01(\tR\aclockId\x12\x19\n" +
+	"\bnow_tick\x18\x02 \x01(\x03R\anowTick\x12\x1a\n" +
+	"\bsequence\x18\x03 \x01(\x04R\bsequence\"\xdf\x01\n" +
+	"\x11TaskCheckpointRef\x12%\n" +
+	"\x0eschema_version\x18\x01 \x01(\rR\rschemaVersion\x12\x17\n" +
+	"\agame_id\x18\x02 \x01(\tR\x06gameId\x12\x19\n" +
+	"\bworld_id\x18\x03 \x01(\tR\aworldId\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12#\n" +
+	"\rcheckpoint_id\x18\x05 \x01(\tR\fcheckpointId\x12\x1a\n" +
+	"\bchecksum\x18\x06 \x01(\tR\bchecksum\x12\x16\n" +
+	"\x06reason\x18\a \x01(\tR\x06reason\"\x9f\x02\n" +
+	"\fWorldBinding\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12=\n" +
+	"\x05clock\x18\x02 \x01(\v2'.gameagent.protocol.v1alpha2.WorldClockR\x05clock\x12B\n" +
+	"\bentities\x18\x03 \x03(\v2&.gameagent.protocol.v1alpha2.EntityRefR\bentities\x12N\n" +
+	"\n" +
+	"checkpoint\x18\x04 \x01(\v2..gameagent.protocol.v1alpha2.TaskCheckpointRefR\n" +
+	"checkpoint\"\xa3\x01\n" +
+	"\x11WorldBindingReady\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x128\n" +
+	"\x05error\x18\x03 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorR\x05error\"\x8f\x01\n" +
+	"\x10WorldClockUpdate\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12=\n" +
+	"\x05clock\x18\x02 \x01(\v2'.gameagent.protocol.v1alpha2.WorldClockR\x05clock\"\x99\x02\n" +
+	"\fTaskProposal\x12=\n" +
+	"\x05clock\x18\x01 \x01(\v2'.gameagent.protocol.v1alpha2.WorldClockR\x05clock\x12\x17\n" +
+	"\awake_at\x18\x02 \x01(\x03R\x06wakeAt\x12\x1f\n" +
+	"\vdeadline_at\x18\x03 \x01(\x03R\n" +
+	"deadlineAt\x124\n" +
+	"\x16participant_entity_ids\x18\x04 \x03(\tR\x14participantEntityIds\x12'\n" +
+	"\x0fequivalence_key\x18\x05 \x01(\tR\x0eequivalenceKey\x121\n" +
+	"\apayload\x18\x06 \x01(\v2\x17.google.protobuf.StructR\apayload\"\xfc\x03\n" +
+	"\fTaskEvidence\x12\x17\n" +
+	"\afact_id\x18\x01 \x01(\tR\x06factId\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12!\n" +
+	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12<\n" +
+	"\x05scope\x18\x04 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12%\n" +
+	"\x0estart_revision\x18\x05 \x01(\x04R\rstartRevision\x12\x1f\n" +
+	"\voccurred_at\x18\x06 \x01(\x03R\n" +
+	"occurredAt\x12\x18\n" +
+	"\aoutcome\x18\a \x01(\tR\aoutcome\x12\"\n" +
+	"\n" +
+	"wait_until\x18\b \x01(\x03H\x00R\twaitUntil\x88\x01\x01\x121\n" +
+	"\adetails\x18\t \x01(\v2\x17.google.protobuf.StructR\adetails\x12B\n" +
+	"\tgame_time\x18\n" +
+	" \x01(\v2%.gameagent.protocol.v1alpha2.GameTimeR\bgameTime\x12M\n" +
+	"\rcontext_facts\x18\v \x03(\v2(.gameagent.protocol.v1alpha2.ContextFactR\fcontextFactsB\r\n" +
+	"\v_wait_until\"\x9c\x02\n" +
+	"\x10TaskActionSource\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12%\n" +
+	"\x0estart_revision\x18\x02 \x01(\x04R\rstartRevision\x12\x17\n" +
+	"\awake_id\x18\x03 \x01(\tR\x06wakeId\x12!\n" +
+	"\foperation_id\x18\x04 \x01(\tR\voperationId\x12<\n" +
+	"\x05scope\x18\x05 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12N\n" +
+	"\rtask_contract\x18\x06 \x01(\v2).gameagent.protocol.v1alpha2.TaskProposalR\ftaskContract\"\xe8\x01\n" +
+	"\x11InteractionSource\x12\x1b\n" +
+	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12<\n" +
+	"\x05scope\x18\x02 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12(\n" +
+	"\x10player_entity_id\x18\x03 \x01(\tR\x0eplayerEntityId\x12\x17\n" +
+	"\atask_id\x18\x04 \x01(\tR\x06taskId\x12!\n" +
+	"\foperation_id\x18\x05 \x01(\tR\voperationId\x12\x12\n" +
+	"\x04kind\x18\x06 \x01(\tR\x04kind\"\xc5\x01\n" +
+	"\x12TaskControlRequest\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12!\n" +
+	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xfe\x01\n" +
+	"\x11TaskControlResult\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12!\n" +
+	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x128\n" +
+	"\x05error\x18\x06 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorR\x05error\"\x8a\x02\n" +
+	"\x11CheckpointPrepare\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12=\n" +
+	"\x05clock\x18\x02 \x01(\v2'.gameagent.protocol.v1alpha2.WorldClockR\x05clock\x12&\n" +
+	"\x0fsave_request_id\x18\x03 \x01(\tR\rsaveRequestId\x12P\n" +
+	"\x0efinal_evidence\x18\x04 \x03(\v2).gameagent.protocol.v1alpha2.TaskEvidenceR\rfinalEvidence\"\x84\x02\n" +
+	"\x12CheckpointPrepared\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12&\n" +
+	"\x0fsave_request_id\x18\x02 \x01(\tR\rsaveRequestId\x12N\n" +
+	"\n" +
+	"checkpoint\x18\x03 \x01(\v2..gameagent.protocol.v1alpha2.TaskCheckpointRefR\n" +
+	"checkpoint\x128\n" +
+	"\x05error\x18\x04 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorR\x05error\"\x8e\x01\n" +
+	"\x10CheckpointFinish\x12<\n" +
+	"\x05scope\x18\x01 \x01(\v2&.gameagent.protocol.v1alpha2.TaskScopeR\x05scope\x12&\n" +
+	"\x0fsave_request_id\x18\x02 \x01(\tR\rsaveRequestId\x12\x14\n" +
+	"\x05saved\x18\x03 \x01(\bR\x05saved\"\xdf\x04\n" +
 	"\tGameEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -2100,14 +3528,17 @@ const file_gameagent_proto_rawDesc = "" +
 	"\bsequence\x18\x06 \x01(\x04R\bsequence\x12\x19\n" +
 	"\bworld_id\x18\a \x01(\tR\aworldId\x12(\n" +
 	"\x10target_entity_id\x18\b \x01(\tR\x0etargetEntityId\x12M\n" +
-	"\rcontext_facts\x18\t \x03(\v2(.gameagent.protocol.v1alpha2.ContextFactR\fcontextFacts\"\xa4\x01\n" +
+	"\rcontext_facts\x18\t \x03(\v2(.gameagent.protocol.v1alpha2.ContextFactR\fcontextFacts\x12N\n" +
+	"\rtask_evidence\x18\n" +
+	" \x03(\v2).gameagent.protocol.v1alpha2.TaskEvidenceR\ftaskEvidence\x12]\n" +
+	"\x12interaction_source\x18\v \x01(\v2..gameagent.protocol.v1alpha2.InteractionSourceR\x11interactionSource\"\xa4\x01\n" +
 	"\bEventAck\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12C\n" +
 	"\x06status\x18\x02 \x01(\x0e2+.gameagent.protocol.v1alpha2.EventAckStatusR\x06status\x128\n" +
 	"\x05error\x18\x03 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorR\x05error\"H\n" +
 	"\x0eObserveRequest\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x19\n" +
-	"\bworld_id\x18\x02 \x01(\tR\aworldId\"\xde\x02\n" +
+	"\bworld_id\x18\x02 \x01(\tR\aworldId\"\xae\x03\n" +
 	"\vObservation\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\x04R\brevision\x12B\n" +
@@ -2117,7 +3548,8 @@ const file_gameagent_proto_rawDesc = "" +
 	"\n" +
 	"extensions\x18\x06 \x01(\v2\x17.google.protobuf.StructR\n" +
 	"extensions\x12\x19\n" +
-	"\bworld_id\x18\a \x01(\tR\aworldId\"\xf7\x02\n" +
+	"\bworld_id\x18\a \x01(\tR\aworldId\x12N\n" +
+	"\rtask_evidence\x18\b \x03(\v2).gameagent.protocol.v1alpha2.TaskEvidenceR\ftaskEvidence\"\xf7\x02\n" +
 	"\n" +
 	"Capability\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
@@ -2138,7 +3570,7 @@ const file_gameagent_proto_rawDesc = "" +
 	"\fcapabilities\x18\x02 \x03(\v2'.gameagent.protocol.v1alpha2.CapabilityR\fcapabilities\x12\x1a\n" +
 	"\brevision\x18\x03 \x01(\x04R\brevisionB\f\n" +
 	"\n" +
-	"_entity_id\"\xc2\x02\n" +
+	"_entity_id\"\x92\x03\n" +
 	"\rActionRequest\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12\x1b\n" +
 	"\tentity_id\x18\x02 \x01(\tR\bentityId\x12\x1e\n" +
@@ -2151,16 +3583,20 @@ const file_gameagent_proto_rawDesc = "" +
 	"extensions\x12\x19\n" +
 	"\bworld_id\x18\x06 \x01(\tR\aworldId\x12&\n" +
 	"\x0fsource_event_id\x18\a \x01(\tR\rsourceEventId\x12$\n" +
-	"\x0esource_turn_id\x18\b \x01(\tR\fsourceTurnId\"\xa9\x01\n" +
+	"\x0esource_turn_id\x18\b \x01(\tR\fsourceTurnId\x12N\n" +
+	"\vtask_source\x18\t \x01(\v2-.gameagent.protocol.v1alpha2.TaskActionSourceR\n" +
+	"taskSource\"\xa9\x01\n" +
 	"\x12ActionStatusUpdate\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12A\n" +
 	"\x06status\x18\x02 \x01(\x0e2).gameagent.protocol.v1alpha2.ActionStatusR\x06status\x123\n" +
-	"\bmetadata\x18\x03 \x01(\v2\x17.google.protobuf.StructR\bmetadata\"\xd9\x01\n" +
+	"\bmetadata\x18\x03 \x01(\v2\x17.google.protobuf.StructR\bmetadata\"\xf9\x02\n" +
 	"\fActionResult\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12A\n" +
 	"\x06status\x18\x02 \x01(\x0e2).gameagent.protocol.v1alpha2.ActionStatusR\x06status\x12/\n" +
 	"\x06output\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x06output\x128\n" +
-	"\x05error\x18\x04 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorR\x05error\"J\n" +
+	"\x05error\x18\x04 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorR\x05error\x12N\n" +
+	"\rtask_proposal\x18\x05 \x01(\v2).gameagent.protocol.v1alpha2.TaskProposalR\ftaskProposal\x12N\n" +
+	"\rtask_evidence\x18\x06 \x03(\v2).gameagent.protocol.v1alpha2.TaskEvidenceR\ftaskEvidence\"J\n" +
 	"\x13CancelActionRequest\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x81\x02\n" +
@@ -2177,7 +3613,7 @@ const file_gameagent_proto_rawDesc = "" +
 	"\adetails\x18\x03 \x01(\v2\x17.google.protobuf.StructR\adetails\"g\n" +
 	"\tHeartbeat\x12*\n" +
 	"\x11timestamp_unix_ms\x18\x01 \x01(\x03R\x0ftimestampUnixMs\x12.\n" +
-	"\x13last_event_sequence\x18\x02 \x01(\x04R\x11lastEventSequence\"\xb3\x05\n" +
+	"\x13last_event_sequence\x18\x02 \x01(\x04R\x11lastEventSequence\"\xf8\b\n" +
 	"\x0eAdapterMessage\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12%\n" +
@@ -2190,8 +3626,14 @@ const file_gameagent_proto_rawDesc = "" +
 	"\raction_status\x18\x0e \x01(\v2/.gameagent.protocol.v1alpha2.ActionStatusUpdateH\x00R\factionStatus\x12P\n" +
 	"\raction_result\x18\x0f \x01(\v2).gameagent.protocol.v1alpha2.ActionResultH\x00R\factionResult\x12F\n" +
 	"\theartbeat\x18\x10 \x01(\v2&.gameagent.protocol.v1alpha2.HeartbeatH\x00R\theartbeat\x12:\n" +
-	"\x05error\x18\x11 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorH\x00R\x05errorB\t\n" +
-	"\apayload\"\xe2\x05\n" +
+	"\x05error\x18\x11 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorH\x00R\x05error\x12P\n" +
+	"\rworld_binding\x18\x12 \x01(\v2).gameagent.protocol.v1alpha2.WorldBindingH\x00R\fworldBinding\x12P\n" +
+	"\vworld_clock\x18\x13 \x01(\v2-.gameagent.protocol.v1alpha2.WorldClockUpdateH\x00R\n" +
+	"worldClock\x12_\n" +
+	"\x12checkpoint_prepare\x18\x14 \x01(\v2..gameagent.protocol.v1alpha2.CheckpointPrepareH\x00R\x11checkpointPrepare\x12\\\n" +
+	"\x11checkpoint_finish\x18\x15 \x01(\v2-.gameagent.protocol.v1alpha2.CheckpointFinishH\x00R\x10checkpointFinish\x12`\n" +
+	"\x13task_control_result\x18\x16 \x01(\v2..gameagent.protocol.v1alpha2.TaskControlResultH\x00R\x11taskControlResultB\t\n" +
+	"\apayload\"\xfe\a\n" +
 	"\x0eRuntimeMessage\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12%\n" +
@@ -2204,7 +3646,10 @@ const file_gameagent_proto_rawDesc = "" +
 	"\rcancel_action\x18\x0e \x01(\v20.gameagent.protocol.v1alpha2.CancelActionRequestH\x00R\fcancelAction\x12D\n" +
 	"\tevent_ack\x18\x0f \x01(\v2%.gameagent.protocol.v1alpha2.EventAckH\x00R\beventAck\x12:\n" +
 	"\x05error\x18\x10 \x01(\v2\".gameagent.protocol.v1alpha2.ErrorH\x00R\x05error\x12V\n" +
-	"\x0fturn_completion\x18\x11 \x01(\v2+.gameagent.protocol.v1alpha2.TurnCompletionH\x00R\x0eturnCompletionB\t\n" +
+	"\x0fturn_completion\x18\x11 \x01(\v2+.gameagent.protocol.v1alpha2.TurnCompletionH\x00R\x0eturnCompletion\x12`\n" +
+	"\x13world_binding_ready\x18\x12 \x01(\v2..gameagent.protocol.v1alpha2.WorldBindingReadyH\x00R\x11worldBindingReady\x12b\n" +
+	"\x13checkpoint_prepared\x18\x13 \x01(\v2/.gameagent.protocol.v1alpha2.CheckpointPreparedH\x00R\x12checkpointPrepared\x12T\n" +
+	"\ftask_control\x18\x14 \x01(\v2/.gameagent.protocol.v1alpha2.TaskControlRequestH\x00R\vtaskControlB\t\n" +
 	"\apayload*\x90\x01\n" +
 	"\x0eEventAckStatus\x12 \n" +
 	"\x1cEVENT_ACK_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n" +
@@ -2250,7 +3695,7 @@ func file_gameagent_proto_rawDescGZIP() []byte {
 }
 
 var file_gameagent_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_gameagent_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_gameagent_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_gameagent_proto_goTypes = []any{
 	(EventAckStatus)(0),            // 0: gameagent.protocol.v1alpha2.EventAckStatus
 	(ExecutionMode)(0),             // 1: gameagent.protocol.v1alpha2.ExecutionMode
@@ -2262,73 +3707,129 @@ var file_gameagent_proto_goTypes = []any{
 	(*EntityRef)(nil),              // 7: gameagent.protocol.v1alpha2.EntityRef
 	(*GameTime)(nil),               // 8: gameagent.protocol.v1alpha2.GameTime
 	(*ContextFact)(nil),            // 9: gameagent.protocol.v1alpha2.ContextFact
-	(*GameEvent)(nil),              // 10: gameagent.protocol.v1alpha2.GameEvent
-	(*EventAck)(nil),               // 11: gameagent.protocol.v1alpha2.EventAck
-	(*ObserveRequest)(nil),         // 12: gameagent.protocol.v1alpha2.ObserveRequest
-	(*Observation)(nil),            // 13: gameagent.protocol.v1alpha2.Observation
-	(*Capability)(nil),             // 14: gameagent.protocol.v1alpha2.Capability
-	(*CapabilityRequest)(nil),      // 15: gameagent.protocol.v1alpha2.CapabilityRequest
-	(*CapabilityList)(nil),         // 16: gameagent.protocol.v1alpha2.CapabilityList
-	(*ActionRequest)(nil),          // 17: gameagent.protocol.v1alpha2.ActionRequest
-	(*ActionStatusUpdate)(nil),     // 18: gameagent.protocol.v1alpha2.ActionStatusUpdate
-	(*ActionResult)(nil),           // 19: gameagent.protocol.v1alpha2.ActionResult
-	(*CancelActionRequest)(nil),    // 20: gameagent.protocol.v1alpha2.CancelActionRequest
-	(*TurnCompletion)(nil),         // 21: gameagent.protocol.v1alpha2.TurnCompletion
-	(*Error)(nil),                  // 22: gameagent.protocol.v1alpha2.Error
-	(*Heartbeat)(nil),              // 23: gameagent.protocol.v1alpha2.Heartbeat
-	(*AdapterMessage)(nil),         // 24: gameagent.protocol.v1alpha2.AdapterMessage
-	(*RuntimeMessage)(nil),         // 25: gameagent.protocol.v1alpha2.RuntimeMessage
-	(*structpb.Struct)(nil),        // 26: google.protobuf.Struct
+	(*TaskScope)(nil),              // 10: gameagent.protocol.v1alpha2.TaskScope
+	(*WorldClock)(nil),             // 11: gameagent.protocol.v1alpha2.WorldClock
+	(*TaskCheckpointRef)(nil),      // 12: gameagent.protocol.v1alpha2.TaskCheckpointRef
+	(*WorldBinding)(nil),           // 13: gameagent.protocol.v1alpha2.WorldBinding
+	(*WorldBindingReady)(nil),      // 14: gameagent.protocol.v1alpha2.WorldBindingReady
+	(*WorldClockUpdate)(nil),       // 15: gameagent.protocol.v1alpha2.WorldClockUpdate
+	(*TaskProposal)(nil),           // 16: gameagent.protocol.v1alpha2.TaskProposal
+	(*TaskEvidence)(nil),           // 17: gameagent.protocol.v1alpha2.TaskEvidence
+	(*TaskActionSource)(nil),       // 18: gameagent.protocol.v1alpha2.TaskActionSource
+	(*InteractionSource)(nil),      // 19: gameagent.protocol.v1alpha2.InteractionSource
+	(*TaskControlRequest)(nil),     // 20: gameagent.protocol.v1alpha2.TaskControlRequest
+	(*TaskControlResult)(nil),      // 21: gameagent.protocol.v1alpha2.TaskControlResult
+	(*CheckpointPrepare)(nil),      // 22: gameagent.protocol.v1alpha2.CheckpointPrepare
+	(*CheckpointPrepared)(nil),     // 23: gameagent.protocol.v1alpha2.CheckpointPrepared
+	(*CheckpointFinish)(nil),       // 24: gameagent.protocol.v1alpha2.CheckpointFinish
+	(*GameEvent)(nil),              // 25: gameagent.protocol.v1alpha2.GameEvent
+	(*EventAck)(nil),               // 26: gameagent.protocol.v1alpha2.EventAck
+	(*ObserveRequest)(nil),         // 27: gameagent.protocol.v1alpha2.ObserveRequest
+	(*Observation)(nil),            // 28: gameagent.protocol.v1alpha2.Observation
+	(*Capability)(nil),             // 29: gameagent.protocol.v1alpha2.Capability
+	(*CapabilityRequest)(nil),      // 30: gameagent.protocol.v1alpha2.CapabilityRequest
+	(*CapabilityList)(nil),         // 31: gameagent.protocol.v1alpha2.CapabilityList
+	(*ActionRequest)(nil),          // 32: gameagent.protocol.v1alpha2.ActionRequest
+	(*ActionStatusUpdate)(nil),     // 33: gameagent.protocol.v1alpha2.ActionStatusUpdate
+	(*ActionResult)(nil),           // 34: gameagent.protocol.v1alpha2.ActionResult
+	(*CancelActionRequest)(nil),    // 35: gameagent.protocol.v1alpha2.CancelActionRequest
+	(*TurnCompletion)(nil),         // 36: gameagent.protocol.v1alpha2.TurnCompletion
+	(*Error)(nil),                  // 37: gameagent.protocol.v1alpha2.Error
+	(*Heartbeat)(nil),              // 38: gameagent.protocol.v1alpha2.Heartbeat
+	(*AdapterMessage)(nil),         // 39: gameagent.protocol.v1alpha2.AdapterMessage
+	(*RuntimeMessage)(nil),         // 40: gameagent.protocol.v1alpha2.RuntimeMessage
+	(*structpb.Struct)(nil),        // 41: google.protobuf.Struct
 }
 var file_gameagent_proto_depIdxs = []int32{
-	26, // 0: gameagent.protocol.v1alpha2.ContextFact.attributes:type_name -> google.protobuf.Struct
-	7,  // 1: gameagent.protocol.v1alpha2.GameEvent.entities:type_name -> gameagent.protocol.v1alpha2.EntityRef
-	8,  // 2: gameagent.protocol.v1alpha2.GameEvent.game_time:type_name -> gameagent.protocol.v1alpha2.GameTime
-	26, // 3: gameagent.protocol.v1alpha2.GameEvent.payload:type_name -> google.protobuf.Struct
-	9,  // 4: gameagent.protocol.v1alpha2.GameEvent.context_facts:type_name -> gameagent.protocol.v1alpha2.ContextFact
-	0,  // 5: gameagent.protocol.v1alpha2.EventAck.status:type_name -> gameagent.protocol.v1alpha2.EventAckStatus
-	22, // 6: gameagent.protocol.v1alpha2.EventAck.error:type_name -> gameagent.protocol.v1alpha2.Error
-	8,  // 7: gameagent.protocol.v1alpha2.Observation.game_time:type_name -> gameagent.protocol.v1alpha2.GameTime
-	26, // 8: gameagent.protocol.v1alpha2.Observation.state:type_name -> google.protobuf.Struct
-	7,  // 9: gameagent.protocol.v1alpha2.Observation.nearby_entities:type_name -> gameagent.protocol.v1alpha2.EntityRef
-	26, // 10: gameagent.protocol.v1alpha2.Observation.extensions:type_name -> google.protobuf.Struct
-	1,  // 11: gameagent.protocol.v1alpha2.Capability.execution_mode:type_name -> gameagent.protocol.v1alpha2.ExecutionMode
-	26, // 12: gameagent.protocol.v1alpha2.Capability.extensions:type_name -> google.protobuf.Struct
-	2,  // 13: gameagent.protocol.v1alpha2.Capability.concurrency_mode:type_name -> gameagent.protocol.v1alpha2.CapabilityConcurrencyMode
-	14, // 14: gameagent.protocol.v1alpha2.CapabilityList.capabilities:type_name -> gameagent.protocol.v1alpha2.Capability
-	26, // 15: gameagent.protocol.v1alpha2.ActionRequest.arguments:type_name -> google.protobuf.Struct
-	26, // 16: gameagent.protocol.v1alpha2.ActionRequest.extensions:type_name -> google.protobuf.Struct
-	3,  // 17: gameagent.protocol.v1alpha2.ActionStatusUpdate.status:type_name -> gameagent.protocol.v1alpha2.ActionStatus
-	26, // 18: gameagent.protocol.v1alpha2.ActionStatusUpdate.metadata:type_name -> google.protobuf.Struct
-	3,  // 19: gameagent.protocol.v1alpha2.ActionResult.status:type_name -> gameagent.protocol.v1alpha2.ActionStatus
-	26, // 20: gameagent.protocol.v1alpha2.ActionResult.output:type_name -> google.protobuf.Struct
-	22, // 21: gameagent.protocol.v1alpha2.ActionResult.error:type_name -> gameagent.protocol.v1alpha2.Error
-	4,  // 22: gameagent.protocol.v1alpha2.TurnCompletion.status:type_name -> gameagent.protocol.v1alpha2.TurnCompletionStatus
-	22, // 23: gameagent.protocol.v1alpha2.TurnCompletion.error:type_name -> gameagent.protocol.v1alpha2.Error
-	26, // 24: gameagent.protocol.v1alpha2.Error.details:type_name -> google.protobuf.Struct
-	5,  // 25: gameagent.protocol.v1alpha2.AdapterMessage.hello:type_name -> gameagent.protocol.v1alpha2.AdapterHello
-	10, // 26: gameagent.protocol.v1alpha2.AdapterMessage.event:type_name -> gameagent.protocol.v1alpha2.GameEvent
-	13, // 27: gameagent.protocol.v1alpha2.AdapterMessage.observation:type_name -> gameagent.protocol.v1alpha2.Observation
-	16, // 28: gameagent.protocol.v1alpha2.AdapterMessage.capabilities:type_name -> gameagent.protocol.v1alpha2.CapabilityList
-	18, // 29: gameagent.protocol.v1alpha2.AdapterMessage.action_status:type_name -> gameagent.protocol.v1alpha2.ActionStatusUpdate
-	19, // 30: gameagent.protocol.v1alpha2.AdapterMessage.action_result:type_name -> gameagent.protocol.v1alpha2.ActionResult
-	23, // 31: gameagent.protocol.v1alpha2.AdapterMessage.heartbeat:type_name -> gameagent.protocol.v1alpha2.Heartbeat
-	22, // 32: gameagent.protocol.v1alpha2.AdapterMessage.error:type_name -> gameagent.protocol.v1alpha2.Error
-	6,  // 33: gameagent.protocol.v1alpha2.RuntimeMessage.environment_ready:type_name -> gameagent.protocol.v1alpha2.EnvironmentReady
-	12, // 34: gameagent.protocol.v1alpha2.RuntimeMessage.observe:type_name -> gameagent.protocol.v1alpha2.ObserveRequest
-	15, // 35: gameagent.protocol.v1alpha2.RuntimeMessage.capability_request:type_name -> gameagent.protocol.v1alpha2.CapabilityRequest
-	17, // 36: gameagent.protocol.v1alpha2.RuntimeMessage.action:type_name -> gameagent.protocol.v1alpha2.ActionRequest
-	20, // 37: gameagent.protocol.v1alpha2.RuntimeMessage.cancel_action:type_name -> gameagent.protocol.v1alpha2.CancelActionRequest
-	11, // 38: gameagent.protocol.v1alpha2.RuntimeMessage.event_ack:type_name -> gameagent.protocol.v1alpha2.EventAck
-	22, // 39: gameagent.protocol.v1alpha2.RuntimeMessage.error:type_name -> gameagent.protocol.v1alpha2.Error
-	21, // 40: gameagent.protocol.v1alpha2.RuntimeMessage.turn_completion:type_name -> gameagent.protocol.v1alpha2.TurnCompletion
-	24, // 41: gameagent.protocol.v1alpha2.GameAgentGateway.Connect:input_type -> gameagent.protocol.v1alpha2.AdapterMessage
-	25, // 42: gameagent.protocol.v1alpha2.GameAgentGateway.Connect:output_type -> gameagent.protocol.v1alpha2.RuntimeMessage
-	42, // [42:43] is the sub-list for method output_type
-	41, // [41:42] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	41, // 0: gameagent.protocol.v1alpha2.ContextFact.attributes:type_name -> google.protobuf.Struct
+	10, // 1: gameagent.protocol.v1alpha2.WorldBinding.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	11, // 2: gameagent.protocol.v1alpha2.WorldBinding.clock:type_name -> gameagent.protocol.v1alpha2.WorldClock
+	7,  // 3: gameagent.protocol.v1alpha2.WorldBinding.entities:type_name -> gameagent.protocol.v1alpha2.EntityRef
+	12, // 4: gameagent.protocol.v1alpha2.WorldBinding.checkpoint:type_name -> gameagent.protocol.v1alpha2.TaskCheckpointRef
+	10, // 5: gameagent.protocol.v1alpha2.WorldBindingReady.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	37, // 6: gameagent.protocol.v1alpha2.WorldBindingReady.error:type_name -> gameagent.protocol.v1alpha2.Error
+	10, // 7: gameagent.protocol.v1alpha2.WorldClockUpdate.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	11, // 8: gameagent.protocol.v1alpha2.WorldClockUpdate.clock:type_name -> gameagent.protocol.v1alpha2.WorldClock
+	11, // 9: gameagent.protocol.v1alpha2.TaskProposal.clock:type_name -> gameagent.protocol.v1alpha2.WorldClock
+	41, // 10: gameagent.protocol.v1alpha2.TaskProposal.payload:type_name -> google.protobuf.Struct
+	10, // 11: gameagent.protocol.v1alpha2.TaskEvidence.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	41, // 12: gameagent.protocol.v1alpha2.TaskEvidence.details:type_name -> google.protobuf.Struct
+	8,  // 13: gameagent.protocol.v1alpha2.TaskEvidence.game_time:type_name -> gameagent.protocol.v1alpha2.GameTime
+	9,  // 14: gameagent.protocol.v1alpha2.TaskEvidence.context_facts:type_name -> gameagent.protocol.v1alpha2.ContextFact
+	10, // 15: gameagent.protocol.v1alpha2.TaskActionSource.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	16, // 16: gameagent.protocol.v1alpha2.TaskActionSource.task_contract:type_name -> gameagent.protocol.v1alpha2.TaskProposal
+	10, // 17: gameagent.protocol.v1alpha2.InteractionSource.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	10, // 18: gameagent.protocol.v1alpha2.TaskControlRequest.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	10, // 19: gameagent.protocol.v1alpha2.TaskControlResult.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	37, // 20: gameagent.protocol.v1alpha2.TaskControlResult.error:type_name -> gameagent.protocol.v1alpha2.Error
+	10, // 21: gameagent.protocol.v1alpha2.CheckpointPrepare.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	11, // 22: gameagent.protocol.v1alpha2.CheckpointPrepare.clock:type_name -> gameagent.protocol.v1alpha2.WorldClock
+	17, // 23: gameagent.protocol.v1alpha2.CheckpointPrepare.final_evidence:type_name -> gameagent.protocol.v1alpha2.TaskEvidence
+	10, // 24: gameagent.protocol.v1alpha2.CheckpointPrepared.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	12, // 25: gameagent.protocol.v1alpha2.CheckpointPrepared.checkpoint:type_name -> gameagent.protocol.v1alpha2.TaskCheckpointRef
+	37, // 26: gameagent.protocol.v1alpha2.CheckpointPrepared.error:type_name -> gameagent.protocol.v1alpha2.Error
+	10, // 27: gameagent.protocol.v1alpha2.CheckpointFinish.scope:type_name -> gameagent.protocol.v1alpha2.TaskScope
+	7,  // 28: gameagent.protocol.v1alpha2.GameEvent.entities:type_name -> gameagent.protocol.v1alpha2.EntityRef
+	8,  // 29: gameagent.protocol.v1alpha2.GameEvent.game_time:type_name -> gameagent.protocol.v1alpha2.GameTime
+	41, // 30: gameagent.protocol.v1alpha2.GameEvent.payload:type_name -> google.protobuf.Struct
+	9,  // 31: gameagent.protocol.v1alpha2.GameEvent.context_facts:type_name -> gameagent.protocol.v1alpha2.ContextFact
+	17, // 32: gameagent.protocol.v1alpha2.GameEvent.task_evidence:type_name -> gameagent.protocol.v1alpha2.TaskEvidence
+	19, // 33: gameagent.protocol.v1alpha2.GameEvent.interaction_source:type_name -> gameagent.protocol.v1alpha2.InteractionSource
+	0,  // 34: gameagent.protocol.v1alpha2.EventAck.status:type_name -> gameagent.protocol.v1alpha2.EventAckStatus
+	37, // 35: gameagent.protocol.v1alpha2.EventAck.error:type_name -> gameagent.protocol.v1alpha2.Error
+	8,  // 36: gameagent.protocol.v1alpha2.Observation.game_time:type_name -> gameagent.protocol.v1alpha2.GameTime
+	41, // 37: gameagent.protocol.v1alpha2.Observation.state:type_name -> google.protobuf.Struct
+	7,  // 38: gameagent.protocol.v1alpha2.Observation.nearby_entities:type_name -> gameagent.protocol.v1alpha2.EntityRef
+	41, // 39: gameagent.protocol.v1alpha2.Observation.extensions:type_name -> google.protobuf.Struct
+	17, // 40: gameagent.protocol.v1alpha2.Observation.task_evidence:type_name -> gameagent.protocol.v1alpha2.TaskEvidence
+	1,  // 41: gameagent.protocol.v1alpha2.Capability.execution_mode:type_name -> gameagent.protocol.v1alpha2.ExecutionMode
+	41, // 42: gameagent.protocol.v1alpha2.Capability.extensions:type_name -> google.protobuf.Struct
+	2,  // 43: gameagent.protocol.v1alpha2.Capability.concurrency_mode:type_name -> gameagent.protocol.v1alpha2.CapabilityConcurrencyMode
+	29, // 44: gameagent.protocol.v1alpha2.CapabilityList.capabilities:type_name -> gameagent.protocol.v1alpha2.Capability
+	41, // 45: gameagent.protocol.v1alpha2.ActionRequest.arguments:type_name -> google.protobuf.Struct
+	41, // 46: gameagent.protocol.v1alpha2.ActionRequest.extensions:type_name -> google.protobuf.Struct
+	18, // 47: gameagent.protocol.v1alpha2.ActionRequest.task_source:type_name -> gameagent.protocol.v1alpha2.TaskActionSource
+	3,  // 48: gameagent.protocol.v1alpha2.ActionStatusUpdate.status:type_name -> gameagent.protocol.v1alpha2.ActionStatus
+	41, // 49: gameagent.protocol.v1alpha2.ActionStatusUpdate.metadata:type_name -> google.protobuf.Struct
+	3,  // 50: gameagent.protocol.v1alpha2.ActionResult.status:type_name -> gameagent.protocol.v1alpha2.ActionStatus
+	41, // 51: gameagent.protocol.v1alpha2.ActionResult.output:type_name -> google.protobuf.Struct
+	37, // 52: gameagent.protocol.v1alpha2.ActionResult.error:type_name -> gameagent.protocol.v1alpha2.Error
+	16, // 53: gameagent.protocol.v1alpha2.ActionResult.task_proposal:type_name -> gameagent.protocol.v1alpha2.TaskProposal
+	17, // 54: gameagent.protocol.v1alpha2.ActionResult.task_evidence:type_name -> gameagent.protocol.v1alpha2.TaskEvidence
+	4,  // 55: gameagent.protocol.v1alpha2.TurnCompletion.status:type_name -> gameagent.protocol.v1alpha2.TurnCompletionStatus
+	37, // 56: gameagent.protocol.v1alpha2.TurnCompletion.error:type_name -> gameagent.protocol.v1alpha2.Error
+	41, // 57: gameagent.protocol.v1alpha2.Error.details:type_name -> google.protobuf.Struct
+	5,  // 58: gameagent.protocol.v1alpha2.AdapterMessage.hello:type_name -> gameagent.protocol.v1alpha2.AdapterHello
+	25, // 59: gameagent.protocol.v1alpha2.AdapterMessage.event:type_name -> gameagent.protocol.v1alpha2.GameEvent
+	28, // 60: gameagent.protocol.v1alpha2.AdapterMessage.observation:type_name -> gameagent.protocol.v1alpha2.Observation
+	31, // 61: gameagent.protocol.v1alpha2.AdapterMessage.capabilities:type_name -> gameagent.protocol.v1alpha2.CapabilityList
+	33, // 62: gameagent.protocol.v1alpha2.AdapterMessage.action_status:type_name -> gameagent.protocol.v1alpha2.ActionStatusUpdate
+	34, // 63: gameagent.protocol.v1alpha2.AdapterMessage.action_result:type_name -> gameagent.protocol.v1alpha2.ActionResult
+	38, // 64: gameagent.protocol.v1alpha2.AdapterMessage.heartbeat:type_name -> gameagent.protocol.v1alpha2.Heartbeat
+	37, // 65: gameagent.protocol.v1alpha2.AdapterMessage.error:type_name -> gameagent.protocol.v1alpha2.Error
+	13, // 66: gameagent.protocol.v1alpha2.AdapterMessage.world_binding:type_name -> gameagent.protocol.v1alpha2.WorldBinding
+	15, // 67: gameagent.protocol.v1alpha2.AdapterMessage.world_clock:type_name -> gameagent.protocol.v1alpha2.WorldClockUpdate
+	22, // 68: gameagent.protocol.v1alpha2.AdapterMessage.checkpoint_prepare:type_name -> gameagent.protocol.v1alpha2.CheckpointPrepare
+	24, // 69: gameagent.protocol.v1alpha2.AdapterMessage.checkpoint_finish:type_name -> gameagent.protocol.v1alpha2.CheckpointFinish
+	21, // 70: gameagent.protocol.v1alpha2.AdapterMessage.task_control_result:type_name -> gameagent.protocol.v1alpha2.TaskControlResult
+	6,  // 71: gameagent.protocol.v1alpha2.RuntimeMessage.environment_ready:type_name -> gameagent.protocol.v1alpha2.EnvironmentReady
+	27, // 72: gameagent.protocol.v1alpha2.RuntimeMessage.observe:type_name -> gameagent.protocol.v1alpha2.ObserveRequest
+	30, // 73: gameagent.protocol.v1alpha2.RuntimeMessage.capability_request:type_name -> gameagent.protocol.v1alpha2.CapabilityRequest
+	32, // 74: gameagent.protocol.v1alpha2.RuntimeMessage.action:type_name -> gameagent.protocol.v1alpha2.ActionRequest
+	35, // 75: gameagent.protocol.v1alpha2.RuntimeMessage.cancel_action:type_name -> gameagent.protocol.v1alpha2.CancelActionRequest
+	26, // 76: gameagent.protocol.v1alpha2.RuntimeMessage.event_ack:type_name -> gameagent.protocol.v1alpha2.EventAck
+	37, // 77: gameagent.protocol.v1alpha2.RuntimeMessage.error:type_name -> gameagent.protocol.v1alpha2.Error
+	36, // 78: gameagent.protocol.v1alpha2.RuntimeMessage.turn_completion:type_name -> gameagent.protocol.v1alpha2.TurnCompletion
+	14, // 79: gameagent.protocol.v1alpha2.RuntimeMessage.world_binding_ready:type_name -> gameagent.protocol.v1alpha2.WorldBindingReady
+	23, // 80: gameagent.protocol.v1alpha2.RuntimeMessage.checkpoint_prepared:type_name -> gameagent.protocol.v1alpha2.CheckpointPrepared
+	20, // 81: gameagent.protocol.v1alpha2.RuntimeMessage.task_control:type_name -> gameagent.protocol.v1alpha2.TaskControlRequest
+	39, // 82: gameagent.protocol.v1alpha2.GameAgentGateway.Connect:input_type -> gameagent.protocol.v1alpha2.AdapterMessage
+	40, // 83: gameagent.protocol.v1alpha2.GameAgentGateway.Connect:output_type -> gameagent.protocol.v1alpha2.RuntimeMessage
+	83, // [83:84] is the sub-list for method output_type
+	82, // [82:83] is the sub-list for method input_type
+	82, // [82:82] is the sub-list for extension type_name
+	82, // [82:82] is the sub-list for extension extendee
+	0,  // [0:82] is the sub-list for field type_name
 }
 
 func init() { file_gameagent_proto_init() }
@@ -2337,9 +3838,10 @@ func file_gameagent_proto_init() {
 		return
 	}
 	file_gameagent_proto_msgTypes[3].OneofWrappers = []any{}
-	file_gameagent_proto_msgTypes[10].OneofWrappers = []any{}
-	file_gameagent_proto_msgTypes[11].OneofWrappers = []any{}
-	file_gameagent_proto_msgTypes[19].OneofWrappers = []any{
+	file_gameagent_proto_msgTypes[12].OneofWrappers = []any{}
+	file_gameagent_proto_msgTypes[25].OneofWrappers = []any{}
+	file_gameagent_proto_msgTypes[26].OneofWrappers = []any{}
+	file_gameagent_proto_msgTypes[34].OneofWrappers = []any{
 		(*AdapterMessage_Hello)(nil),
 		(*AdapterMessage_Event)(nil),
 		(*AdapterMessage_Observation)(nil),
@@ -2348,8 +3850,13 @@ func file_gameagent_proto_init() {
 		(*AdapterMessage_ActionResult)(nil),
 		(*AdapterMessage_Heartbeat)(nil),
 		(*AdapterMessage_Error)(nil),
+		(*AdapterMessage_WorldBinding)(nil),
+		(*AdapterMessage_WorldClock)(nil),
+		(*AdapterMessage_CheckpointPrepare)(nil),
+		(*AdapterMessage_CheckpointFinish)(nil),
+		(*AdapterMessage_TaskControlResult)(nil),
 	}
-	file_gameagent_proto_msgTypes[20].OneofWrappers = []any{
+	file_gameagent_proto_msgTypes[35].OneofWrappers = []any{
 		(*RuntimeMessage_EnvironmentReady)(nil),
 		(*RuntimeMessage_Observe)(nil),
 		(*RuntimeMessage_CapabilityRequest)(nil),
@@ -2358,6 +3865,9 @@ func file_gameagent_proto_init() {
 		(*RuntimeMessage_EventAck)(nil),
 		(*RuntimeMessage_Error)(nil),
 		(*RuntimeMessage_TurnCompletion)(nil),
+		(*RuntimeMessage_WorldBindingReady)(nil),
+		(*RuntimeMessage_CheckpointPrepared)(nil),
+		(*RuntimeMessage_TaskControl)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2365,7 +3875,7 @@ func file_gameagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gameagent_proto_rawDesc), len(file_gameagent_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   21,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

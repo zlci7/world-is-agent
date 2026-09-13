@@ -77,7 +77,22 @@ if (-not (Test-Path -LiteralPath $protoPath)) {
         'message\s+Heartbeat\s*\{',
         'message\s+AdapterMessage\s*\{',
         'message\s+RuntimeMessage\s*\{',
-        'oneof\s+payload\s*\{'
+        'oneof\s+payload\s*\{',
+        'message\s+TaskScope\s*\{[^}]*string\s+game_id\s*=\s*1;[^}]*string\s+world_id\s*=\s*2;[^}]*string\s+world_run_id\s*=\s*3;[^}]*uint64\s+execution_generation\s*=\s*4;',
+        'message\s+WorldClock\s*\{[^}]*string\s+clock_id\s*=\s*1;[^}]*int64\s+now_tick\s*=\s*2;[^}]*uint64\s+sequence\s*=\s*3;',
+        'message\s+TaskCheckpointRef\s*\{[^}]*uint32\s+schema_version\s*=\s*1;[^}]*string\s+game_id\s*=\s*2;[^}]*string\s+world_id\s*=\s*3;[^}]*string\s+status\s*=\s*4;[^}]*string\s+checkpoint_id\s*=\s*5;[^}]*string\s+checksum\s*=\s*6;[^}]*string\s+reason\s*=\s*7;',
+        'message\s+WorldBinding\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*WorldClock\s+clock\s*=\s*2;[^}]*repeated\s+EntityRef\s+entities\s*=\s*3;[^}]*TaskCheckpointRef\s+checkpoint\s*=\s*4;',
+        'message\s+WorldBindingReady\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*string\s+status\s*=\s*2;[^}]*Error\s+error\s*=\s*3;',
+        'message\s+WorldClockUpdate\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*WorldClock\s+clock\s*=\s*2;',
+        'message\s+TaskProposal\s*\{[^}]*WorldClock\s+clock\s*=\s*1;[^}]*int64\s+wake_at\s*=\s*2;[^}]*int64\s+deadline_at\s*=\s*3;[^}]*repeated\s+string\s+participant_entity_ids\s*=\s*4;[^}]*string\s+equivalence_key\s*=\s*5;[^}]*google\.protobuf\.Struct\s+payload\s*=\s*6;',
+        'message\s+TaskEvidence\s*\{[^}]*string\s+fact_id\s*=\s*1;[^}]*string\s+task_id\s*=\s*2;[^}]*string\s+operation_id\s*=\s*3;[^}]*TaskScope\s+scope\s*=\s*4;[^}]*uint64\s+start_revision\s*=\s*5;[^}]*int64\s+occurred_at\s*=\s*6;[^}]*string\s+outcome\s*=\s*7;[^}]*optional\s+int64\s+wait_until\s*=\s*8;[^}]*google\.protobuf\.Struct\s+details\s*=\s*9;[^}]*GameTime\s+game_time\s*=\s*10;[^}]*repeated\s+ContextFact\s+context_facts\s*=\s*11;',
+        'message\s+TaskActionSource\s*\{[^}]*string\s+task_id\s*=\s*1;[^}]*uint64\s+start_revision\s*=\s*2;[^}]*string\s+wake_id\s*=\s*3;[^}]*string\s+operation_id\s*=\s*4;[^}]*TaskScope\s+scope\s*=\s*5;[^}]*TaskProposal\s+task_contract\s*=\s*6;',
+        'message\s+InteractionSource\s*\{[^}]*string\s+source_id\s*=\s*1;[^}]*TaskScope\s+scope\s*=\s*2;[^}]*string\s+player_entity_id\s*=\s*3;[^}]*string\s+task_id\s*=\s*4;[^}]*string\s+operation_id\s*=\s*5;[^}]*string\s+kind\s*=\s*6;',
+        'message\s+TaskControlRequest\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*string\s+task_id\s*=\s*2;[^}]*string\s+operation_id\s*=\s*3;[^}]*string\s+request_id\s*=\s*4;[^}]*string\s+reason\s*=\s*5;',
+        'message\s+TaskControlResult\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*string\s+task_id\s*=\s*2;[^}]*string\s+operation_id\s*=\s*3;[^}]*string\s+request_id\s*=\s*4;[^}]*string\s+status\s*=\s*5;[^}]*Error\s+error\s*=\s*6;',
+        'message\s+CheckpointPrepare\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*WorldClock\s+clock\s*=\s*2;[^}]*string\s+save_request_id\s*=\s*3;[^}]*repeated\s+TaskEvidence\s+final_evidence\s*=\s*4;',
+        'message\s+CheckpointPrepared\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*string\s+save_request_id\s*=\s*2;[^}]*TaskCheckpointRef\s+checkpoint\s*=\s*3;[^}]*Error\s+error\s*=\s*4;',
+        'message\s+CheckpointFinish\s*\{[^}]*TaskScope\s+scope\s*=\s*1;[^}]*string\s+save_request_id\s*=\s*2;[^}]*bool\s+saved\s*=\s*3;'
     )
 
     foreach ($pattern in $requiredPatterns) {
@@ -96,6 +111,14 @@ if (-not (Test-Path -LiteralPath $protoPath)) {
 
     if ($proto -notmatch 'message\s+AdapterHello\s*\{[^}]*string\s+session_id\s*=\s*6;') {
         Add-Violation 'AdapterHello.session_id must use field 6'
+    }
+
+    if ($proto -notmatch 'message\s+AdapterHello\s*\{[^}]*repeated\s+string\s+supported_extensions\s*=\s*7;') {
+        Add-Violation 'AdapterHello.supported_extensions must use field 7'
+    }
+
+    if ($proto -notmatch 'message\s+EnvironmentReady\s*\{[^}]*repeated\s+string\s+accepted_extensions\s*=\s*3;') {
+        Add-Violation 'EnvironmentReady.accepted_extensions must use field 3'
     }
 
     if ($proto -match 'message\s+AdapterHello\s*\{[^}]*save_id') {
@@ -118,6 +141,10 @@ if (-not (Test-Path -LiteralPath $protoPath)) {
         Add-Violation 'GameEvent.target_entity_id must use field 8'
     }
 
+    if ($proto -notmatch 'message\s+GameEvent\s*\{[^}]*repeated\s+TaskEvidence\s+task_evidence\s*=\s*10;[^}]*InteractionSource\s+interaction_source\s*=\s*11;') {
+        Add-Violation 'GameEvent durable-task fields must use fields 10 and 11'
+    }
+
     if ($proto -match 'message\s+ContextFact\s*\{[^}]*definition_id') {
         Add-Violation 'ContextFact must not include definition_id'
     }
@@ -128,6 +155,10 @@ if (-not (Test-Path -LiteralPath $protoPath)) {
 
     if ($proto -notmatch 'message\s+Observation\s*\{[^}]*string\s+world_id\s*=\s*7;') {
         Add-Violation 'Observation.world_id must use field 7'
+    }
+
+    if ($proto -notmatch 'message\s+Observation\s*\{[^}]*repeated\s+TaskEvidence\s+task_evidence\s*=\s*8;') {
+        Add-Violation 'Observation.task_evidence must use field 8'
     }
 
     if ($proto -match 'message\s+Observation\s*\{[^}]*definition_id') {
@@ -146,6 +177,14 @@ if (-not (Test-Path -LiteralPath $protoPath)) {
         Add-Violation 'ActionRequest.source_turn_id must use field 8'
     }
 
+    if ($proto -notmatch 'message\s+ActionRequest\s*\{[^}]*TaskActionSource\s+task_source\s*=\s*9;') {
+        Add-Violation 'ActionRequest.task_source must use field 9'
+    }
+
+    if ($proto -notmatch 'message\s+ActionResult\s*\{[^}]*TaskProposal\s+task_proposal\s*=\s*5;[^}]*repeated\s+TaskEvidence\s+task_evidence\s*=\s*6;') {
+        Add-Violation 'ActionResult durable-task fields must use fields 5 and 6'
+    }
+
     if ($proto -notmatch 'message\s+TurnCompletion\s*\{[^}]*string\s+turn_id\s*=\s*1;[^}]*string\s+event_id\s*=\s*2;[^}]*string\s+world_id\s*=\s*3;[^}]*string\s+entity_id\s*=\s*4;[^}]*TurnCompletionStatus\s+status\s*=\s*5;[^}]*Error\s+error\s*=\s*6;') {
         Add-Violation 'TurnCompletion fields must match approved field numbers'
     }
@@ -158,11 +197,11 @@ if (-not (Test-Path -LiteralPath $protoPath)) {
         Add-Violation 'Heartbeat.last_event_sequence must use field 2'
     }
 
-    if ($proto -notmatch 'message\s+AdapterMessage\s*\{[^}]*AdapterHello\s+hello\s*=\s*10;[^}]*GameEvent\s+event\s*=\s*11;[^}]*Observation\s+observation\s*=\s*12;[^}]*CapabilityList\s+capabilities\s*=\s*13;[^}]*ActionStatusUpdate\s+action_status\s*=\s*14;[^}]*ActionResult\s+action_result\s*=\s*15;[^}]*Heartbeat\s+heartbeat\s*=\s*16;[^}]*Error\s+error\s*=\s*17;') {
+    if ($proto -notmatch 'message\s+AdapterMessage\s*\{[^}]*AdapterHello\s+hello\s*=\s*10;[^}]*GameEvent\s+event\s*=\s*11;[^}]*Observation\s+observation\s*=\s*12;[^}]*CapabilityList\s+capabilities\s*=\s*13;[^}]*ActionStatusUpdate\s+action_status\s*=\s*14;[^}]*ActionResult\s+action_result\s*=\s*15;[^}]*Heartbeat\s+heartbeat\s*=\s*16;[^}]*Error\s+error\s*=\s*17;[^}]*WorldBinding\s+world_binding\s*=\s*18;[^}]*WorldClockUpdate\s+world_clock\s*=\s*19;[^}]*CheckpointPrepare\s+checkpoint_prepare\s*=\s*20;[^}]*CheckpointFinish\s+checkpoint_finish\s*=\s*21;[^}]*TaskControlResult\s+task_control_result\s*=\s*22;') {
         Add-Violation 'AdapterMessage envelope oneof must match v1alpha2 contract'
     }
 
-    if ($proto -notmatch 'message\s+RuntimeMessage\s*\{[^}]*EnvironmentReady\s+environment_ready\s*=\s*10;[^}]*ObserveRequest\s+observe\s*=\s*11;[^}]*CapabilityRequest\s+capability_request\s*=\s*12;[^}]*ActionRequest\s+action\s*=\s*13;[^}]*CancelActionRequest\s+cancel_action\s*=\s*14;[^}]*EventAck\s+event_ack\s*=\s*15;[^}]*Error\s+error\s*=\s*16;[^}]*TurnCompletion\s+turn_completion\s*=\s*17;') {
+    if ($proto -notmatch 'message\s+RuntimeMessage\s*\{[^}]*EnvironmentReady\s+environment_ready\s*=\s*10;[^}]*ObserveRequest\s+observe\s*=\s*11;[^}]*CapabilityRequest\s+capability_request\s*=\s*12;[^}]*ActionRequest\s+action\s*=\s*13;[^}]*CancelActionRequest\s+cancel_action\s*=\s*14;[^}]*EventAck\s+event_ack\s*=\s*15;[^}]*Error\s+error\s*=\s*16;[^}]*TurnCompletion\s+turn_completion\s*=\s*17;[^}]*WorldBindingReady\s+world_binding_ready\s*=\s*18;[^}]*CheckpointPrepared\s+checkpoint_prepared\s*=\s*19;[^}]*TaskControlRequest\s+task_control\s*=\s*20;') {
         Add-Violation 'RuntimeMessage envelope oneof must match v1alpha2 contract'
     }
 
