@@ -28,6 +28,8 @@
     <Compile Include="..\..\src\Tasks\GameClock.cs" Link="GameClock.cs" />
     <Compile Include="..\..\src\Tasks\LandmarkCatalog.cs" Link="LandmarkCatalog.cs" />
     <Compile Include="..\..\src\Tasks\MeetingContract.cs" Link="MeetingContract.cs" />
+    <Compile Include="..\..\src\Tasks\TaskExecutionContracts.cs" Link="TaskExecutionContracts.cs" />
+    <Compile Include="..\..\src\Tasks\NpcControlLease.cs" Link="NpcControlLease.cs" />
     <Compile Include="..\..\src\Capabilities\FacePlayerDirection.cs" Link="FacePlayerDirection.cs" />
     <Compile Include="..\..\src\Capabilities\MoveToInput.cs" Link="MoveToInput.cs" />
     <Compile Include="..\..\src\Dialogue\DialoguePresentationFlow.cs" Link="DialoguePresentationFlow.cs" />

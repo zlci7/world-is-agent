@@ -17,5 +17,10 @@
     <Compile Include="..\..\src\Tasks\LandmarkCatalog.cs" Link="LandmarkCatalog.cs" />
     <Compile Include="..\..\src\Tasks\MeetingContract.cs" Link="MeetingContract.cs" />
     <Compile Include="..\..\src\Runtime\RuntimeWorldContext.cs" Link="RuntimeWorldContext.cs" />
+    <Compile Include="..\..\src\Tasks\TaskExecutionContracts.cs" Link="TaskExecutionContracts.cs" />
+    <Compile Include="..\..\src\Tasks\TaskSourceContextStore.cs" Link="TaskSourceContextStore.cs" />
+    <Compile Include="..\..\src\Tasks\TaskOperationReceipts.cs" Link="TaskOperationReceipts.cs" />
+    <Compile Include="..\..\src\Tasks\NpcControlLease.cs" Link="NpcControlLease.cs" />
+    <Compile Include="..\..\src\Tasks\TaskExecutionDriver.cs" Link="TaskExecutionDriver.cs" />
   </ItemGroup>
 </Project>

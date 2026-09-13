@@ -93,6 +93,28 @@ public sealed class ProtocolMapperTaskTests
         Assert.Null(result.TaskProposal);
     }
 
+    [Fact]
+    public void MapsTaskActionSourceAndPreservesItsStartRevision()
+    {
+        ActionRequest request = TaskActionRequest();
+
+        TaskOperationSource source = ProtocolMapper.RequireTaskOperationSource(request, Snapshot);
+
+        Assert.Equal("operation-a", source.Operation.OperationId);
+        Assert.Equal((ulong)4, source.StartRevision);
+        Assert.Equal("wake-a", source.WakeId);
+        Assert.Equal(1800, source.Contract.DepartureAt);
+    }
+
+    [Fact]
+    public void RejectsTaskActionSourceFromAnotherGeneration()
+    {
+        ActionRequest request = TaskActionRequest();
+        request.TaskSource.Scope.ExecutionGeneration++;
+
+        Assert.Throws<ArgumentException>(() => ProtocolMapper.RequireTaskOperationSource(request, Snapshot));
+    }
+
     private static ActionRequest ResolveRequest()
     {
         return new ActionRequest
@@ -118,6 +140,40 @@ public sealed class ProtocolMapperTaskTests
                     ["start_time"] = Value.ForNumber(1000),
                     ["end_time"] = Value.ForNumber(1100),
                 },
+            },
+        };
+    }
+
+    private static ActionRequest TaskActionRequest()
+    {
+        MeetingAgreement agreement = new(1, "beach_meeting_spot", "npc:Linus", new MeetingDate(2, "summer", 3), Snapshot.ClockId, 1800, 2040, 2100);
+        ActionRequest resolve = ResolveRequest();
+        TaskProposal proposal = ProtocolMapper.BuildMeetingResolutionResult(
+            resolve,
+            Snapshot,
+            new MeetingResolution(true, string.Empty, string.Empty, agreement, "key"),
+            "player:local").TaskProposal;
+        return new ActionRequest
+        {
+            ActionId = "action-task",
+            EntityId = "npc:Linus",
+            Capability = "move_to_landmark",
+            WorldId = Snapshot.WorldId,
+            Arguments = new Struct { Fields = { ["landmark_id"] = Value.ForString("beach_meeting_spot") } },
+            TaskSource = new TaskActionSource
+            {
+                TaskId = "task-a",
+                StartRevision = 4,
+                WakeId = "wake-a",
+                OperationId = "operation-a",
+                Scope = new TaskScope
+                {
+                    GameId = Snapshot.GameId,
+                    WorldId = Snapshot.WorldId,
+                    WorldRunId = Snapshot.WorldRunId,
+                    ExecutionGeneration = Snapshot.ExecutionGeneration,
+                },
+                TaskContract = proposal,
             },
         };
     }
