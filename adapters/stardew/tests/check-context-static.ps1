@@ -167,7 +167,7 @@ Require-Content 'src/Dialogue/DialogueInteractionMenu.cs' 'dialogue_free_text' '
 Require-Content 'src/Capabilities/MoveToCapability.cs' 'PathFindController' 'MoveToCapability must use Stardew pathfinding for movement.'
 Require-Content 'src/Capabilities/MoveToCapability.cs' 'pathToEndPoint' 'MoveToCapability must reject unreachable paths before starting movement.'
 Require-Content 'src/Capabilities/MoveToCapability.cs' 'npc\.controller' 'MoveToCapability must own the NPC path controller while moving.'
-Require-Content 'src/Capabilities/MoveToCapability.cs' 'Halt\(\)' 'MoveToCapability must stop the NPC on cancel or local clear.'
+Require-Content 'src/Capabilities/MoveToCapability.cs' 'ControllerOwnership\.Release' 'MoveToCapability must release only its owned controller on cancel or local clear.'
 Require-Content 'src/Capabilities/MoveToCapability.cs' 'CancelAll' 'MoveToCapability must support terminal cancellation for local context reset.'
 Require-Content 'src/Capabilities/MoveToCapability.cs' 'ContainsKey\(actionId\)' 'MoveToCapability must reject duplicate active action ids.'
 Require-Content 'tests/ProtocolMapper.Tests/ProtocolMapperObservationTests.cs' 'nearby_npcs_omitted_count' 'ProtocolMapper tests must cover nearby NPC truncation.'
@@ -280,6 +280,12 @@ if ($phase9EntrySource -notmatch 'if \(this.config.EnablePhase9RouteProbe\)\s*\{
 }
 Reject-Content 'src/Runtime/CapabilityCatalog.cs' 'phase9|route_probe|load_test_save' 'Phase9 diagnostic entry points must remain outside the model-visible capability list.'
 Reject-Content 'src/Runtime/RuntimeClient.cs' 'Diagnostics|phase9_route|load_test_save' 'Runtime must not dispatch the feasibility probe.'
+Require-Content 'src/Tasks/GameNpcDriver.cs' 'pathfindToNextScheduleLocation' 'Task NPC travel must use the native cross-location schedule pathfinder.'
+Require-Content 'src/Tasks/GameNpcDriver.cs' 'ControllerOwnership.Release' 'Task NPC cleanup must use the shared controller ownership policy.'
+Require-Content 'src/Tasks/NpcNativeBehaviorRestorer.cs' 'checkSchedule\(Game1.timeOfDay\)' 'Task NPC cleanup must rejoin the current native schedule.'
+Require-Content 'src/Tasks/NpcNativeBehaviorRestorer.cs' 'pathfindToNextScheduleLocation' 'Native restoration must build a fresh route from the current position.'
+Reject-Content 'src/Tasks/GameNpcDriver.cs' 'warpToPathControllerDestination|warpCharacter|setTilePosition|\.Position\s*=(?!=)|\.currentLocation\s*=(?!=)' 'Task NPC travel must not teleport or directly reposition an NPC.'
+Reject-Content 'src/Tasks/GameNpcDriver.cs' '(owned|controller|native)\.update\(' 'Task NPC orchestration must let the game update path controllers.'
 Get-ChildItem -LiteralPath (Join-Path $Root 'src/Diagnostics') -Filter '*.cs' | ForEach-Object {
     $relative = 'src/Diagnostics/' + $_.Name
     Reject-Content $relative 'warpToPathControllerDestination|warpCharacter|setTilePosition|\.Position\s*=(?!=)|\.currentLocation\s*=(?!=)' 'Phase9 diagnostic code must not teleport or directly reposition an NPC.'

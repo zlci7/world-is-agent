@@ -8,5 +8,5 @@ public interface ITaskNpcDriver
     bool Transfer(OperationKey from, OperationKey to);
     bool Owns(OperationKey operation);
     bool Hold(OperationKey operation);
-    void Release(OperationKey operation, string reason);
+    void Release(OperationKey operation, string reason, bool restoreNative = true);
 }

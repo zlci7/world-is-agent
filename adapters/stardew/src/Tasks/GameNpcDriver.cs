@@ -7,6 +7,12 @@ namespace GameAgent.Stardew.Tasks;
 public sealed class GameNpcDriver : ITaskNpcDriver
 {
     private readonly Dictionary<OperationKey, ActiveTravel> active = new();
+    private readonly NpcNativeBehaviorRestorer restorer;
+
+    public GameNpcDriver(NpcNativeBehaviorRestorer? restorer = null)
+    {
+        this.restorer = restorer ?? new NpcNativeBehaviorRestorer();
+    }
 
     public WorldPosition ReadPosition(string npcEntityId)
     {
@@ -72,19 +78,21 @@ public sealed class GameNpcDriver : ITaskNpcDriver
         return new DriverResult("running", string.Empty, Position(travel.Npc));
     }
 
-    public void Release(OperationKey operation, string reason)
+    public void Release(OperationKey operation, string reason, bool restoreNative = true)
     {
         if (!this.active.Remove(operation, out ActiveTravel? travel))
             return;
 
         travel.Npc.ignoreScheduleToday = travel.OriginalIgnoreSchedule;
         travel.Npc.endOfRouteMessage.Value = travel.OriginalEndMessage;
-        if (!ReferenceEquals(travel.Npc.controller, travel.Controller))
-            return;
-
-        travel.Npc.controller = null;
-        if (travel.Npc.temporaryController is null)
-            travel.Npc.Halt();
+        bool foreign = ControllerOwnership.Release(
+            travel.Npc.controller,
+            travel.Controller,
+            travel.Npc.temporaryController,
+            () => travel.Npc.controller = null,
+            travel.Npc.Halt);
+        if (restoreNative && !foreign)
+            this.restorer.Restore(travel.Npc);
     }
 
     public bool Transfer(OperationKey from, OperationKey to)

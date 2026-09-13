@@ -236,7 +236,7 @@ public sealed class TaskTravelTests
             this.Position = this.Next.Position;
             return this.Next;
         }
-        public void Release(OperationKey operation, string reason) => this.ReleaseCount++;
+        public void Release(OperationKey operation, string reason, bool restoreNative = true) => this.ReleaseCount++;
         public bool Transfer(OperationKey from, OperationKey to)
         {
             this.TransferCount++;

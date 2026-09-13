@@ -326,7 +326,7 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
     {
         if (!this.interactions.TryGetValue(interactionOperation, out InteractionLease? interaction) || !interaction.Committed)
             return false;
-        this.npcDriver?.Release(interactionOperation, "approach_start");
+        this.npcDriver?.Release(interactionOperation, "approach_start", restoreNative: false);
         LeaseAttempt transfer = this.leases.Transfer(interaction.Lease, approachOperation, "approach");
         if (!transfer.Acquired)
         {

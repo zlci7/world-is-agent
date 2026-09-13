@@ -28,5 +28,7 @@
     <Compile Include="..\..\src\Tasks\AdjacentTileSelector.cs" Link="AdjacentTileSelector.cs" />
     <Compile Include="..\..\src\Tasks\TaskInteractionHandoffStore.cs" Link="TaskInteractionHandoffStore.cs" />
     <Compile Include="..\..\src\Tasks\NpcInteractionLifecycle.cs" Link="NpcInteractionLifecycle.cs" />
+    <Compile Include="..\..\src\Tasks\NpcNativeSchedulePolicy.cs" Link="NpcNativeSchedulePolicy.cs" />
+    <Compile Include="..\..\src\Tasks\ControllerOwnership.cs" Link="ControllerOwnership.cs" />
   </ItemGroup>
 </Project>
