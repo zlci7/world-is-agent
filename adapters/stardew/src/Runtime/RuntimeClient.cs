@@ -36,7 +36,7 @@ public sealed class RuntimeClient : IDisposable
     private readonly MeetingWaitMonitor meetingWaitMonitor;
     private readonly NpcInteractionLifecycle taskInteractionLifecycle;
     private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
-    private readonly Dictionary<string, string> taskInteractionEventByConversation = new(StringComparer.Ordinal);
+    private readonly TaskInteractionConversationIndex taskInteractionConversations = new();
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
     private readonly SemaphoreSlim sendMu = new(1, 1);
@@ -814,9 +814,13 @@ public sealed class RuntimeClient : IDisposable
         if (!string.IsNullOrWhiteSpace(completion.EventId))
         {
             InteractionContextSnapshot? current = this.interactionContextStore.TryGet(completion.EventId);
-            bool taskConversation = current is not null && this.taskInteractionEventByConversation.ContainsKey(current.ConversationId);
-            if (!taskConversation)
+            string? taskInteractionEventId = current is null
+                ? null
+                : this.taskInteractionConversations.FindTaskEvent(current.ConversationId);
+            if (taskInteractionEventId is null)
                 this.taskInteractionLifecycle.Complete(completion.EventId, "turn_completed");
+            else if (this.taskInteractionConversations.ShouldReleaseAtTurnCompletion(completion.EventId, current!.ConversationId))
+                this.CompleteTaskInteraction(taskInteractionEventId, "turn_completed_without_ui");
             InteractionContextSnapshot? released = this.interactionContextStore.Release(completion.EventId);
             this.LogReleasedInteractionContext(released);
             this.CloseWaitingForNpcOnMainThread(released?.NpcEntityId);
@@ -1271,7 +1275,7 @@ public sealed class RuntimeClient : IDisposable
                 evidence.Source.Operation.NpcEntityId,
                 ProtocolMapper.PlayerEntityId,
                 gameEvent.EventId);
-            this.taskInteractionEventByConversation[conversationId] = gameEvent.EventId;
+            this.taskInteractionConversations.Register(conversationId, gameEvent.EventId);
             InteractionContextSnapshot snapshot = this.BuildInteractionContextSnapshot(
                 gameEvent.EventId,
                 gameEvent.WorldId,
@@ -1281,7 +1285,7 @@ public sealed class RuntimeClient : IDisposable
             if (!this.interactionContextStore.TryReserve(snapshot, out reason))
             {
                 this.conversationStore.DiscardPending(gameEvent.EventId);
-                this.taskInteractionEventByConversation.Remove(conversationId);
+                this.taskInteractionConversations.RemoveConversation(conversationId);
                 this.taskInteractionLifecycle.Reject(gameEvent.EventId, reason);
                 return false;
             }
@@ -1309,17 +1313,23 @@ public sealed class RuntimeClient : IDisposable
 
             NPC guardedNpc = npc ?? throw new InvalidOperationException("interaction guard passed without NPC");
             PresentDialogueInput input = ProtocolMapper.RequirePresentDialogueArgument(request);
-            string taskInteractionEventId = interaction is not null && this.taskInteractionEventByConversation.TryGetValue(interaction.ConversationId, out string? mappedEventId)
-                ? mappedEventId
-                : string.Empty;
+            string taskInteractionEventId = interaction is null
+                ? string.Empty
+                : this.taskInteractionConversations.FindTaskEvent(interaction.ConversationId) ?? string.Empty;
             bool finalDialogue = input.ReplyOptions.Count == 0 && !input.AllowFreeText;
+            if (!string.IsNullOrWhiteSpace(taskInteractionEventId))
+                this.taskInteractionConversations.MarkPresentation(request.SourceEventId);
             this.presentDialogueCapability.Present(
                 guardedNpc,
                 Game1.player,
                 this.currentWorldId,
                 input,
                 isCancelled: () => this.actionCancellationRegistry.TryConsumeCancelled(request.ActionId),
-                onCancelled: () => this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, "action cancelled before dialogue display"), request.Capability),
+                onCancelled: () =>
+                {
+                    this.CompleteTaskInteraction(taskInteractionEventId, "dialogue_cancelled");
+                    this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, "action cancelled before dialogue display"), request.Capability);
+                },
                 onDisplayed: conversationId => this.SendActionResult(ProtocolMapper.BuildPresentDialogueSucceededActionResult(request, conversationId, input), request.Capability),
                 onFailed: ex =>
                 {
@@ -1384,7 +1394,7 @@ public sealed class RuntimeClient : IDisposable
             RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
             TaskInteractionHandoff? taskArrival = this.taskInteractionLifecycle.FindCommitted(request.SourceEventId);
             if (taskArrival is null && interaction is not null &&
-                this.taskInteractionEventByConversation.TryGetValue(interaction.ConversationId, out string? taskInteractionEventId))
+                this.taskInteractionConversations.FindTaskEvent(interaction.ConversationId) is string taskInteractionEventId)
             {
                 taskArrival = this.taskInteractionLifecycle.FindCommitted(taskInteractionEventId);
             }
@@ -1655,9 +1665,9 @@ public sealed class RuntimeClient : IDisposable
             return;
 
         InteractionContextSnapshot? current = this.interactionContextStore.TryGet(eventId);
-        string taskInteractionEventId = current is not null && this.taskInteractionEventByConversation.TryGetValue(current.ConversationId, out string? mappedEventId)
-            ? mappedEventId
-            : eventId;
+        string taskInteractionEventId = current is null
+            ? eventId
+            : this.taskInteractionConversations.FindTaskEvent(current.ConversationId) ?? eventId;
         this.CompleteTaskInteraction(taskInteractionEventId, "interaction_abandoned");
         InteractionContextSnapshot? released = this.interactionContextStore.Release(eventId);
         this.LogReleasedInteractionContext(released);
@@ -1683,12 +1693,7 @@ public sealed class RuntimeClient : IDisposable
 
     private void RemoveTaskInteractionConversation(string eventId)
     {
-        string[] conversations = this.taskInteractionEventByConversation
-            .Where(pair => string.Equals(pair.Value, eventId, StringComparison.Ordinal))
-            .Select(pair => pair.Key)
-            .ToArray();
-        foreach (string conversationId in conversations)
-            this.taskInteractionEventByConversation.Remove(conversationId);
+        this.taskInteractionConversations.RemoveTaskEvent(eventId);
     }
 
     private void ResetTaskRuntimeState(string reason)
@@ -1697,7 +1702,7 @@ public sealed class RuntimeClient : IDisposable
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
         this.meetingWaitMonitor.Clear();
-        this.taskInteractionEventByConversation.Clear();
+        this.taskInteractionConversations.Clear();
     }
 
     private static bool IsTaskCapability(string capability) =>
