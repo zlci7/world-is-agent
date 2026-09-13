@@ -331,6 +331,19 @@ public static partial class ProtocolMapper
         result.Entities.Add(BuildTaskEntity(evidence.Source.Operation.NpcEntityId, "npc", evidence.Source.Operation.NpcEntityId["npc:".Length..]));
         result.Entities.Add(BuildTaskEntity(PlayerEntityId, "player", "Player"));
         result.TaskEvidence.Add(fact);
+        if (string.Equals(evidence.Outcome, "satisfied", StringComparison.Ordinal) &&
+            string.Equals(evidence.Code, "met", StringComparison.Ordinal))
+        {
+            result.InteractionSource = new InteractionSource
+            {
+                SourceId = result.EventId,
+                Scope = BuildTaskScope(world),
+                PlayerEntityId = PlayerEntityId,
+                TaskId = evidence.Source.Operation.TaskId,
+                OperationId = evidence.Source.Operation.OperationId,
+                Kind = "task_arrival",
+            };
+        }
         return result;
     }
 

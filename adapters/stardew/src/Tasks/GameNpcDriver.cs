@@ -102,6 +102,23 @@ public sealed class GameNpcDriver : ITaskNpcDriver
             travel.Npc.temporaryController is null;
     }
 
+    public bool Hold(OperationKey operation)
+    {
+        if (this.active.ContainsKey(operation))
+            return this.Owns(operation);
+        NPC npc = RequireNpc(operation.NpcEntityId);
+        if (npc.currentLocation is null || npc.controller is not null || npc.temporaryController is not null)
+            return false;
+
+        WorldPosition target = Position(npc);
+        TaskPathController controller = new(new Stack<Point>(), npc, target);
+        ActiveTravel hold = new(npc, controller, target, npc.ignoreScheduleToday, npc.endOfRouteMessage.Value);
+        npc.ignoreScheduleToday = true;
+        npc.controller = controller;
+        this.active.Add(operation, hold);
+        return true;
+    }
+
     private static NPC RequireNpc(string entityId)
     {
         const string Prefix = "npc:";

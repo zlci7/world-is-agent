@@ -26,5 +26,7 @@
     <Compile Include="..\..\src\Tasks\TaskTravelPolicy.cs" Link="TaskTravelPolicy.cs" />
     <Compile Include="..\..\src\Tasks\MeetingWaitMonitor.cs" Link="MeetingWaitMonitor.cs" />
     <Compile Include="..\..\src\Tasks\AdjacentTileSelector.cs" Link="AdjacentTileSelector.cs" />
+    <Compile Include="..\..\src\Tasks\TaskInteractionHandoffStore.cs" Link="TaskInteractionHandoffStore.cs" />
+    <Compile Include="..\..\src\Tasks\NpcInteractionLifecycle.cs" Link="NpcInteractionLifecycle.cs" />
   </ItemGroup>
 </Project>

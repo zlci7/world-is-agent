@@ -187,6 +187,30 @@ public sealed class TaskTravelTests
         Assert.Equal(1, npc.ReleaseCount);
     }
 
+    [Fact]
+    public void AcceptedInteractionCanLendControlToApproachAndTakeItBack()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        TaskExecutionDriver driver = Driver(npc, () => 0);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson);
+        driver.BeginTravel(travel, World, "beach_meeting_spot", catalog);
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+        driver.Poll(travel.Operation, World);
+        OperationKey wait = travel.Operation with { OperationId = "wait-a" };
+        driver.BeginWait(travel with { Operation = wait }, World, catalog);
+        Assert.True(driver.PromoteWaitToInteraction(wait));
+        Assert.True(driver.CommitInteraction(wait));
+        OperationKey approach = wait with { OperationId = "approach-a" };
+
+        Assert.True(driver.BeginInteractionApproach(wait, approach));
+        Assert.True(driver.IsHandedOff(wait.TaskId, wait.OperationId));
+        Assert.True(driver.FinishInteractionApproach(approach, returnToInteraction: true));
+        Assert.True(driver.OwnsInteraction(wait));
+        Assert.True(driver.ReleaseInteraction(wait, "turn_completed"));
+        Assert.Equal(2, npc.ReleaseCount);
+    }
+
     private static TaskExecutionDriver Driver(FakeNpcDriver npc, Func<long> elapsed) =>
         new(new TaskSourceContextStore(), new TaskOperationReceipts(), new NpcControlLease(), npc, elapsed);
 
@@ -219,5 +243,6 @@ public sealed class TaskTravelTests
             return true;
         }
         public bool Owns(OperationKey operation) => true;
+        public bool Hold(OperationKey operation) => true;
     }
 }

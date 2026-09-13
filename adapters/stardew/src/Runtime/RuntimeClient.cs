@@ -34,6 +34,7 @@ public sealed class RuntimeClient : IDisposable
     private readonly TaskExecutionDriver taskExecutionDriver;
     private readonly NpcControlLease npcControlLease;
     private readonly MeetingWaitMonitor meetingWaitMonitor;
+    private readonly NpcInteractionLifecycle taskInteractionLifecycle;
     private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
@@ -70,6 +71,7 @@ public sealed class RuntimeClient : IDisposable
         TaskExecutionDriver taskExecutionDriver,
         NpcControlLease npcControlLease,
         MeetingWaitMonitor meetingWaitMonitor,
+        NpcInteractionLifecycle taskInteractionLifecycle,
         IMonitor monitor
     )
     {
@@ -87,6 +89,7 @@ public sealed class RuntimeClient : IDisposable
         this.taskExecutionDriver = taskExecutionDriver;
         this.npcControlLease = npcControlLease;
         this.meetingWaitMonitor = meetingWaitMonitor;
+        this.taskInteractionLifecycle = taskInteractionLifecycle;
         this.monitor = monitor;
         this.worldContext = new RuntimeWorldContext(this.config.GameId, GameClock.ClockId);
     }
@@ -383,11 +386,11 @@ public sealed class RuntimeClient : IDisposable
                 break;
 
             case RuntimeMessage.PayloadOneofCase.EventAck:
-                this.HandleEventAck(message.EventAck);
+                this.dispatcher.Enqueue(() => this.HandleEventAck(message.EventAck));
                 break;
 
             case RuntimeMessage.PayloadOneofCase.TurnCompletion:
-                this.HandleTurnCompletion(message.TurnCompletion);
+                this.dispatcher.Enqueue(() => this.HandleTurnCompletion(message.TurnCompletion));
                 break;
 
             case RuntimeMessage.PayloadOneofCase.Observe:
@@ -501,10 +504,21 @@ public sealed class RuntimeClient : IDisposable
         if (request is null)
             return;
 
-        string status = "mismatch";
-        RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
-        if (this.sessionState.CanUseTasks && snapshot is not null && ScopeMatches(request.Scope, snapshot))
-            status = "unconfirmed";
+        TaskCompletionSource<string> decided = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        this.dispatcher.Enqueue(() =>
+        {
+            string status = "mismatch";
+            RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
+            if (this.sessionState.CanUseTasks && snapshot is not null && ScopeMatches(request.Scope, snapshot))
+            {
+                status = this.taskInteractionLifecycle.IsHandedOff(request.TaskId, request.OperationId)
+                    ? "handed_off"
+                    : "unconfirmed";
+            }
+            decided.TrySetResult(status);
+        });
+        using CancellationTokenRegistration registration = cancellationToken.Register(() => decided.TrySetCanceled(cancellationToken));
+        string status = await decided.Task;
 
         TaskControlResult result = new()
         {
@@ -683,20 +697,34 @@ public sealed class RuntimeClient : IDisposable
         if (ack is null)
             return;
 
+        bool taskArrival = this.taskInteractionLifecycle.Find(ack.EventId) is not null;
         switch (ack.Status)
         {
             case EventAckStatus.Accepted:
+                if (taskArrival)
+                    this.taskInteractionLifecycle.Accept(ack.EventId);
                 this.conversationStore.CommitPending(ack.EventId);
                 this.interactionContextStore.Commit(ack.EventId);
                 break;
             case EventAckStatus.Duplicate:
-                this.conversationStore.DiscardPending(ack.EventId);
-                this.CloseWaitingForNpcOnMainThread(this.interactionContextStore.DiscardPending(ack.EventId)?.NpcEntityId);
+                if (taskArrival)
+                {
+                    this.taskInteractionLifecycle.Accept(ack.EventId);
+                    this.conversationStore.CommitPending(ack.EventId);
+                    this.interactionContextStore.Commit(ack.EventId);
+                }
+                else
+                {
+                    this.conversationStore.DiscardPending(ack.EventId);
+                    this.CloseWaitingForNpcOnMainThread(this.interactionContextStore.DiscardPending(ack.EventId)?.NpcEntityId);
+                }
                 break;
             case EventAckStatus.Rejected:
             case EventAckStatus.Unspecified:
                 InteractionContextSnapshot? pending = this.interactionContextStore.DiscardPending(ack.EventId);
                 this.conversationStore.DiscardPending(ack.EventId);
+                if (taskArrival)
+                    this.taskInteractionLifecycle.Reject(ack.EventId, "event_rejected");
                 this.CloseWaitingForNpcOnMainThread(pending?.NpcEntityId);
                 if (!IsTransientEventReject(ack))
                     this.CloseInteractionConversation(pending);
@@ -721,6 +749,7 @@ public sealed class RuntimeClient : IDisposable
 
         if (!string.IsNullOrWhiteSpace(completion.EventId))
         {
+            this.taskInteractionLifecycle.Complete(completion.EventId, "turn_completed");
             InteractionContextSnapshot? released = this.interactionContextStore.Release(completion.EventId);
             this.LogReleasedInteractionContext(released);
             this.CloseWaitingForNpcOnMainThread(released?.NpcEntityId);
@@ -734,6 +763,7 @@ public sealed class RuntimeClient : IDisposable
 
     private void ClearRuntimeStreamStateOnMainThread()
     {
+        this.taskInteractionLifecycle.Clear("runtime_disconnected");
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
         this.meetingWaitMonitor.Clear();
@@ -767,6 +797,7 @@ public sealed class RuntimeClient : IDisposable
             return;
         }
 
+        this.taskInteractionLifecycle.Clear("world_replaced");
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
         this.meetingWaitMonitor.Clear();
@@ -807,6 +838,7 @@ public sealed class RuntimeClient : IDisposable
 
     public void ClearWorldContext()
     {
+        this.taskInteractionLifecycle.Clear("world_cleared");
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
         this.meetingWaitMonitor.Clear();
@@ -836,6 +868,11 @@ public sealed class RuntimeClient : IDisposable
             return;
 
         this.taskExecutionDriver.ExpireArrivalHandoffs();
+        foreach (TaskInteractionHandoff expired in this.taskInteractionLifecycle.ExpirePendingHandoffs())
+        {
+            this.conversationStore.DiscardPending(expired.EventId);
+            this.interactionContextStore.DiscardPending(expired.EventId);
+        }
         foreach (OperationKey operation in this.activeTaskActions.Keys.ToArray())
         {
             if (!this.activeTaskActions.TryGetValue(operation, out ActiveTaskOperation? active))
@@ -1134,11 +1171,23 @@ public sealed class RuntimeClient : IDisposable
             if (evidence is null)
                 continue;
 
-            this.taskExecutionDriver.FinishWait(operation, evidence.Code);
             GameEvent gameEvent = ProtocolMapper.BuildWaitEvidenceEvent(
                 evidence,
                 world,
                 unchecked((ulong)Interlocked.Increment(ref this.eventSequence)));
+            if (gameEvent.InteractionSource is not null)
+            {
+                if (!this.TryPrepareTaskArrival(gameEvent, evidence, out string reason))
+                {
+                    this.taskExecutionDriver.FinishWait(operation, "interaction_handoff_failed");
+                    gameEvent.InteractionSource = null;
+                    this.monitor.Log($"GameAgent task arrival interaction suppressed: {reason}.", LogLevel.Warn);
+                }
+            }
+            else
+            {
+                this.taskExecutionDriver.FinishWait(operation, evidence.Code);
+            }
             messages.Add(new AdapterMessage
             {
                 MessageId = gameEvent.EventId,
@@ -1146,6 +1195,41 @@ public sealed class RuntimeClient : IDisposable
             });
         }
         return messages;
+    }
+
+    private bool TryPrepareTaskArrival(GameEvent gameEvent, WaitEvidence evidence, out string reason)
+    {
+        if (!this.taskInteractionLifecycle.TryBegin(gameEvent.EventId, evidence.Source, out reason))
+            return false;
+        try
+        {
+            NPC npc = this.RequireNpc(evidence.Source.Operation.NpcEntityId);
+            string conversationId = this.conversationStore.PrepareInteraction(
+                gameEvent.WorldId,
+                evidence.Source.Operation.NpcEntityId,
+                ProtocolMapper.PlayerEntityId,
+                gameEvent.EventId);
+            InteractionContextSnapshot snapshot = this.BuildInteractionContextSnapshot(
+                gameEvent.EventId,
+                gameEvent.WorldId,
+                npc,
+                Game1.player,
+                conversationId);
+            if (!this.interactionContextStore.TryReserve(snapshot, out reason))
+            {
+                this.conversationStore.DiscardPending(gameEvent.EventId);
+                this.taskInteractionLifecycle.Reject(gameEvent.EventId, reason);
+                return false;
+            }
+            return true;
+        }
+        catch
+        {
+            this.conversationStore.DiscardPending(gameEvent.EventId);
+            this.interactionContextStore.DiscardPending(gameEvent.EventId);
+            this.taskInteractionLifecycle.Reject(gameEvent.EventId, "interaction_prepare_failed");
+            throw;
+        }
     }
 
     private void HandlePresentDialogueAction(ActionRequest request)
@@ -1188,6 +1272,15 @@ public sealed class RuntimeClient : IDisposable
     private void HandleApproachPlayerAction(ActionRequest request)
     {
         LeaseToken? lease = null;
+        OperationKey? operation = null;
+        bool borrowedTaskInteraction = false;
+        void ReleaseControl(string reason)
+        {
+            if (borrowedTaskInteraction && operation is not null)
+                this.taskInteractionLifecycle.FinishApproach(operation, returnToInteraction: true);
+            else if (lease is not null)
+                this.npcControlLease.Release(lease, reason);
+        }
         try
         {
             if (request.TaskSource is not null)
@@ -1211,20 +1304,34 @@ public sealed class RuntimeClient : IDisposable
             }
 
             RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
-            OperationKey operation = new(
-                world.WorldId,
-                world.WorldRunId,
-                world.ExecutionGeneration,
-                request.EntityId,
-                "interaction:" + request.SourceEventId,
-                request.ActionId);
-            LeaseAttempt attempt = this.npcControlLease.Acquire(operation, "approach");
-            if (!attempt.Acquired)
+            TaskInteractionHandoff? taskArrival = this.taskInteractionLifecycle.FindCommitted(request.SourceEventId);
+            if (taskArrival is not null)
             {
-                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, attempt.Code, "NPC is controlled by another operation"), request.Capability);
-                return;
+                operation = taskArrival.Source.Operation with { OperationId = "approach:" + request.ActionId };
+                if (!this.taskInteractionLifecycle.TryBeginApproach(request.SourceEventId, operation))
+                {
+                    this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "control_lost", "task interaction control is unavailable"), request.Capability);
+                    return;
+                }
+                borrowedTaskInteraction = true;
             }
-            lease = attempt.Token;
+            else
+            {
+                operation = new OperationKey(
+                    world.WorldId,
+                    world.WorldRunId,
+                    world.ExecutionGeneration,
+                    request.EntityId,
+                    "interaction:" + request.SourceEventId,
+                    request.ActionId);
+                LeaseAttempt attempt = this.npcControlLease.Acquire(operation, "approach");
+                if (!attempt.Acquired)
+                {
+                    this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, attempt.Code, "NPC is controlled by another operation"), request.Capability);
+                    return;
+                }
+                lease = attempt.Token;
+            }
             NPC guardedNpc = npc ?? throw new InvalidOperationException("interaction guard passed without NPC");
             ApproachPlayerStart start = this.approachPlayerCapability.Start(
                 request.ActionId,
@@ -1233,19 +1340,19 @@ public sealed class RuntimeClient : IDisposable
                 isCancelled: () => this.actionCancellationRegistry.IsCancelled(request.ActionId),
                 onSucceeded: result =>
                 {
-                    this.npcControlLease.Release(lease!, "arrived");
+                    ReleaseControl("arrived");
                     this.actionCancellationRegistry.Clear(request.ActionId);
                     this.SendActionResult(ProtocolMapper.BuildApproachPlayerSucceededActionResult(request, result), request.Capability);
                 },
                 onCancelled: reason =>
                 {
-                    this.npcControlLease.Release(lease!, "cancelled");
+                    ReleaseControl("cancelled");
                     this.actionCancellationRegistry.Clear(request.ActionId);
                     this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, reason), request.Capability);
                 },
                 onFailed: (code, ex) =>
                 {
-                    this.npcControlLease.Release(lease!, code);
+                    ReleaseControl(code);
                     this.actionCancellationRegistry.Clear(request.ActionId);
                     this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, code, ex), request.Capability);
                 });
@@ -1255,7 +1362,7 @@ public sealed class RuntimeClient : IDisposable
             this.SendActionStatusUpdate(request, ActionStatus.Running, metadata);
             if (start.AlreadyAtTarget)
             {
-                this.npcControlLease.Release(lease!, "already_at_target");
+                ReleaseControl("already_at_target");
                 this.actionCancellationRegistry.Clear(request.ActionId);
                 ApproachPlayerResult result = ApproachPlayerCapability.CompleteAlreadyAtTarget(start, guardedNpc, Game1.player);
                 this.SendActionResult(ProtocolMapper.BuildApproachPlayerSucceededActionResult(request, result), request.Capability);
@@ -1263,27 +1370,23 @@ public sealed class RuntimeClient : IDisposable
         }
         catch (ApproachPlayerException ex)
         {
-            if (lease is not null)
-                this.npcControlLease.Release(lease, ex.Code);
+            ReleaseControl(ex.Code);
             this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, ex.Code, ex.Message), request.Capability);
         }
         catch (ArgumentException ex)
         {
-            if (lease is not null)
-                this.npcControlLease.Release(lease, "invalid_action_arguments");
+            ReleaseControl("invalid_action_arguments");
             this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_action_arguments", ex.Message), request.Capability);
         }
         catch (OperationCanceledException ex)
         {
-            if (lease is not null)
-                this.npcControlLease.Release(lease, "cancelled");
+            ReleaseControl("cancelled");
             this.actionCancellationRegistry.Clear(request.ActionId);
             this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, ex.Message), request.Capability);
         }
         catch (Exception ex)
         {
-            if (lease is not null)
-                this.npcControlLease.Release(lease, "approach_failed");
+            ReleaseControl("approach_failed");
             this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "approach_failed", ex), request.Capability);
         }
     }
@@ -1468,6 +1571,7 @@ public sealed class RuntimeClient : IDisposable
         if (string.IsNullOrWhiteSpace(eventId))
             return;
 
+        this.taskInteractionLifecycle.Complete(eventId, "interaction_abandoned");
         InteractionContextSnapshot? released = this.interactionContextStore.Release(eventId);
         this.LogReleasedInteractionContext(released);
         this.CloseWaitingForNpcOnMainThread(released?.NpcEntityId);

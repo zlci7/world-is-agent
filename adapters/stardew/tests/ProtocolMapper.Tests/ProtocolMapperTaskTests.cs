@@ -170,6 +170,9 @@ public sealed class ProtocolMapperTaskTests
         Assert.False(fact.HasWaitUntil);
         Assert.Equal("npc:Linus", gameEvent.TargetEntityId);
         Assert.Equal((ulong)42, gameEvent.Sequence);
+        Assert.Equal("task_arrival", gameEvent.InteractionSource.Kind);
+        Assert.Equal(source.Operation.TaskId, gameEvent.InteractionSource.TaskId);
+        Assert.Equal(source.Operation.OperationId, gameEvent.InteractionSource.OperationId);
     }
 
     [Fact]

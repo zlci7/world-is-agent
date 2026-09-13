@@ -130,6 +130,7 @@ public sealed class MoveToCapability
         if (!this.activeActions.Remove(actionId, out ActiveMoveToAction? active))
             return;
 
+        StopController(active);
         active.OnSucceeded(CurrentProgress(active.Npc));
     }
 

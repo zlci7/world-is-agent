@@ -4,7 +4,7 @@ using GameAgent.Stardew.Runtime;
 
 namespace GameAgent.Stardew.Tasks;
 
-public sealed class TaskExecutionDriver
+public sealed class TaskExecutionDriver : ITaskInteractionControl
 {
     public const long TravelTimeoutMilliseconds = 180_000;
     public const long ArrivalHandoffTimeoutMilliseconds = 120_000;
@@ -17,6 +17,8 @@ public sealed class TaskExecutionDriver
     private readonly Dictionary<OperationKey, ActiveOperation> active = new();
     private readonly Dictionary<OperationKey, HeldOperation> arrivalHandoffs = new();
     private readonly Dictionary<OperationKey, LeaseToken> waiting = new();
+    private readonly Dictionary<OperationKey, InteractionLease> interactions = new();
+    private readonly Dictionary<OperationKey, InteractionApproach> interactionApproaches = new();
 
     public TaskExecutionDriver(
         TaskSourceContextStore sources,
@@ -264,6 +266,119 @@ public sealed class TaskExecutionDriver
         return true;
     }
 
+    public bool PromoteWaitToInteraction(OperationKey operation)
+    {
+        if (!this.waiting.Remove(operation, out LeaseToken? waitingLease))
+            return false;
+        LeaseAttempt transfer = this.leases.Transfer(waitingLease, operation, "interaction");
+        if (!transfer.Acquired)
+        {
+            this.waiting.Add(operation, waitingLease);
+            return false;
+        }
+        this.interactions.Add(operation, new InteractionLease(transfer.Token!, Committed: false));
+        return true;
+    }
+
+    public bool CommitInteraction(OperationKey operation)
+    {
+        if (!this.interactions.TryGetValue(operation, out InteractionLease? interaction))
+            return false;
+        if (interaction.Committed)
+            return true;
+        this.interactions[operation] = interaction with { Committed = true };
+        return true;
+    }
+
+    public bool ReleaseInteraction(OperationKey operation, string reason)
+    {
+        if (!this.interactions.Remove(operation, out InteractionLease? interaction))
+        {
+            KeyValuePair<OperationKey, InteractionApproach>? borrowed = this.interactionApproaches
+                .Where(pair => pair.Value.InteractionOperation == operation)
+                .Select(pair => (KeyValuePair<OperationKey, InteractionApproach>?)pair)
+                .SingleOrDefault();
+            if (borrowed is null)
+                return false;
+            this.interactionApproaches.Remove(borrowed.Value.Key);
+            try
+            {
+                this.npcDriver?.Release(borrowed.Value.Key, reason);
+            }
+            finally
+            {
+                this.leases.Release(borrowed.Value.Value.Lease, reason);
+            }
+            return true;
+        }
+        try
+        {
+            this.npcDriver?.Release(operation, reason);
+        }
+        finally
+        {
+            this.leases.Release(interaction.Lease, reason);
+        }
+        return true;
+    }
+
+    public bool BeginInteractionApproach(OperationKey interactionOperation, OperationKey approachOperation)
+    {
+        if (!this.interactions.TryGetValue(interactionOperation, out InteractionLease? interaction) || !interaction.Committed)
+            return false;
+        this.npcDriver?.Release(interactionOperation, "approach_start");
+        LeaseAttempt transfer = this.leases.Transfer(interaction.Lease, approachOperation, "approach");
+        if (!transfer.Acquired)
+        {
+            this.npcDriver?.Hold(interactionOperation);
+            return false;
+        }
+
+        this.interactions.Remove(interactionOperation);
+        this.interactionApproaches.Add(approachOperation, new InteractionApproach(transfer.Token!, interactionOperation));
+        return true;
+    }
+
+    public bool FinishInteractionApproach(OperationKey approachOperation, bool returnToInteraction)
+    {
+        if (!this.interactionApproaches.Remove(approachOperation, out InteractionApproach? approach))
+            return false;
+        if (returnToInteraction)
+        {
+            LeaseAttempt transfer = this.leases.Transfer(approach.Lease, approach.InteractionOperation, "interaction");
+            if (transfer.Acquired && (this.npcDriver?.Hold(approach.InteractionOperation) ?? false))
+            {
+                this.interactions.Add(approach.InteractionOperation, new InteractionLease(transfer.Token!, Committed: true));
+                return true;
+            }
+            if (transfer.Acquired)
+                this.leases.Release(transfer.Token!, "interaction_hold_failed");
+        }
+
+        try
+        {
+            this.npcDriver?.Release(approachOperation, "approach_finished");
+        }
+        finally
+        {
+            this.leases.Release(approach.Lease, "approach_finished");
+        }
+        return !returnToInteraction;
+    }
+
+    public bool OwnsInteraction(OperationKey operation) =>
+        this.interactions.TryGetValue(operation, out InteractionLease? interaction) &&
+        this.leases.IsOwned(interaction.Lease) &&
+        (this.npcDriver?.Owns(operation) ?? false);
+
+    public bool IsHandedOff(string taskId, string operationId) =>
+        this.interactions.Keys.Any(operation =>
+            string.Equals(operation.TaskId, taskId, StringComparison.Ordinal) &&
+            string.Equals(operation.OperationId, operationId, StringComparison.Ordinal)) ||
+        this.interactionApproaches.Values.Any(approach =>
+            string.Equals(approach.InteractionOperation.TaskId, taskId, StringComparison.Ordinal) &&
+            string.Equals(approach.InteractionOperation.OperationId, operationId, StringComparison.Ordinal));
+
     public bool OwnsWait(OperationKey operation) =>
         this.waiting.TryGetValue(operation, out LeaseToken? lease) &&
         this.leases.IsOwned(lease) &&
@@ -336,9 +451,33 @@ public sealed class TaskExecutionDriver
                 this.leases.Release(lease, "world_cleared");
             }
         }
+        foreach ((OperationKey operation, InteractionLease interaction) in this.interactions)
+        {
+            try
+            {
+                this.npcDriver?.Release(operation, "world_cleared");
+            }
+            finally
+            {
+                this.leases.Release(interaction.Lease, "world_cleared");
+            }
+        }
+        foreach ((OperationKey operation, InteractionApproach approach) in this.interactionApproaches)
+        {
+            try
+            {
+                this.npcDriver?.Release(operation, "world_cleared");
+            }
+            finally
+            {
+                this.leases.Release(approach.Lease, "world_cleared");
+            }
+        }
         this.active.Clear();
         this.arrivalHandoffs.Clear();
         this.waiting.Clear();
+        this.interactions.Clear();
+        this.interactionApproaches.Clear();
         this.sources.Clear();
         this.receipts.Clear();
     }
@@ -375,4 +514,6 @@ public sealed class TaskExecutionDriver
         long StartedAtMilliseconds);
 
     private sealed record HeldOperation(LeaseToken Lease, long HeldAtMilliseconds);
+    private sealed record InteractionLease(LeaseToken Lease, bool Committed);
+    private sealed record InteractionApproach(LeaseToken Lease, OperationKey InteractionOperation);
 }
