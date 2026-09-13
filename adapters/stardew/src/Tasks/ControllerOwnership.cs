@@ -2,8 +2,8 @@ namespace GameAgent.Stardew.Tasks;
 
 public static class ControllerOwnership
 {
-    public static bool IsExclusive(object? main, object? owned, object? temporary) =>
-        owned is not null && ReferenceEquals(main, owned) && temporary is null;
+    public static bool OwnsMain(object? main, object? owned) =>
+        owned is not null && ReferenceEquals(main, owned);
 
     public static bool Release(object? main, object? owned, object? temporary, Action detachOwned, Action halt)
     {

@@ -246,8 +246,12 @@ public sealed class RuntimeClient : IDisposable
     private async Task SendPlayerDialogueSubmissionAsync(NPC npc, Farmer player, PlayerDialogueSubmission submission)
     {
         string worldId = this.currentWorldId;
+        string taskInteractionEventId = this.taskInteractionConversations.FindTaskEvent(submission.ConversationId) ?? string.Empty;
         if (!this.IsReady || !RuntimeWorldScope.IsAvailable(worldId))
+        {
+            this.AbortTaskConversation(worldId, ProtocolMapper.ToNpcEntityId(npc), submission.ConversationId, taskInteractionEventId, "runtime_unavailable");
             return;
+        }
 
         ulong sequence = unchecked((ulong)Interlocked.Increment(ref this.eventSequence));
         string npcEntityId = ProtocolMapper.ToNpcEntityId(npc);
@@ -283,6 +287,7 @@ public sealed class RuntimeClient : IDisposable
             if (!this.interactionContextStore.TryReserveHandoff(snapshot, out string reason))
             {
                 this.conversationStore.DiscardPending(eventId);
+                this.AbortTaskConversation(worldId, npcEntityId, submission.ConversationId, taskInteractionEventId, reason);
                 this.monitor.Log($"GameAgent player dialogue event suppressed: {reason}.", LogLevel.Debug);
                 return;
             }
@@ -301,6 +306,7 @@ public sealed class RuntimeClient : IDisposable
         {
             this.conversationStore.DiscardPending(eventId);
             this.interactionContextStore.DiscardPending(eventId);
+            this.AbortTaskConversation(worldId, npcEntityId, submission.ConversationId, taskInteractionEventId, "event_send_failed");
             this.CloseWaitingForNpcOnMainThread(npcEntityId);
             throw;
         }
@@ -674,9 +680,13 @@ public sealed class RuntimeClient : IDisposable
         ActionResult result;
         this.presentDialogueCapability.CloseWaitingForNpc(request.EntityId);
 
-        if (IsTaskCapability(request.Capability) && !this.sessionState.TaskExtensionAccepted)
+        if (CapabilityCatalog.RequiresTaskReady(request.Capability) && !this.sessionState.TaskExtensionAccepted)
         {
             result = ProtocolMapper.BuildRejectedActionResult(request, "task_extension_not_negotiated", "durable task extension was not negotiated");
+        }
+        else if (CapabilityCatalog.RequiresTaskReady(request.Capability) && !this.IsTaskReady)
+        {
+            result = ProtocolMapper.BuildRejectedActionResult(request, "task_not_ready", "durable task world is not ready");
         }
         else if (request.TaskSource is not null && !this.IsTaskReady)
         {
@@ -762,6 +772,14 @@ public sealed class RuntimeClient : IDisposable
             return;
 
         bool taskArrival = this.taskInteractionLifecycle.Find(ack.EventId) is not null;
+        InteractionContextSnapshot? ackContext = string.IsNullOrWhiteSpace(ack.EventId)
+            ? null
+            : this.interactionContextStore.Find(ack.EventId);
+        string taskInteractionEventId = taskArrival
+            ? ack.EventId
+            : ackContext is null
+                ? string.Empty
+                : this.taskInteractionConversations.FindTaskEvent(ackContext.ConversationId) ?? string.Empty;
         switch (ack.Status)
         {
             case EventAckStatus.Accepted:
@@ -772,26 +790,25 @@ public sealed class RuntimeClient : IDisposable
                 break;
             case EventAckStatus.Duplicate:
                 if (taskArrival)
-                {
                     this.taskInteractionLifecycle.Accept(ack.EventId);
-                    this.conversationStore.CommitPending(ack.EventId);
-                    this.interactionContextStore.Commit(ack.EventId);
-                }
-                else
-                {
-                    this.conversationStore.DiscardPending(ack.EventId);
-                    this.CloseWaitingForNpcOnMainThread(this.interactionContextStore.DiscardPending(ack.EventId)?.NpcEntityId);
-                }
+                this.conversationStore.CommitPending(ack.EventId);
+                this.interactionContextStore.Commit(ack.EventId);
                 break;
             case EventAckStatus.Rejected:
             case EventAckStatus.Unspecified:
                 InteractionContextSnapshot? pending = this.interactionContextStore.DiscardPending(ack.EventId);
                 this.conversationStore.DiscardPending(ack.EventId);
                 if (taskArrival)
+                {
                     this.taskInteractionLifecycle.Reject(ack.EventId, "event_rejected");
+                    this.RemoveTaskInteractionConversation(ack.EventId);
+                }
+                else if (!string.IsNullOrWhiteSpace(taskInteractionEventId))
+                {
+                    this.CompleteTaskInteraction(taskInteractionEventId, "event_rejected");
+                }
                 this.CloseWaitingForNpcOnMainThread(pending?.NpcEntityId);
-                if (!IsTransientEventReject(ack))
-                    this.CloseInteractionConversation(pending);
+                this.CloseInteractionConversation(pending);
                 break;
         }
 
@@ -799,11 +816,6 @@ public sealed class RuntimeClient : IDisposable
             $"GameAgent EventAck received: event_id={ack.EventId} status={ack.Status} code={ack.Error?.Code ?? string.Empty} message={ack.Error?.Message ?? string.Empty}",
             ack.Status == EventAckStatus.Rejected ? LogLevel.Warn : LogLevel.Debug
         );
-    }
-
-    private static bool IsTransientEventReject(EventAck ack)
-    {
-        return string.Equals(ack.Error?.Code, "session_queue_full", StringComparison.Ordinal);
     }
 
     private void HandleTurnCompletion(TurnCompletion? completion)
@@ -1705,8 +1717,23 @@ public sealed class RuntimeClient : IDisposable
         this.taskInteractionConversations.Clear();
     }
 
-    private static bool IsTaskCapability(string capability) =>
-        capability is "resolve_meeting" or "move_to_landmark" or "wait_for_player";
+    private void AbortTaskConversation(
+        string worldId,
+        string npcEntityId,
+        string conversationId,
+        string taskInteractionEventId,
+        string reason)
+    {
+        if (string.IsNullOrWhiteSpace(taskInteractionEventId))
+            return;
+        this.CompleteTaskInteraction(taskInteractionEventId, reason);
+        this.interactionContextStore.Release(taskInteractionEventId);
+        this.conversationStore.CloseIfConversation(
+            worldId,
+            npcEntityId,
+            ProtocolMapper.PlayerEntityId,
+            conversationId);
+    }
 
     private void CloseWaitingForNpcOnMainThread(string? npcEntityId)
     {

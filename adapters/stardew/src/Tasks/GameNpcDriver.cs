@@ -83,18 +83,19 @@ public sealed class GameNpcDriver : ITaskNpcDriver
         if (!this.active.Remove(operation, out ActiveTravel? travel))
             return;
 
-        if (!ControllerOwnership.IsExclusive(travel.Npc.controller, travel.Controller, travel.Npc.temporaryController))
-            return;
-
-        travel.Npc.ignoreScheduleToday = travel.OriginalIgnoreSchedule;
-        travel.Npc.endOfRouteMessage.Value = travel.OriginalEndMessage;
+        bool ownsMain = ControllerOwnership.OwnsMain(travel.Npc.controller, travel.Controller);
+        if (ownsMain)
+        {
+            travel.Npc.ignoreScheduleToday = travel.OriginalIgnoreSchedule;
+            travel.Npc.endOfRouteMessage.Value = travel.OriginalEndMessage;
+        }
         bool foreign = ControllerOwnership.Release(
             travel.Npc.controller,
             travel.Controller,
             travel.Npc.temporaryController,
             () => travel.Npc.controller = null,
             travel.Npc.Halt);
-        if (restoreNative && !foreign)
+        if (restoreNative && ownsMain && !foreign)
             this.restorer.Restore(travel.Npc);
     }
 

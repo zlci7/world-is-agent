@@ -92,5 +92,9 @@ public sealed class ProtocolMapperCapabilityTests
         Assert.DoesNotContain(capabilities.Capabilities, capability => capability.Name == "move_to_landmark");
         Assert.DoesNotContain(capabilities.Capabilities, capability => capability.Name == "wait_for_player");
         Assert.Contains(capabilities.Capabilities, capability => capability.Name == "move_to");
+        Assert.True(CapabilityCatalog.RequiresTaskReady("resolve_meeting"));
+        Assert.True(CapabilityCatalog.RequiresTaskReady("move_to_landmark"));
+        Assert.True(CapabilityCatalog.RequiresTaskReady("wait_for_player"));
+        Assert.False(CapabilityCatalog.RequiresTaskReady("move_to"));
     }
 }

@@ -21,6 +21,9 @@ public static class CapabilityCatalog
     private const string MoveToInputSchemaJson =
         "{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\"},\"tile\":{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"integer\"},\"y\":{\"type\":\"integer\"}},\"required\":[\"x\",\"y\"],\"additionalProperties\":false}},\"required\":[\"location\",\"tile\"],\"additionalProperties\":false}";
 
+    public static bool RequiresTaskReady(string capability) =>
+        capability is "resolve_meeting" or "move_to_landmark" or "wait_for_player";
+
     public static CapabilityList BuildEnvironmentCapabilities(
         IEnumerable<Landmark>? landmarks = null,
         bool includeTaskCapabilities = true)

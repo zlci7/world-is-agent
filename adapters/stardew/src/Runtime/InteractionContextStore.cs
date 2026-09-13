@@ -178,6 +178,15 @@ public sealed class InteractionContextStore
         }
     }
 
+    public InteractionContextSnapshot? Find(string eventId)
+    {
+        string normalizedEventId = RequireNonEmpty(eventId, nameof(eventId));
+        lock (this.gate)
+            return this.contexts.TryGetValue(normalizedEventId, out PendingInteractionContext? pending)
+                ? pending.Snapshot
+                : null;
+    }
+
     public bool TryResolve(ActionRequest request, out InteractionContextSnapshot? snapshot, out string errorCode, out string message)
     {
         snapshot = null;

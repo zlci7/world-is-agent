@@ -14,6 +14,7 @@ public sealed class InteractionContextStoreTests
 
         Assert.True(interactionContexts.TryReserve(interactionSnapshot, out string inFlightReason));
         Assert.Equal("", inFlightReason);
+        Assert.Equal(interactionSnapshot, interactionContexts.Find("event_guard_1"));
         Assert.Null(interactionContexts.TryGet("event_guard_1"));
         Assert.False(interactionContexts.TryReserve(interactionSnapshot with { EventId = "event_guard_pending_2", ConversationId = "conv_guard_pending_2" }, out inFlightReason));
         Assert.Equal("interaction_in_flight", inFlightReason);
