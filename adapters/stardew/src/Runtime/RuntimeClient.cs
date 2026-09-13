@@ -28,6 +28,8 @@ public sealed class RuntimeClient : IDisposable
     private readonly PresentDialogueCapability presentDialogueCapability;
     private readonly FacePlayerCapability facePlayerCapability;
     private readonly MoveToCapability moveToCapability;
+    private readonly ResolveMeetingCapability resolveMeetingCapability;
+    private readonly LandmarkCatalog landmarkCatalog;
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
     private readonly SemaphoreSlim sendMu = new(1, 1);
@@ -57,6 +59,8 @@ public sealed class RuntimeClient : IDisposable
         PresentDialogueCapability presentDialogueCapability,
         FacePlayerCapability facePlayerCapability,
         MoveToCapability moveToCapability,
+        ResolveMeetingCapability resolveMeetingCapability,
+        LandmarkCatalog landmarkCatalog,
         IMonitor monitor
     )
     {
@@ -68,6 +72,8 @@ public sealed class RuntimeClient : IDisposable
         this.presentDialogueCapability = presentDialogueCapability;
         this.facePlayerCapability = facePlayerCapability;
         this.moveToCapability = moveToCapability;
+        this.resolveMeetingCapability = resolveMeetingCapability;
+        this.landmarkCatalog = landmarkCatalog;
         this.monitor = monitor;
         this.worldContext = new RuntimeWorldContext(this.config.GameId, GameClock.ClockId);
     }
@@ -398,7 +404,7 @@ public sealed class RuntimeClient : IDisposable
 
     private async Task SendCapabilitiesAsync(string correlationId, CancellationToken cancellationToken)
     {
-        CapabilityList capabilities = CapabilityCatalog.BuildEnvironmentCapabilities();
+        CapabilityList capabilities = CapabilityCatalog.BuildEnvironmentCapabilities(this.landmarkCatalog.Landmarks);
 
         await this.SendAsync(
             new AdapterMessage
@@ -610,6 +616,12 @@ public sealed class RuntimeClient : IDisposable
                 if (request.Capability == "move_to")
                 {
                     this.HandleMoveToAction(request);
+                    return;
+                }
+
+                if (request.Capability == "resolve_meeting")
+                {
+                    this.HandleResolveMeetingAction(request);
                     return;
                 }
 
@@ -866,6 +878,59 @@ public sealed class RuntimeClient : IDisposable
 
         string appliedEmote = this.emoteCapability.Emote(npc, emote);
         return ProtocolMapper.BuildSucceededActionResult(request, "emote", appliedEmote);
+    }
+
+    private void HandleResolveMeetingAction(ActionRequest request)
+    {
+        try
+        {
+            if (request.TaskSource is not null)
+            {
+                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_task_source", "resolve_meeting requires a current player interaction"), request.Capability);
+                return;
+            }
+            if (!this.TryGuardInteractionContext(request, requireProximity: true, out NPC? npc, out _, out ActionResult? rejected))
+            {
+                this.SendActionResult(rejected ?? throw new InvalidOperationException("interaction guard rejected without ActionResult"), request.Capability);
+                return;
+            }
+
+            RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
+            NPC guardedNpc = npc ?? throw new InvalidOperationException("interaction guard passed without NPC");
+            MeetingRequest input = ProtocolMapper.RequireResolveMeetingArgument(request);
+            MeetingResolution resolution = this.resolveMeetingCapability.Resolve(
+                world,
+                request.EntityId,
+                ProtocolMapper.PlayerEntityId,
+                guardedNpc.currentLocation?.Name ?? string.Empty,
+                input,
+                ReadFestivalKnowledge(input.TargetDate)
+            );
+            this.SendActionResult(ProtocolMapper.BuildMeetingResolutionResult(request, world, resolution, ProtocolMapper.PlayerEntityId), request.Capability);
+        }
+        catch (ArgumentException ex)
+        {
+            this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_action_arguments", ex.Message), request.Capability);
+        }
+        catch (Exception ex)
+        {
+            this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "resolve_meeting_failed", ex), request.Capability);
+        }
+    }
+
+    private static FestivalKnowledge ReadFestivalKnowledge(MeetingDate date)
+    {
+        try
+        {
+            Dictionary<string, string> festivalDates = Game1.content.Load<Dictionary<string, string>>("Data\\Festivals\\FestivalDates");
+            return festivalDates.ContainsKey(date.Season + date.DayOfMonth.ToString(CultureInfo.InvariantCulture))
+                ? FestivalKnowledge.Festival
+                : FestivalKnowledge.NotFestival;
+        }
+        catch
+        {
+            return FestivalKnowledge.Unknown;
+        }
     }
 
     private void HandlePresentDialogueAction(ActionRequest request)

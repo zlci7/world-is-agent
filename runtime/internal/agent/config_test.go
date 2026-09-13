@@ -317,6 +317,26 @@ func TestBundledStardewConfigEnablesDefinitionCatalogRoot(t *testing.T) {
 	}
 }
 
+func TestStardewTaskExecutionBudget(t *testing.T) {
+	cfg, err := agent.LoadConfigFile(filepath.Join("..", "..", "config", "games", "stardew-valley", "agent.json"))
+	if err != nil {
+		t.Fatalf("load bundled Stardew config: %v", err)
+	}
+	if cfg.AsyncActionTimeout != 190*time.Second {
+		t.Fatalf("AsyncActionTimeout = %s, want 190s", cfg.AsyncActionTimeout)
+	}
+	if cfg.TurnTimeout != 270*time.Second {
+		t.Fatalf("TurnTimeout = %s, want 270s", cfg.TurnTimeout)
+	}
+	defaults := agent.DefaultConfig()
+	if defaults.AsyncActionTimeout != 45*time.Second || defaults.TurnTimeout != 90*time.Second {
+		t.Fatalf("generic timeout defaults changed: async=%s turn=%s", defaults.AsyncActionTimeout, defaults.TurnTimeout)
+	}
+	if cfg.MaxSteps != 3 || cfg.MaxAsyncActionsPerTurn != 1 {
+		t.Fatalf("model execution limits changed: steps=%d async=%d", cfg.MaxSteps, cfg.MaxAsyncActionsPerTurn)
+	}
+}
+
 func gameSpecificToolInstructionTerms() []string {
 	return []string{
 		"present_dialogue",

@@ -1,4 +1,8 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using GameAgent.Protocol.V1Alpha2;
+using GameAgent.Stardew.Tasks;
 using Google.Protobuf.WellKnownTypes;
 
 namespace GameAgent.Stardew.Runtime;
@@ -17,9 +21,9 @@ public static class CapabilityCatalog
     private const string MoveToInputSchemaJson =
         "{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\"},\"tile\":{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"integer\"},\"y\":{\"type\":\"integer\"}},\"required\":[\"x\",\"y\"],\"additionalProperties\":false}},\"required\":[\"location\",\"tile\"],\"additionalProperties\":false}";
 
-    public static CapabilityList BuildEnvironmentCapabilities()
+    public static CapabilityList BuildEnvironmentCapabilities(IEnumerable<Landmark>? landmarks = null)
     {
-        return new CapabilityList
+        CapabilityList result = new()
         {
             Revision = 1,
             Capabilities =
@@ -63,6 +67,26 @@ public static class CapabilityCatalog
                 },
             },
         };
+
+        if (landmarks is not null)
+        {
+            string[] ids = landmarks.Select(landmark => landmark.LandmarkId).Distinct().OrderBy(id => id).ToArray();
+            if (ids.Length != 0)
+            {
+                string landmarkEnum = JsonSerializer.Serialize(ids);
+                result.Capabilities.Add(new Capability
+                {
+                    Name = "resolve_meeting",
+                    Version = "0.1.0",
+                    Description = "Validates a player-agreed future meeting and returns a proposal for create_task. It does not create the task itself.",
+                    InputSchemaJson = $"{{\"type\":\"object\",\"properties\":{{\"landmark_id\":{{\"type\":\"string\",\"enum\":{landmarkEnum}}},\"target_date\":{{\"type\":\"object\",\"properties\":{{\"year\":{{\"type\":\"integer\",\"minimum\":1}},\"season\":{{\"type\":\"string\",\"enum\":[\"spring\",\"summer\",\"fall\",\"winter\"]}},\"day_of_month\":{{\"type\":\"integer\",\"minimum\":1,\"maximum\":28}}}},\"required\":[\"year\",\"season\",\"day_of_month\"],\"additionalProperties\":false}},\"start_time\":{{\"type\":\"integer\"}},\"end_time\":{{\"type\":\"integer\"}}}},\"required\":[\"landmark_id\",\"target_date\",\"start_time\",\"end_time\"],\"additionalProperties\":false}}",
+                    ExecutionMode = ExecutionMode.Sync,
+                    ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
+                });
+            }
+        }
+
+        return result;
     }
 
     private static Struct PresentDialogueExtensions()

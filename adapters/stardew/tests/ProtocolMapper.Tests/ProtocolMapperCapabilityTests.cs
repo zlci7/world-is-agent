@@ -1,5 +1,6 @@
 using GameAgent.Protocol.V1Alpha2;
 using GameAgent.Stardew.Runtime;
+using GameAgent.Stardew.Tasks;
 using Google.Protobuf.WellKnownTypes;
 using Xunit;
 
@@ -48,5 +49,19 @@ public sealed class ProtocolMapperCapabilityTests
         Struct toolPolicy = TestSupport.RequireStruct(gameAgentExtensions, "tool_policy");
         Assert.True(toolPolicy.Fields["exclusive_per_step"].BoolValue);
         Assert.True(toolPolicy.Fields["settle_after_success"].BoolValue);
+    }
+
+    [Fact]
+    public void AddsResolveMeetingWithConfiguredLandmarkEnum()
+    {
+        const string json = "{\"landmarks\":[{\"landmark_id\":\"beach_meeting_spot\",\"display_name\":\"Beach meeting spot\",\"location\":\"Beach\",\"tile\":{\"x\":28,\"y\":36},\"open_start\":600,\"open_end\":2200,\"departure_lead_minutes\":240,\"supported_routes\":[{\"npc_id\":\"npc:Linus\",\"origin_location\":\"Mountain\"}]}]}";
+
+        Capability resolve = CapabilityCatalog.BuildEnvironmentCapabilities(LandmarkCatalog.Parse(json).Landmarks)
+            .Capabilities.Single(capability => capability.Name == "resolve_meeting");
+
+        Assert.Equal(ExecutionMode.Sync, resolve.ExecutionMode);
+        Assert.Equal(CapabilityConcurrencyMode.Sequential, resolve.ConcurrencyMode);
+        Assert.Contains("\"enum\":[\"beach_meeting_spot\"]", resolve.InputSchemaJson, StringComparison.Ordinal);
+        Assert.Contains("\"additionalProperties\":false", resolve.InputSchemaJson, StringComparison.Ordinal);
     }
 }

@@ -1,10 +1,12 @@
 using System;
+using System.IO;
 using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Dialogue;
 using GameAgent.Stardew.Diagnostics;
 using GameAgent.Stardew.Events;
 using GameAgent.Stardew.Runtime;
 using GameAgent.Stardew.State;
+using GameAgent.Stardew.Tasks;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewValley;
@@ -23,6 +25,7 @@ public sealed class ModEntry : Mod
     private PresentDialogueCapability? presentDialogueCapability;
     private FacePlayerCapability? facePlayerCapability;
     private MoveToCapability? moveToCapability;
+    private ResolveMeetingCapability? resolveMeetingCapability;
     private PlayerInteractProbe? playerInteractProbe;
     private RuntimeClient? runtimeClient;
     private StardewRouteProbe? phase9RouteProbe;
@@ -48,6 +51,9 @@ public sealed class ModEntry : Mod
         this.presentDialogueCapability = new PresentDialogueCapability(this.conversationStore, this.dialogueController);
         this.facePlayerCapability = new FacePlayerCapability();
         this.moveToCapability = new MoveToCapability();
+        string landmarkJson = File.ReadAllText(Path.Combine(helper.DirectoryPath, "assets", "landmarks.json"));
+        LandmarkCatalog landmarkCatalog = LandmarkCatalog.Parse(landmarkJson);
+        this.resolveMeetingCapability = new ResolveMeetingCapability(landmarkCatalog);
         this.runtimeClient = new RuntimeClient(
             this.config,
             this.dispatcher,
@@ -57,6 +63,8 @@ public sealed class ModEntry : Mod
             this.presentDialogueCapability,
             this.facePlayerCapability,
             this.moveToCapability,
+            this.resolveMeetingCapability,
+            landmarkCatalog,
             this.Monitor
         );
         this.playerInteractProbe = new PlayerInteractProbe(

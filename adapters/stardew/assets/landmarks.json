@@ -1,0 +1,22 @@
+{
+  "landmarks": [
+    {
+      "landmark_id": "beach_meeting_spot",
+      "display_name": "Beach meeting spot",
+      "location": "Beach",
+      "tile": {
+        "x": 28,
+        "y": 36
+      },
+      "open_start": 600,
+      "open_end": 2200,
+      "departure_lead_minutes": 240,
+      "supported_routes": [
+        {
+          "npc_id": "npc:Linus",
+          "origin_location": "Mountain"
+        }
+      ]
+    }
+  ]
+}

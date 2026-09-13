@@ -14,5 +14,8 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\Tasks\GameClock.cs" Link="GameClock.cs" />
+    <Compile Include="..\..\src\Tasks\LandmarkCatalog.cs" Link="LandmarkCatalog.cs" />
+    <Compile Include="..\..\src\Tasks\MeetingContract.cs" Link="MeetingContract.cs" />
+    <Compile Include="..\..\src\Runtime\RuntimeWorldContext.cs" Link="RuntimeWorldContext.cs" />
   </ItemGroup>
 </Project>
