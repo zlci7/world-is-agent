@@ -40,6 +40,23 @@ public sealed class NpcInteractionLifecycleTests
         Assert.Equal(2, control.Released);
     }
 
+    [Fact]
+    public void TaskControlReleasesPendingButPreservesAcknowledgedHandoff()
+    {
+        FakeControl control = new();
+        NpcInteractionLifecycle lifecycle = new(new TaskInteractionHandoffStore(() => 0), control);
+        TaskOperationSource pending = TaskSourceContextStoreTests.Source("pending-control");
+        TaskOperationSource committed = TaskSourceContextStoreTests.Source("committed-control");
+        lifecycle.TryBegin("pending-event", pending, out _);
+        lifecycle.TryBegin("committed-event", committed, out _);
+        lifecycle.Accept("committed-event");
+
+        Assert.Equal("released", lifecycle.ReleaseForTaskControl(pending.Operation.TaskId, pending.Operation.OperationId, "task_terminal").Status);
+        Assert.Null(lifecycle.Find("pending-event"));
+        Assert.Equal("handed_off", lifecycle.ReleaseForTaskControl(committed.Operation.TaskId, committed.Operation.OperationId, "task_terminal").Status);
+        Assert.NotNull(lifecycle.FindCommitted("committed-event"));
+    }
+
     private sealed class FakeControl : ITaskInteractionControl
     {
         public int Promoted { get; private set; }
@@ -51,5 +68,10 @@ public sealed class NpcInteractionLifecycleTests
         public bool BeginInteractionApproach(OperationKey interactionOperation, OperationKey approachOperation) => true;
         public bool FinishInteractionApproach(OperationKey approachOperation, bool returnToInteraction) => true;
         public bool IsHandedOff(string taskId, string operationId) => false;
+        public TaskControlDecision ReleaseForTaskControl(string taskId, string operationId, string reason)
+        {
+            this.Released++;
+            return new TaskControlDecision("released");
+        }
     }
 }

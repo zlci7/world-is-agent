@@ -34,6 +34,13 @@ public sealed class TaskSourceContextStore
         return this.sources.TryGetValue(operation, out TaskOperationSource? source) ? source : null;
     }
 
+    public TaskOperationSource? Find(string taskId, string operationId)
+    {
+        return this.sources.Values.SingleOrDefault(source =>
+            string.Equals(source.Operation.TaskId, taskId, StringComparison.Ordinal) &&
+            string.Equals(source.Operation.OperationId, operationId, StringComparison.Ordinal));
+    }
+
     public void Clear()
     {
         this.sources.Clear();

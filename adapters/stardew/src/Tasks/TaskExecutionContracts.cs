@@ -27,3 +27,5 @@ public sealed record DriverResult(
 }
 
 public sealed record TaskExecutionOutcome(DriverResult Result, LeaseToken? Lease, bool Replayed);
+
+public sealed record TaskControlDecision(string Status, string Code = "", string EventId = "");

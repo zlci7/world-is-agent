@@ -41,7 +41,7 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
         string fingerprint,
         Func<DriverResult> start)
     {
-        return this.BeginCore(source, world, mode, fingerprint, start, null, null);
+        return this.BeginCore(source, world, mode, fingerprint, start, null, null, holdSynchronousArrival: false);
     }
 
     public TaskExecutionOutcome BeginTravel(
@@ -77,7 +77,8 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
             fingerprint,
             () => driver.StartTravel(source.Operation, decision.Landmark!),
             () => driver.Poll(source.Operation),
-            reason => driver.Release(source.Operation, reason));
+            reason => driver.Release(source.Operation, reason),
+            holdSynchronousArrival: true);
     }
 
     private TaskExecutionOutcome BeginCore(
@@ -87,7 +88,8 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
         string fingerprint,
         Func<DriverResult> start,
         Func<DriverResult>? poll,
-        Action<string>? release)
+        Action<string>? release,
+        bool holdSynchronousArrival)
     {
         if (!ScopeMatches(source.Operation, world))
             return Rejected("world_mismatch", "operation scope does not match the active world");
@@ -122,8 +124,16 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
             throw;
         }
 
+        if (holdSynchronousArrival && IsArrival(result))
+        {
+            if (!(this.npcDriver?.Hold(source.Operation) ?? false))
+                result = new DriverResult("interrupted", "control_lost", result.Position, "arrival control could not be held");
+        }
+
         this.receipts.Record(source.Operation, fingerprint, registered!.StartRevision, result);
-        if (result.IsTerminal)
+        if (holdSynchronousArrival && IsArrival(result))
+            this.arrivalHandoffs.Add(source.Operation, new HeldOperation(attempt.Token!, this.elapsedMilliseconds()));
+        else if (result.IsTerminal)
             this.leases.Release(attempt.Token!, result.Code);
         else
             this.active.Add(source.Operation, new ActiveOperation(
@@ -133,7 +143,7 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
                 release,
                 this.elapsedMilliseconds()));
 
-        return new TaskExecutionOutcome(result, result.IsTerminal ? null : attempt.Token, false);
+        return new TaskExecutionOutcome(result, result.IsTerminal && !IsArrival(result) ? null : attempt.Token, false);
     }
 
     public TaskExecutionOutcome Poll(OperationKey operation, RuntimeWorldSnapshot world)
@@ -374,10 +384,73 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
     public bool IsHandedOff(string taskId, string operationId) =>
         this.interactions.Keys.Any(operation =>
             string.Equals(operation.TaskId, taskId, StringComparison.Ordinal) &&
-            string.Equals(operation.OperationId, operationId, StringComparison.Ordinal)) ||
+            string.Equals(operation.OperationId, operationId, StringComparison.Ordinal) &&
+            this.interactions[operation].Committed) ||
         this.interactionApproaches.Values.Any(approach =>
             string.Equals(approach.InteractionOperation.TaskId, taskId, StringComparison.Ordinal) &&
             string.Equals(approach.InteractionOperation.OperationId, operationId, StringComparison.Ordinal));
+
+    public TaskControlDecision ReleaseForTaskControl(string taskId, string operationId, string reason)
+    {
+        TaskOperationSource? known = this.sources.Find(taskId, operationId);
+        if (known is null)
+            return new TaskControlDecision("unconfirmed", "operation_not_found");
+        OperationKey operation = known.Operation;
+
+        if (this.interactions.TryGetValue(operation, out InteractionLease? interaction))
+        {
+            if (interaction.Committed)
+                return new TaskControlDecision("handed_off");
+            bool owned = this.OwnsInteraction(operation);
+            bool released = this.ReleaseInteraction(operation, reason);
+            return released && owned
+                ? new TaskControlDecision("released")
+                : new TaskControlDecision("unconfirmed", owned ? "release_failed" : "control_lost");
+        }
+        if (this.interactionApproaches.Values.Any(approach => approach.InteractionOperation == operation))
+            return new TaskControlDecision("handed_off");
+
+        if (this.active.Remove(operation, out ActiveOperation? active))
+        {
+            bool owned = this.npcDriver?.Owns(operation) ?? true;
+            try
+            {
+                active.Release?.Invoke(reason);
+            }
+            finally
+            {
+                this.leases.Release(active.Lease, reason);
+            }
+            return owned
+                ? new TaskControlDecision("released")
+                : new TaskControlDecision("unconfirmed", "control_lost");
+        }
+        if (this.arrivalHandoffs.Remove(operation, out HeldOperation? held))
+        {
+            bool owned = this.npcDriver?.Owns(operation) ?? true;
+            try
+            {
+                this.npcDriver?.Release(operation, reason);
+            }
+            finally
+            {
+                this.leases.Release(held.Lease, reason);
+            }
+            return owned
+                ? new TaskControlDecision("released")
+                : new TaskControlDecision("unconfirmed", "control_lost");
+        }
+        if (this.waiting.ContainsKey(operation))
+        {
+            bool owned = this.OwnsWait(operation);
+            bool released = this.FinishWait(operation, reason);
+            return released && owned
+                ? new TaskControlDecision("released")
+                : new TaskControlDecision("unconfirmed", owned ? "release_failed" : "control_lost");
+        }
+
+        return new TaskControlDecision("released");
+    }
 
     public bool OwnsWait(OperationKey operation) =>
         this.waiting.TryGetValue(operation, out LeaseToken? lease) &&
@@ -505,6 +578,10 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
     {
         return new WorldPosition(string.Empty, 0, 0);
     }
+
+    private static bool IsArrival(DriverResult result) =>
+        string.Equals(result.Status, "succeeded", StringComparison.Ordinal) &&
+        string.Equals(result.Code, "arrived", StringComparison.Ordinal);
 
     private sealed record ActiveOperation(
         LeaseToken Lease,

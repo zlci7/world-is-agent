@@ -73,6 +73,11 @@ public sealed class TaskInteractionHandoffStore
     public TaskInteractionHandoff? Find(string eventId) =>
         this.byEvent.TryGetValue(eventId, out TaskInteractionHandoff? handoff) ? handoff : null;
 
+    public TaskInteractionHandoff? Find(string taskId, string operationId) =>
+        this.byEvent.Values.SingleOrDefault(handoff =>
+            string.Equals(handoff.Source.Operation.TaskId, taskId, StringComparison.Ordinal) &&
+            string.Equals(handoff.Source.Operation.OperationId, operationId, StringComparison.Ordinal));
+
     public TaskInteractionHandoff? Reject(string eventId)
     {
         if (!this.byEvent.TryGetValue(eventId, out TaskInteractionHandoff? handoff) ||

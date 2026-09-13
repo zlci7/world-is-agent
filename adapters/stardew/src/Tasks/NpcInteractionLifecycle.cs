@@ -8,6 +8,7 @@ public interface ITaskInteractionControl
     bool BeginInteractionApproach(OperationKey interactionOperation, OperationKey approachOperation);
     bool FinishInteractionApproach(OperationKey approachOperation, bool returnToInteraction);
     bool IsHandedOff(string taskId, string operationId);
+    TaskControlDecision ReleaseForTaskControl(string taskId, string operationId, string reason);
 }
 
 public sealed class NpcInteractionLifecycle
@@ -88,6 +89,18 @@ public sealed class NpcInteractionLifecycle
         this.control.FinishInteractionApproach(approachOperation, returnToInteraction);
 
     public bool IsHandedOff(string taskId, string operationId) => this.control.IsHandedOff(taskId, operationId);
+
+    public TaskControlDecision ReleaseForTaskControl(string taskId, string operationId, string reason)
+    {
+        TaskInteractionHandoff? handoff = this.handoffs.Find(taskId, operationId);
+        if (handoff?.State == TaskInteractionHandoffState.Committed)
+            return new TaskControlDecision("handed_off", EventId: handoff.EventId);
+        if (handoff is not null)
+            this.handoffs.Reject(handoff.EventId);
+
+        TaskControlDecision result = this.control.ReleaseForTaskControl(taskId, operationId, reason);
+        return result with { EventId = handoff?.EventId ?? string.Empty };
+    }
 
     public void Clear(string reason)
     {

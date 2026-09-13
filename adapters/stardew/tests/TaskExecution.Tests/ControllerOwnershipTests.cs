@@ -6,6 +6,17 @@ namespace GameAgent.Stardew.Tests;
 public sealed class ControllerOwnershipTests
 {
     [Fact]
+    public void ExclusiveOwnershipRequiresExpectedMainControllerWithoutTemporaryController()
+    {
+        object owned = new();
+
+        Assert.True(ControllerOwnership.IsExclusive(owned, owned, null));
+        Assert.False(ControllerOwnership.IsExclusive(new object(), owned, null));
+        Assert.False(ControllerOwnership.IsExclusive(owned, owned, new object()));
+        Assert.False(ControllerOwnership.IsExclusive(null, owned, null));
+    }
+
+    [Fact]
     public void OwnedControllerIsDetachedAndHaltedOnce()
     {
         object owned = new();

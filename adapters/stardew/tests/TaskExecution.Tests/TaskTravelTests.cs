@@ -188,6 +188,84 @@ public sealed class TaskTravelTests
     }
 
     [Fact]
+    public void AlreadyArrivedTravelKeepsControlForWaitHandoff()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Beach", 28, 36));
+        TaskExecutionDriver driver = Driver(npc, () => 0);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson);
+
+        TaskExecutionOutcome arrived = driver.BeginTravel(
+            travel,
+            World with { NowTick = travel.Contract.StartAt },
+            "beach_meeting_spot",
+            catalog);
+        OperationKey waitOperation = travel.Operation with { OperationId = "wait-after-immediate-arrival" };
+        TaskExecutionOutcome waiting = driver.BeginWait(
+            travel with { Operation = waitOperation },
+            World with { NowTick = travel.Contract.StartAt },
+            catalog);
+
+        Assert.Equal("arrived", arrived.Result.Code);
+        Assert.False(driver.HasArrivalHandoff(travel.Operation));
+        Assert.Equal("wait_registered", waiting.Result.Code);
+        Assert.Equal(1, npc.HoldCount);
+        Assert.Equal(1, npc.TransferCount);
+    }
+
+    [Fact]
+    public void TaskControlReleasesOwnedStatesButPreservesCommittedInteraction()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        TaskExecutionDriver driver = Driver(npc, () => 0);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson);
+        driver.BeginTravel(travel, World, "beach_meeting_spot", catalog);
+
+        Assert.Equal("released", driver.ReleaseForTaskControl(travel.Operation.TaskId, travel.Operation.OperationId, "task_terminal").Status);
+        Assert.Equal("released", driver.ReleaseForTaskControl(travel.Operation.TaskId, travel.Operation.OperationId, "duplicate").Status);
+
+        TaskOperationSource secondTravel = TaskSourceContextStoreTests.Source("travel-for-interaction");
+        npc.Position = new WorldPosition("Mountain", 29, 9);
+        driver.BeginTravel(secondTravel, World, "beach_meeting_spot", catalog);
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+        driver.Poll(secondTravel.Operation, World);
+        OperationKey pending = secondTravel.Operation with { OperationId = "pending-interaction" };
+        driver.BeginWait(secondTravel with { Operation = pending }, World, catalog);
+        Assert.True(driver.PromoteWaitToInteraction(pending));
+        Assert.Equal("released", driver.ReleaseForTaskControl(pending.TaskId, pending.OperationId, "before_ack").Status);
+
+        TaskOperationSource thirdTravel = TaskSourceContextStoreTests.Source("travel-for-committed");
+        npc.Position = new WorldPosition("Mountain", 29, 9);
+        driver.BeginTravel(thirdTravel, World, "beach_meeting_spot", catalog);
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+        driver.Poll(thirdTravel.Operation, World);
+        OperationKey committed = thirdTravel.Operation with { OperationId = "committed-interaction" };
+        driver.BeginWait(thirdTravel with { Operation = committed }, World, catalog);
+        Assert.True(driver.PromoteWaitToInteraction(committed));
+        Assert.True(driver.CommitInteraction(committed));
+
+        Assert.Equal("handed_off", driver.ReleaseForTaskControl(committed.TaskId, committed.OperationId, "task_terminal").Status);
+        Assert.True(driver.OwnsInteraction(committed));
+    }
+
+    [Fact]
+    public void TaskControlDoesNotClaimAConfirmedReleaseAfterControlWasLost()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        TaskExecutionDriver driver = Driver(npc, () => 0);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source("foreign-control");
+        driver.BeginTravel(travel, World, "beach_meeting_spot", LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
+        npc.ControlOwned = false;
+
+        TaskControlDecision decision = driver.ReleaseForTaskControl(travel.Operation.TaskId, travel.Operation.OperationId, "task_terminal");
+
+        Assert.Equal("unconfirmed", decision.Status);
+        Assert.Equal("control_lost", decision.Code);
+        Assert.Equal(1, npc.ReleaseCount);
+    }
+
+    [Fact]
     public void AcceptedInteractionCanLendControlToApproachAndTakeItBack()
     {
         FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
@@ -223,11 +301,15 @@ public sealed class TaskTravelTests
         public int PollCount { get; private set; }
         public int ReleaseCount { get; private set; }
         public int TransferCount { get; private set; }
+        public int HoldCount { get; private set; }
+        public bool ControlOwned { get; set; } = true;
 
         public WorldPosition ReadPosition(string npcEntityId) => this.Position;
         public DriverResult StartTravel(OperationKey operation, Landmark landmark)
         {
             this.StartCount++;
+            if (this.Position == landmark.Position)
+                return new DriverResult("succeeded", "arrived", this.Position);
             return new DriverResult("running", string.Empty, this.Position);
         }
         public DriverResult Poll(OperationKey operation)
@@ -242,7 +324,7 @@ public sealed class TaskTravelTests
             this.TransferCount++;
             return true;
         }
-        public bool Owns(OperationKey operation) => true;
-        public bool Hold(OperationKey operation) => true;
+        public bool Owns(OperationKey operation) => this.ControlOwned;
+        public bool Hold(OperationKey operation) { this.HoldCount++; return true; }
     }
 }
