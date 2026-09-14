@@ -86,7 +86,8 @@ func (s *Service) Reconcile(ctx context.Context, exec ExecutionContext) (Reconci
 		if err := s.store.updateReconcileRecordTx(ctx, tx, current.record, prepared); err != nil {
 			return err
 		}
-		if err := s.store.consumeReconcileWakesTx(ctx, tx, head, current.record); err != nil {
+		keepRunning := updated.State == StateRunning && head.Head.Clock.Tick < updated.Spec.DeadlineAt && head.RuntimeInstanceID == s.claimantID
+		if err := s.store.consumeReconcileWakesTx(ctx, tx, head, current.record, keepRunning); err != nil {
 			return err
 		}
 		next := ReconcileNextSettled
@@ -364,8 +365,8 @@ func (s *SQLiteStore) updateReconcileRecordTx(ctx context.Context, tx *sql.Tx, b
 	return s.afterReconcileStage(ctx, reconcileStageRecordUpdated)
 }
 
-func (s *SQLiteStore) consumeReconcileWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, record Record) error {
-	if err := s.consumeExecutableWakesTx(ctx, tx, head, record); err != nil {
+func (s *SQLiteStore) consumeReconcileWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, record Record, keepRunning bool) error {
+	if err := s.consumeWakesTx(ctx, tx, head, record, keepRunning); err != nil {
 		return err
 	}
 	return s.afterReconcileStage(ctx, reconcileStageWakesConsumed)

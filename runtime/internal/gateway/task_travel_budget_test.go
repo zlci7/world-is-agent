@@ -38,7 +38,9 @@ func TestTaskTravelBudget(t *testing.T) {
 		t.Fatalf("async travel ended under the sync deadline: %v", message)
 	case <-time.After(250 * time.Millisecond):
 	}
-	f.result(travel, nil, nil)
+	travelSource := travel.TaskSource
+	progress := &protocol.TaskEvidence{FactId: "route-progress", TaskId: travelSource.TaskId, OperationId: travelSource.OperationId, Scope: travelSource.Scope, StartRevision: travelSource.StartRevision, OccurredAt: 11, Outcome: "progress"}
+	f.result(travel, []*protocol.TaskEvidence{progress}, nil)
 	next := f.next()
 	if next.GetObserve() != nil {
 		f.observe(next)
@@ -47,6 +49,16 @@ func TestTaskTravelBudget(t *testing.T) {
 	wait := next.GetAction()
 	if wait.GetCapability() != "inspect_contract" || wait.GetTaskSource() == nil {
 		t.Fatalf("expected registered sync wait: %v", next)
+	}
+	inspection, err := f.service.InspectWake(f.ctx, f.head.Binding, travelSource.WakeId)
+	if err != nil || inspection.Wake.Status != "running" || inspection.Task.Revision != 3 || wait.TaskSource.StartRevision != 3 {
+		t.Fatalf("progress lost execution authority: %+v, %v; source=%v", inspection, err, wait.TaskSource)
+	}
+	// Duplicate transport evidence must not consume the running execution or add a decision.
+	duplicate := inspection.Task.Evidence[0]
+	duplicate.Applied = false
+	if _, err := f.service.AdmitEvidence(f.ctx, f.head.Binding, duplicate); err != nil {
+		t.Fatal(err)
 	}
 	until := int64(20)
 	waitSource := wait.TaskSource
@@ -57,5 +69,9 @@ func TestTaskTravelBudget(t *testing.T) {
 	record := f.awaitRecord(created.Task.ID, func(r task.Record) bool { return r.State == task.StateWaiting })
 	if record.Result != nil || record.NextWakeAt == nil || *record.NextWakeAt != until || len(record.Operations) != 2 || f.model.calls.Load() != 2 {
 		t.Fatalf("invalid async-to-wait handoff: %+v calls=%d", record, f.model.calls.Load())
+	}
+	inspection, err = f.service.InspectWake(f.ctx, f.head.Binding, travelSource.WakeId)
+	if err != nil || inspection.Wake.Status != "consumed" || len(record.Evidence) != 2 {
+		t.Fatalf("wait did not settle original execution: %+v, %v", inspection, err)
 	}
 }

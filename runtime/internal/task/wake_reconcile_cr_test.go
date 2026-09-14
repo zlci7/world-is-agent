@@ -20,7 +20,7 @@ func TestWakeReconcileAcceptsExactShortAndCompleteTaskTurnSources(t *testing.T) 
 	})
 
 	for _, kind := range []string{EvidenceKindProgress, EvidenceKindSatisfied} {
-		t.Run("complete source consumes running wake after "+kind, func(t *testing.T) {
+		t.Run("complete source reconciles wake after "+kind, func(t *testing.T) {
 			fixture, _, wake, clock := readyEnqueuedWake(t, 200, 300, 200)
 			exec, running, err := fixture.svc.BeginWake(context.Background(), fixture.head.Binding, wake.ID, wake.ClaimID)
 			if err != nil {
@@ -49,7 +49,11 @@ func TestWakeReconcileAcceptsExactShortAndCompleteTaskTurnSources(t *testing.T) 
 				t.Fatalf("terminal result = %+v", result)
 			}
 			storedWake, err := fixture.store.loadWake(context.Background(), wake.Owner, wake.ID)
-			if err != nil || storedWake.Status != wakeStatusConsumed {
+			wantStatus := wakeStatusConsumed
+			if kind == EvidenceKindProgress {
+				wantStatus = wakeStatusRunning
+			}
+			if err != nil || storedWake.Status != wantStatus {
 				t.Fatalf("running wake after Reconcile = (%+v, %v)", storedWake, err)
 			}
 		})

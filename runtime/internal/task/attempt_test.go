@@ -81,7 +81,7 @@ func TestFinishAttemptPropagatesRevisionAndAcceptsBothWakeSources(t *testing.T) 
 	}
 }
 
-func TestFinishAttemptContinuesAfterReconcileConsumesRunningWake(t *testing.T) {
+func TestFinishAttemptContinuesAfterReconcilePreservesRunningWake(t *testing.T) {
 	fixture := newRunningAttemptFixture(t)
 	evidence := taskEvidence(fixture.head.Binding, fixture.running, "fact-attempt-continuation", EvidenceKindProgress)
 	evidence.OccurredAt = fixture.clock.Tick
@@ -97,8 +97,8 @@ func TestFinishAttemptContinuesAfterReconcileConsumesRunningWake(t *testing.T) {
 	}
 	wakeBeforeFinish := rawOnlyWakeJSON(t, fixture.store, reconciled.Task)
 	wake, err := fixture.store.loadWake(context.Background(), reconciled.Task.Owner, fixture.wake.ID)
-	if err != nil || wake.Status != wakeStatusConsumed || wake.ClaimedBy != fixture.svc.claimantID {
-		t.Fatalf("reconciled Wake = (%+v, %v), want consumed by current Runtime", wake, err)
+	if err != nil || wake.Status != wakeStatusRunning || wake.ClaimedBy != fixture.svc.claimantID {
+		t.Fatalf("reconciled Wake = (%+v, %v), want running under current Runtime", wake, err)
 	}
 
 	exec := fixture.exec
@@ -112,7 +112,7 @@ func TestFinishAttemptContinuesAfterReconcileConsumesRunningWake(t *testing.T) {
 		t.Fatalf("FinishAttempt = %+v", got)
 	}
 	if wakeAfterFinish := rawOnlyWakeJSON(t, fixture.store, got); !bytes.Equal(wakeAfterFinish, wakeBeforeFinish) {
-		t.Fatal("FinishAttempt changed the already-consumed execution Wake")
+		t.Fatal("FinishAttempt changed the continuing execution Wake")
 	}
 	if _, err := fixture.svc.FinishAttempt(context.Background(), exec, AttemptOutcome{Kind: AttemptOutcomeKindNoProgress}); !errors.Is(err, ErrTaskChanged) {
 		t.Fatalf("response-loss retry error = %v, want task_changed", err)

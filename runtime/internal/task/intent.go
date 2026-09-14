@@ -346,6 +346,10 @@ func (s *SQLiteStore) consumeIntentWakesTx(ctx context.Context, tx *sql.Tx, head
 }
 
 func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, record Record) error {
+	return s.consumeWakesTx(ctx, tx, head, record, false)
+}
+
+func (s *SQLiteStore) consumeWakesTx(ctx context.Context, tx *sql.Tx, head worldHeadRow, record Record, keepRunning bool) error {
 	rows, err := tx.QueryContext(ctx, `SELECT wake_id, game_id, world_id, entity_id, task_id, clock_id,
 		expected_revision, due_tick, reason, status, claim_id, claimed_by, generation, attempt,
 		retry_after_unix_ms, wake_json FROM task_wakeups
@@ -404,6 +408,9 @@ func (s *SQLiteStore) consumeExecutableWakesTx(ctx context.Context, tx *sql.Tx, 
 		return err
 	}
 	for _, wake := range wakes {
+		if keepRunning && wake.Status == wakeStatusRunning && wake.Generation == head.Head.Binding.Generation && wake.ClaimedBy == head.RuntimeInstanceID {
+			continue
+		}
 		priorStatus := wake.Status
 		wake.Status = wakeStatusConsumed
 		wake.RetryAfterUnixMS = 0
