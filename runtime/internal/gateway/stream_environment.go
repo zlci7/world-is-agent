@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -135,7 +136,7 @@ func (e *streamEnvironment) SubmitAction(ctx context.Context, req *protocolv1alp
 		return nil, fmt.Errorf("action id is empty")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, taskActionError(req, e.recordUnsentTaskAction(ctx, req, err))
 	}
 
 	pending := newPendingAction()
@@ -164,7 +165,7 @@ func (e *streamEnvironment) StartAction(ctx context.Context, req *protocolv1alph
 		return agent.ActionStart{}, fmt.Errorf("action id is empty")
 	}
 	if err := ctx.Err(); err != nil {
-		return agent.ActionStart{}, err
+		return agent.ActionStart{}, taskActionError(req, e.recordUnsentTaskAction(ctx, req, err))
 	}
 
 	pending := newPendingAction()
@@ -328,7 +329,12 @@ func (e *streamEnvironment) sendActionRequest(ctx context.Context, req *protocol
 	if e.taskAuthority == nil {
 		return task.ErrWorldNotReady
 	}
-	return e.sendGuarded(ctx, message, func(send func() error) error { return e.guardActionSend(ctx, req, send) })
+	err := e.sendGuarded(ctx, message, func(send func() error) error { return e.guardActionSend(ctx, req, send) })
+	var notStarted transportNotStartedError
+	if errors.As(err, &notStarted) {
+		return e.recordUnsentTaskAction(ctx, req, err)
+	}
+	return err
 }
 
 func (e *streamEnvironment) send(msg *protocolv1alpha2.RuntimeMessage) error {
@@ -342,9 +348,9 @@ func (e *streamEnvironment) sendContext(ctx context.Context, msg *protocolv1alph
 func (e *streamEnvironment) sendGuarded(ctx context.Context, msg *protocolv1alpha2.RuntimeMessage, guard func(func() error) error) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return transportNotStartedError{ctx.Err()}
 	case <-e.closed:
-		return io.EOF
+		return transportNotStartedError{io.EOF}
 	case e.sendSlot <- struct{}{}:
 	}
 	// At most one transport send is active. Shutdown releases its caller so the
@@ -369,7 +375,7 @@ func (e *streamEnvironment) sendGuarded(ctx context.Context, msg *protocolv1alph
 	}
 	if err != nil {
 		<-e.sendSlot
-		return err
+		return transportNotStartedError{err}
 	}
 	select {
 	case <-ctx.Done():

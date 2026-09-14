@@ -152,7 +152,7 @@ func validateNewEvidence(head Head, record Record, evidence Evidence) error {
 	}
 
 	operation, found := findRecordOperation(record, evidence.OperationID)
-	if !found {
+	if !found || operation.Status == OperationStatusNotSent {
 		return ErrEvidenceConflict
 	}
 	if evidence.StartRevision != operation.StartRevision {

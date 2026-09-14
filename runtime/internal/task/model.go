@@ -39,6 +39,7 @@ const (
 
 	OperationStatusRegistered = "registered"
 	OperationStatusUncertain  = "uncertain"
+	OperationStatusNotSent    = "not_sent"
 
 	EvidenceKindProgress    = "progress"
 	EvidenceKindSatisfied   = "satisfied"
@@ -391,7 +392,7 @@ func (r Record) Validate() error {
 			continue
 		}
 		operation, found := operations[evidence.OperationID]
-		if !found || evidence.StartRevision != operation.StartRevision || evidence.Binding != operation.Binding {
+		if !found || operation.Status == OperationStatusNotSent || evidence.StartRevision != operation.StartRevision || evidence.Binding != operation.Binding {
 			return ErrInvalidTaskSpec
 		}
 		if evidence.RevalidatedIn != nil {
@@ -469,7 +470,7 @@ func (o Operation) Validate() error {
 		return err
 	}
 	switch o.Status {
-	case OperationStatusRegistered, OperationStatusUncertain:
+	case OperationStatusRegistered, OperationStatusUncertain, OperationStatusNotSent:
 	default:
 		return ErrInvalidTaskSpec
 	}

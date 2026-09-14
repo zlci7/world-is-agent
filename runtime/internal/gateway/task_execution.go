@@ -318,6 +318,9 @@ func (e *streamEnvironment) queryTask(ctx context.Context, exec task.ExecutionCo
 
 func taskOperationAwaitingEvidence(record task.Record) bool {
 	for _, operation := range record.Operations {
+		if operation.Status == task.OperationStatusNotSent {
+			continue
+		}
 		confirmed := false
 		for _, evidence := range record.Evidence {
 			confirmed = confirmed || evidence.OperationID == operation.ID && evidence.Applied
@@ -365,7 +368,7 @@ func (e *streamEnvironment) finishTaskExecution(ctx context.Context, exec task.E
 			continue
 		}
 		var actionErr taskActionFailure
-		if errors.As(turnErr, &actionErr) {
+		if errors.As(turnErr, &actionErr) && taskOperationAwaitingEvidence(record) {
 			turnErr = e.queryTask(cleanupCtx, exec)
 			continue
 		}

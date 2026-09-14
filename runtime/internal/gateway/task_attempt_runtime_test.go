@@ -414,10 +414,13 @@ func TestTaskOperationLastSendGateRevalidatesEligibility(t *testing.T) {
 				if registerErr == nil && len(stored.Operations) != 2 {
 					t.Fatalf("registered operation lost before cleanup: %+v", stored.Operations)
 				}
+				if registerErr == nil && stored.Operations[1].Status != task.OperationStatusNotSent {
+					t.Fatalf("rejected operation was not marked unsent: %+v", stored.Operations[1])
+				}
 				if change == "pending_evidence" || change == "terminal" {
 					done := make(chan error, 1)
 					go func() { done <- env.finishTaskExecution(f.ctx, exec, sendErr) }()
-					for i := 0; i < 2; i++ {
+					for i := 0; i < 1; i++ {
 						control := f.next().GetTaskControl()
 						if control == nil {
 							t.Fatal("registered rejected operation lost cleanup responsibility")
@@ -428,7 +431,7 @@ func TestTaskOperationLastSendGateRevalidatesEligibility(t *testing.T) {
 						t.Fatal(err)
 					}
 					final, err := f.service.Read(f.ctx, f.key, record.ID)
-					if err != nil || final.Result == nil || len(final.Cleanup) != 2 || f.model.calls.Load() != 0 {
+					if err != nil || final.Result == nil || len(final.Cleanup) != 1 || f.model.calls.Load() != 0 {
 						t.Fatalf("deterministic terminal cleanup failed: %+v err=%v", final, err)
 					}
 				}

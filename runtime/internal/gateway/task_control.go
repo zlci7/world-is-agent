@@ -49,6 +49,9 @@ func (e *streamEnvironment) releaseTaskControl(ctx context.Context, binding task
 		return nil
 	}
 	for _, op := range record.Operations {
+		if op.Status == task.OperationStatusNotSent {
+			continue
+		}
 		if op.Binding.World != binding.World || op.Binding.RunID != binding.RunID {
 			continue
 		}
