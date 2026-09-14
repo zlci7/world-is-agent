@@ -57,7 +57,8 @@ internal sealed class ClientFixture
         var monitor = DispatchProxy.Create<IMonitor, SilentMonitor>();
         Client = new RuntimeClient(new AdapterConfig(), new MainThreadDispatcher(monitor), null!,
             new ConversationStateStore(new ConversationIdGenerator()), null!, null!, null!, null!, null!, null!, null!,
-            null!, new NpcControlLease(), new MeetingWaitMonitor(), Lifecycle, monitor);
+            new TaskExecutionDriver(new TaskSourceContextStore(), new TaskOperationReceipts(), new NpcControlLease()),
+            new NpcControlLease(), new MeetingWaitMonitor(), Lifecycle, monitor);
         var operation = new OperationKey("world", "run", 1, "npc:Linus", "task", "wait");
         var agreement = new MeetingAgreement(1, "beach", "npc:Linus", new MeetingDate(1, "spring", 1), GameClock.ClockId, 660, 900, 960);
         Assert.True(Lifecycle.TryBegin("arrival", new TaskOperationSource(operation, 1, "wake", agreement), out _));
@@ -71,6 +72,8 @@ internal sealed class ClientFixture
     public static InteractionContextSnapshot Snapshot(string eventId) =>
         new(eventId, "world", "npc:Linus", "player:local", "conversation", "Beach", 28, 36, "Beach", 28, 37, 2);
     public T Field<T>(string name) => (T)typeof(RuntimeClient).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(Client)!;
+    public void SetField(string name, object value) =>
+        typeof(RuntimeClient).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(Client, value);
     public object? Call(string method, params object[] arguments) =>
         typeof(RuntimeClient).GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(Client, arguments);
 }

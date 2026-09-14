@@ -49,6 +49,7 @@ public sealed class RuntimeClient : IDisposable
     private AsyncDuplexStreamingCall<AdapterMessage, RuntimeMessage>? stream;
     private CancellationTokenSource? cancellation;
     private Task? receiveTask;
+    private long connectionEpoch;
     private readonly string sessionId = Guid.NewGuid().ToString("N");
     // currentWorldId is maintained from SMAPI main-thread lifecycle events.
     // Background gRPC threads must not resolve Stardew world state directly.
@@ -122,29 +123,49 @@ public sealed class RuntimeClient : IDisposable
             Interlocked.Exchange(ref this.worldBindingSent, 0);
             Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
             this.worldBindingExchange.Reset();
-            this.receiveTask = Task.Run(() => this.RunAsync(this.cancellation.Token));
+            CancellationToken token = this.cancellation.Token;
+            this.receiveTask = Task.Run(() => this.RunAsync(token));
         }
     }
 
     public void Reconnect()
     {
+        this.ResetTaskRuntimeState("manual_rebind");
+        this.RestartConnection();
+    }
+
+    private long StopConnection()
+    {
         lock (this.connectionGate)
         {
-            if (this.receiveTask is not { IsCompleted: false } || this.stream is null)
-            {
-                this.Start();
-                return;
-            }
+            this.connectionEpoch++;
+            this.sessionState.Disconnect();
+            this.cancellation?.Cancel();
+            this.stream?.Dispose();
+            this.stream = null;
+            this.worldBindingExchange.Reset();
+            return this.connectionEpoch;
         }
+    }
 
-        this.ResetTaskRuntimeState("manual_rebind");
-        this.sessionState.PrepareWorldBinding();
-        Interlocked.Exchange(ref this.worldBindingSent, 0);
-        Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
-        this.worldBindingExchange.Reset();
-        this.SendFireAndForget(
-            this.TrySendWorldBindingAsync(this.cancellation?.Token ?? CancellationToken.None),
-            "WorldBinding rebind");
+    private void RestartConnection()
+    {
+        long epoch = this.StopConnection();
+        Task previous = this.receiveTask ?? Task.CompletedTask;
+        this.SendFireAndForget(this.StartAfterDisconnectAsync(previous, epoch), "Runtime reconnect");
+    }
+
+    private async Task StartAfterDisconnectAsync(Task previous, long epoch)
+    {
+        await previous;
+        this.dispatcher.Enqueue(() =>
+        {
+            lock (this.connectionGate)
+            {
+                if (!this.disposed && this.connectionEpoch == epoch)
+                    this.Start();
+            }
+        });
     }
 
     public void SendPlayerInteracted(NPC npc, Farmer player, string trigger)
@@ -345,11 +366,13 @@ public sealed class RuntimeClient : IDisposable
     {
         try
         {
+            var receivingStream = this.stream ?? throw new OperationCanceledException(cancellationToken);
             await this.SendHelloAsync(cancellationToken);
 
-            while (this.stream is not null && await this.stream.ResponseStream.MoveNext(cancellationToken))
+            while (await receivingStream.ResponseStream.MoveNext(cancellationToken))
             {
-                RuntimeMessage message = this.stream.ResponseStream.Current;
+                cancellationToken.ThrowIfCancellationRequested();
+                RuntimeMessage message = receivingStream.ResponseStream.Current;
                 this.TraceRecv(message);
                 await this.HandleRuntimeMessageAsync(message, cancellationToken);
             }
@@ -419,21 +442,21 @@ public sealed class RuntimeClient : IDisposable
                 break;
 
             case RuntimeMessage.PayloadOneofCase.EventAck:
-                this.dispatcher.Enqueue(() => this.HandleEventAck(message.EventAck));
+                this.dispatcher.Enqueue(() => { if (!cancellationToken.IsCancellationRequested) this.HandleEventAck(message.EventAck); });
                 break;
 
             case RuntimeMessage.PayloadOneofCase.TurnCompletion:
-                this.dispatcher.Enqueue(() => this.HandleTurnCompletion(message.TurnCompletion));
+                this.dispatcher.Enqueue(() => { if (!cancellationToken.IsCancellationRequested) this.HandleTurnCompletion(message.TurnCompletion); });
                 break;
 
             case RuntimeMessage.PayloadOneofCase.Observe:
                 if (message.Observe is not null)
-                    this.dispatcher.Enqueue(() => this.HandleObserveOnMainThread(message.MessageId, message.Observe));
+                    this.dispatcher.Enqueue(() => { if (!cancellationToken.IsCancellationRequested) this.HandleObserveOnMainThread(message.MessageId, message.Observe); });
                 break;
 
             case RuntimeMessage.PayloadOneofCase.Action:
                 if (message.Action is not null)
-                    this.dispatcher.Enqueue(() => this.HandleActionOnMainThread(message.Action));
+                    this.dispatcher.Enqueue(() => { if (!cancellationToken.IsCancellationRequested) this.HandleActionOnMainThread(message.Action); });
                 break;
 
             case RuntimeMessage.PayloadOneofCase.CancelAction:
@@ -508,6 +531,19 @@ public sealed class RuntimeClient : IDisposable
 
     private async Task HandleWorldBindingReadyAsync(string correlationId, WorldBindingReady? ready, CancellationToken cancellationToken)
     {
+        TaskCompletionSource<Task> dispatched = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenRegistration registration = cancellationToken.Register(() => dispatched.TrySetCanceled(cancellationToken));
+        this.dispatcher.Enqueue(() =>
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return;
+            dispatched.TrySetResult(this.ApplyWorldBindingReadyOnMainThreadAsync(correlationId, ready, cancellationToken));
+        });
+        await await dispatched.Task;
+    }
+
+    private async Task ApplyWorldBindingReadyOnMainThreadAsync(string correlationId, WorldBindingReady? ready, CancellationToken cancellationToken)
+    {
         if (ready is null)
             throw new InvalidOperationException("world_binding_ready_missing");
 
@@ -559,6 +595,8 @@ public sealed class RuntimeClient : IDisposable
         TaskCompletionSource<TaskControlDecision> decided = new(TaskCreationOptions.RunContinuationsAsynchronously);
         this.dispatcher.Enqueue(() =>
         {
+            if (cancellationToken.IsCancellationRequested)
+                return;
             TaskControlDecision decision = new("unconfirmed", "scope_mismatch");
             RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
             if (this.sessionState.TaskExtensionAccepted && snapshot is not null && ScopeMatches(request.Scope, snapshot))
@@ -885,14 +923,7 @@ public sealed class RuntimeClient : IDisposable
         this.ClearConversations();
         this.currentWorldId = worldId;
         this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick());
-        this.sessionState.PrepareWorldBinding();
-        Interlocked.Exchange(ref this.worldBindingSent, 0);
-        Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
-        this.worldBindingExchange.Reset();
-        this.SendFireAndForget(
-            this.TrySendWorldBindingAsync(this.cancellation?.Token ?? CancellationToken.None),
-            "WorldBinding"
-        );
+        this.RestartConnection();
         this.monitor.Log($"GameAgent world context started: world_id={worldId} run_id={this.worldContext.Current?.WorldRunId}", LogLevel.Debug);
     }
 
@@ -920,6 +951,7 @@ public sealed class RuntimeClient : IDisposable
 
     public void ClearWorldContext()
     {
+        this.StopConnection();
         this.ResetTaskRuntimeState("world_cleared");
         this.moveToCapability.CancelAll("world context cleared before movement completed");
         this.presentDialogueCapability.CloseAll();
@@ -1010,14 +1042,16 @@ public sealed class RuntimeClient : IDisposable
 
     private async Task SendAsync(AdapterMessage message, CancellationToken cancellationToken)
     {
-        if (this.stream is null)
-            throw new InvalidOperationException("runtime stream is not connected");
+        var target = this.stream ?? throw new InvalidOperationException("runtime stream is not connected");
 
         await this.sendMu.WaitAsync(cancellationToken);
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(target, this.stream))
+                throw new OperationCanceledException("runtime stream was replaced");
             this.TraceSend(message);
-            await this.stream.RequestStream.WriteAsync(message);
+            await target.RequestStream.WriteAsync(message);
         }
         finally
         {
@@ -1027,16 +1061,18 @@ public sealed class RuntimeClient : IDisposable
 
     private async Task SendBatchAsync(IReadOnlyList<AdapterMessage> messages, CancellationToken cancellationToken)
     {
-        if (this.stream is null)
-            throw new InvalidOperationException("runtime stream is not connected");
+        var target = this.stream ?? throw new InvalidOperationException("runtime stream is not connected");
 
         await this.sendMu.WaitAsync(cancellationToken);
         try
         {
             foreach (AdapterMessage message in messages)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(target, this.stream))
+                    throw new OperationCanceledException("runtime stream was replaced");
                 this.TraceSend(message);
-                await this.stream.RequestStream.WriteAsync(message);
+                await target.RequestStream.WriteAsync(message);
             }
         }
         finally
