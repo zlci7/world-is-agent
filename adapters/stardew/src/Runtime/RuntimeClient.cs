@@ -829,12 +829,13 @@ public sealed class RuntimeClient : IDisposable
         if (!string.IsNullOrWhiteSpace(completion.EventId))
         {
             InteractionContextSnapshot? current = this.interactionContextStore.TryGet(completion.EventId);
-            string? taskInteractionEventId = current is null
+            string? conversationId = current?.ConversationId ??
+                this.taskInteractionConversations.FindPresentationConversation(completion.EventId);
+            string? taskInteractionEventId = conversationId is null
                 ? null
-                : this.taskInteractionConversations.FindTaskEvent(current.ConversationId);
-            if (taskInteractionEventId is null)
-                this.taskInteractionLifecycle.Complete(completion.EventId, "turn_completed");
-            else if (this.taskInteractionConversations.ShouldReleaseAtTurnCompletion(completion.EventId, current!.ConversationId))
+                : this.taskInteractionConversations.FindTaskEvent(conversationId);
+            if (taskInteractionEventId is not null &&
+                this.taskInteractionConversations.ShouldReleaseAtTurnCompletion(completion.EventId, conversationId!))
                 this.CompleteTaskInteraction(taskInteractionEventId, "turn_completed_without_ui");
             InteractionContextSnapshot? released = this.interactionContextStore.Release(completion.EventId);
             this.LogReleasedInteractionContext(released);
@@ -1680,9 +1681,11 @@ public sealed class RuntimeClient : IDisposable
             return;
 
         InteractionContextSnapshot? current = this.interactionContextStore.TryGet(eventId);
-        string taskInteractionEventId = current is null
+        string? conversationId = current?.ConversationId ??
+            this.taskInteractionConversations.FindPresentationConversation(eventId);
+        string taskInteractionEventId = conversationId is null
             ? eventId
-            : this.taskInteractionConversations.FindTaskEvent(current.ConversationId) ?? eventId;
+            : this.taskInteractionConversations.FindTaskEvent(conversationId) ?? eventId;
         this.CompleteTaskInteraction(taskInteractionEventId, "interaction_abandoned");
         InteractionContextSnapshot? released = this.interactionContextStore.Release(eventId);
         this.LogReleasedInteractionContext(released);

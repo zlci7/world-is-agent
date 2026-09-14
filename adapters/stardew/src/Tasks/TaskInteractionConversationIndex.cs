@@ -16,6 +16,11 @@ public sealed class TaskInteractionConversationIndex
         return this.taskEventByConversation.TryGetValue(conversationId, out string? eventId) ? eventId : null;
     }
 
+    public string? FindPresentationConversation(string turnEventId) =>
+        this.presentationConversationByTurn.TryGetValue(turnEventId, out string? conversationId) ||
+        this.deferredConversationByTurn.TryGetValue(turnEventId, out conversationId)
+            ? conversationId : null;
+
     public void MarkPresentation(string turnEventId, string conversationId)
     {
         this.presentationConversationByTurn[turnEventId] = conversationId;
