@@ -65,6 +65,11 @@ func TestTaskAttemptTechnicalFailuresHaveSeparateBoundedCounter(t *testing.T) {
 			for i := 0; i < queries; i++ {
 				f.observe(f.next())
 			}
+			control := f.next().GetTaskControl()
+			if control == nil || control.Reason != "execution_ended" {
+				t.Fatalf("missing failure release: %v", control)
+			}
+			f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_TaskControlResult{TaskControlResult: &protocol.TaskControlResult{Scope: control.Scope, TaskId: control.TaskId, OperationId: control.OperationId, RequestId: control.RequestId, Status: "released"}}})
 			if err := <-done; err != nil {
 				t.Fatal(err)
 			}
@@ -441,6 +446,11 @@ func TestTaskOperationLastSendGateRevalidatesEligibility(t *testing.T) {
 					for i := 0; i < 3; i++ {
 						f.observe(f.next())
 					}
+					control := f.next().GetTaskControl()
+					if control == nil || control.OperationId != prior.ID || control.Reason != "execution_ended" {
+						t.Fatalf("deadline cleanup: %v", control)
+					}
+					f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_TaskControlResult{TaskControlResult: &protocol.TaskControlResult{Scope: control.Scope, TaskId: control.TaskId, OperationId: control.OperationId, RequestId: control.RequestId, Status: "released"}}})
 					if err := <-done; err != nil {
 						t.Fatal(err)
 					}

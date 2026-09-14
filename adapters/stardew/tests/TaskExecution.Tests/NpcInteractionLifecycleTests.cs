@@ -40,8 +40,10 @@ public sealed class NpcInteractionLifecycleTests
         Assert.Equal(2, control.Released);
     }
 
-    [Fact]
-    public void TaskControlReleasesPendingButPreservesAcknowledgedHandoff()
+    [Theory]
+    [InlineData("task_terminal")]
+    [InlineData("execution_ended")]
+    public void TaskControlReleasesPendingButPreservesAcknowledgedHandoff(string reason)
     {
         FakeControl control = new();
         NpcInteractionLifecycle lifecycle = new(new TaskInteractionHandoffStore(() => 0), control);
@@ -51,9 +53,9 @@ public sealed class NpcInteractionLifecycleTests
         lifecycle.TryBegin("committed-event", committed, out _);
         lifecycle.Accept("committed-event");
 
-        Assert.Equal("released", lifecycle.ReleaseForTaskControl(pending.Operation.TaskId, pending.Operation.OperationId, "task_terminal").Status);
+        Assert.Equal("released", lifecycle.ReleaseForTaskControl(pending.Operation.TaskId, pending.Operation.OperationId, reason).Status);
         Assert.Null(lifecycle.Find("pending-event"));
-        Assert.Equal("handed_off", lifecycle.ReleaseForTaskControl(committed.Operation.TaskId, committed.Operation.OperationId, "task_terminal").Status);
+        Assert.Equal("handed_off", lifecycle.ReleaseForTaskControl(committed.Operation.TaskId, committed.Operation.OperationId, reason).Status);
         Assert.NotNull(lifecycle.FindCommitted("committed-event"));
     }
 

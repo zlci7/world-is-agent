@@ -338,6 +338,27 @@ public sealed class TaskTravelTests
     private static TaskExecutionDriver Driver(FakeNpcDriver npc, Func<long> elapsed) =>
         new(new TaskSourceContextStore(), new TaskOperationReceipts(), new NpcControlLease(), npc, elapsed);
 
+    [Fact]
+    public void ExecutionEndedReleasesArrivalSoOrdinaryInteractionCanAcquireControl()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        NpcControlLease leases = new();
+        TaskExecutionDriver driver = new(new TaskSourceContextStore(), new TaskOperationReceipts(), leases, npc, () => 0);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        driver.BeginTravel(travel, World, "beach_meeting_spot", LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+        driver.Poll(travel.Operation, World);
+        OrdinaryInteractionLifecycle ordinary = new(leases, npc, npc.Hold, () => 0);
+        OperationKey click = travel.Operation with { TaskId = "interaction", OperationId = "click" };
+        Assert.False(ordinary.Begin("conversation", "event", click));
+
+        Assert.Equal("released", driver.ReleaseForTaskControl(travel.Operation.TaskId, travel.Operation.OperationId, "execution_ended").Status);
+        Assert.Equal("released", driver.ReleaseForTaskControl(travel.Operation.TaskId, travel.Operation.OperationId, "execution_ended").Status);
+        Assert.False(driver.HasArrivalHandoff(travel.Operation));
+        Assert.Equal(1, npc.ReleaseCount);
+        Assert.True(ordinary.Begin("conversation", "event", click));
+    }
+
     private sealed class FakeNpcDriver : ITaskNpcDriver
     {
         public FakeNpcDriver(WorldPosition position) => this.Position = position;

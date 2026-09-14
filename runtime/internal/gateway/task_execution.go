@@ -334,9 +334,14 @@ func taskOperationAwaitingEvidence(record task.Record) bool {
 
 // finishTaskExecution owns finite technical recovery after cognition has ended.
 // Every retry reads current state before writing, including an ambiguous commit.
-func (e *streamEnvironment) finishTaskExecution(ctx context.Context, exec task.ExecutionContext, turnErr error) error {
+func (e *streamEnvironment) finishTaskExecution(ctx context.Context, exec task.ExecutionContext, turnErr error) (resultErr error) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	defer func() {
+		if !errors.Is(resultErr, errTaskDecisionRequired) {
+			resultErr = errors.Join(resultErr, e.releaseExecutionControl(cleanupCtx, exec))
+		}
+	}()
 	a := e.taskAuthority
 	for failures := 0; failures < 3; {
 		head, epoch, ready := a.Current()

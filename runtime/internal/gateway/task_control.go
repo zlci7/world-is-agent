@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
@@ -14,6 +15,7 @@ type pendingTaskControl struct {
 	result  chan string
 	done    chan struct{}
 	status  string
+	err     error
 }
 
 func (e *streamEnvironment) ReleaseTask(ctx context.Context, record task.Record) error {
@@ -48,6 +50,30 @@ func (e *streamEnvironment) releaseTaskControl(ctx context.Context, binding task
 	if record.Result == nil {
 		return nil
 	}
+	return e.releaseTaskOperations(ctx, binding, record, "task_terminal")
+}
+
+func (e *streamEnvironment) releaseExecutionControl(ctx context.Context, exec task.ExecutionContext) error {
+	head, _, ready := e.taskAuthority.Current()
+	if !ready || head.Binding != exec.Binding {
+		return nil
+	}
+	record, err := e.taskAuthority.registry.service.Read(ctx, exec.Owner, exec.TaskID)
+	if err != nil {
+		return err
+	}
+	if record.Result != nil {
+		return e.releaseTaskControl(ctx, head.Binding, record)
+	}
+	if record.State == task.StateWaiting {
+		return nil
+	}
+	return e.releaseTaskOperations(ctx, head.Binding, record, "execution_ended")
+}
+
+var errTaskControlObsolete = errors.New("task control no longer required")
+
+func (e *streamEnvironment) releaseTaskOperations(ctx context.Context, binding task.Binding, record task.Record, reason string) error {
 	for _, op := range record.Operations {
 		if op.Status == task.OperationStatusNotSent {
 			continue
@@ -62,7 +88,7 @@ func (e *streamEnvironment) releaseTaskControl(ctx context.Context, binding task
 		if done {
 			continue
 		}
-		req := &protocol.TaskControlRequest{Scope: taskScopeToProtocol(binding), TaskId: record.ID, OperationId: op.ID, RequestId: newMessageID("task_release"), Reason: "task_terminal"}
+		req := &protocol.TaskControlRequest{Scope: taskScopeToProtocol(binding), TaskId: record.ID, OperationId: op.ID, RequestId: newMessageID("task_release"), Reason: reason}
 		pending := &pendingTaskControl{request: req, result: make(chan string, 1), done: make(chan struct{})}
 		e.pendingMu.Lock()
 		prior, exists := e.taskReleases[op.ID]
@@ -73,7 +99,7 @@ func (e *streamEnvironment) releaseTaskControl(ctx context.Context, binding task
 			e.pendingControls[req.RequestId] = pending
 		}
 		e.pendingMu.Unlock()
-		controlCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		controlCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		status := task.CleanupStatusUnconfirmed
 		if exists {
 			select {
@@ -84,7 +110,34 @@ func (e *streamEnvironment) releaseTaskControl(ctx context.Context, binding task
 				return controlCtx.Err()
 			}
 		} else {
-			err := e.sendContext(controlCtx, &protocol.RuntimeMessage{MessageId: req.RequestId, Payload: &protocol.RuntimeMessage_TaskControl{TaskControl: req}})
+			message := &protocol.RuntimeMessage{MessageId: req.RequestId, Payload: &protocol.RuntimeMessage_TaskControl{TaskControl: req}}
+			err := e.sendGuarded(controlCtx, message, func(send func() error) error {
+				// Recheck eligibility at transport handoff, not only before waiting for sendSlot.
+				_, epoch, _ := e.taskAuthority.Current()
+				return e.taskAuthority.Guard(binding, epoch, func(task.Head) error {
+					current, err := e.taskAuthority.registry.service.Read(controlCtx, record.Owner, record.ID)
+					if err != nil {
+						return err
+					}
+					if current.Result == nil && (reason == "task_terminal" || current.State == task.StateWaiting) {
+						return errTaskControlObsolete
+					}
+					if current.Result != nil {
+						req.Reason = "task_terminal"
+					}
+					for _, cleanup := range current.Cleanup {
+						if cleanup.OperationID == op.ID {
+							return errTaskControlObsolete
+						}
+					}
+					for _, operation := range current.Operations {
+						if operation.ID == op.ID && operation.Status == task.OperationStatusNotSent {
+							return errTaskControlObsolete
+						}
+					}
+					return send()
+				})
+			})
 			if err == nil {
 				select {
 				case status = <-pending.result:
@@ -94,15 +147,22 @@ func (e *streamEnvironment) releaseTaskControl(ctx context.Context, binding task
 			}
 			e.pendingMu.Lock()
 			delete(e.pendingControls, req.RequestId)
+			if errors.Is(err, errTaskControlObsolete) {
+				pending.err = errTaskControlObsolete
+				delete(e.taskReleases, op.ID)
+			}
 			pending.status = status
 			close(pending.done)
 			e.pendingMu.Unlock()
 		}
 		cancel()
+		if errors.Is(pending.err, errTaskControlObsolete) {
+			continue
+		}
 		persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 		// Disconnect fences admission before waiting lanes, and deactivates the
 		// durable Head afterwards. The current lane can still record its release.
-		err := e.taskAuthority.registry.service.RecordCleanup(persistCtx, binding, record.ID, task.Cleanup{OperationID: op.ID, Status: status, Reason: "task_terminal"})
+		err := e.taskAuthority.registry.service.RecordCleanup(persistCtx, binding, record.ID, task.Cleanup{OperationID: op.ID, Status: status, Reason: pending.request.Reason})
 		persistCancel()
 		if err != nil {
 			return err
