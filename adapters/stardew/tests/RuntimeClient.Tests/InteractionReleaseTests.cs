@@ -17,8 +17,8 @@ public sealed class InteractionReleaseTests
         fixture.Index.MarkPresentation("reply", "conversation");
         fixture.Contexts.TryReserveHandoff(ClientFixture.Snapshot("reply"), out _);
         fixture.Contexts.Commit("reply");
-        fixture.Index.ShouldReleaseAtTurnCompletion("reply", "conversation");
-        fixture.Contexts.Release("reply");
+        fixture.Call("HandleTurnCompletion", new TurnCompletion { EventId = "reply" });
+        Assert.Null(fixture.Contexts.TryGet("reply"));
 
         fixture.Call("ReleaseInteractionContext", "reply");
         fixture.Call("ReleaseInteractionContext", "reply");

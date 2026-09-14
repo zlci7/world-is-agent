@@ -32,6 +32,15 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 	n := p.calls.Add(1)
 	d := model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlContinue}}
 	switch p.mode {
+	case "travel_budget":
+		name := "follow_route"
+		if n == 2 {
+			name = "inspect_contract"
+		} else if n != 1 {
+			return model.Response{}, errors.New("unexpected model call after wait registration")
+		}
+		d.ToolCalls = []model.ToolCall{{ID: name, Name: name, Arguments: map[string]any{}}}
+		return model.Response{Decision: d}, nil
 	case "ordinary_after_pause", "ordinary_pause_during_action":
 		for _, entry := range req.Tools {
 			if (n > 1 || p.mode == "ordinary_after_pause") && (entry.Name == "create_task" || entry.Name == "update_task") {
@@ -102,6 +111,11 @@ type taskWireFixture struct {
 
 func newTaskWireFixture(t *testing.T, create bool, options ...func(*agent.Config)) *taskWireFixture {
 	t.Helper()
+	return newTaskWireFixtureWithRouteMode(t, create, protocol.ExecutionMode_EXECUTION_MODE_SYNC, options...)
+}
+
+func newTaskWireFixtureWithRouteMode(t *testing.T, create bool, routeMode protocol.ExecutionMode, options ...func(*agent.Config)) *taskWireFixture {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	dbPath := filepath.Join(t.TempDir(), "tasks.sqlite")
 	store, err := task.OpenSQLiteStore(ctx, task.StoreOptions{Path: dbPath})
@@ -161,7 +175,11 @@ func newTaskWireFixture(t *testing.T, create bool, options ...func(*agent.Config
 	}
 	caps := []*protocol.Capability{}
 	for _, name := range []string{"inspect_contract", "follow_route"} {
-		caps = append(caps, &protocol.Capability{Name: name, Description: "Generic operation", InputSchemaJson: `{"type":"object","properties":{},"additionalProperties":false}`, ExecutionMode: protocol.ExecutionMode_EXECUTION_MODE_SYNC, ConcurrencyMode: protocol.CapabilityConcurrencyMode_CAPABILITY_CONCURRENCY_MODE_SEQUENTIAL})
+		mode := protocol.ExecutionMode_EXECUTION_MODE_SYNC
+		if name == "follow_route" {
+			mode = routeMode
+		}
+		caps = append(caps, &protocol.Capability{Name: name, Description: "Generic operation", InputSchemaJson: `{"type":"object","properties":{},"additionalProperties":false}`, ExecutionMode: mode, ConcurrencyMode: protocol.CapabilityConcurrencyMode_CAPABILITY_CONCURRENCY_MODE_SEQUENTIAL})
 	}
 	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_Capabilities{Capabilities: &protocol.CapabilityList{Capabilities: caps}}})
 	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_WorldBinding{WorldBinding: worldRequest()}})

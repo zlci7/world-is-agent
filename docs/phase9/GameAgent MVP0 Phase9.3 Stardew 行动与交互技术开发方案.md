@@ -61,7 +61,7 @@ public static int ToMinute(int hhmm);
 
 标准日历：seasonIndex=0..3，dayOfMonth=1..28；绝对日序为 `(year-1)*112 + seasonIndex*28 + dayOfMonth-1`。Tick=绝对日序×1440+HHMM 转分钟，使用 checked long 运算。当前游戏时钟接受延长到次日凌晨的合法 HHMM；预约参数单独限制 06:00–22:00、10 分钟刻度。分钟部分必须在 0..59，不能把 1260 当合法时间。
 
-SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新时间。Clock.sequence 在当前 run 内递增；显式重新连接时继续当前 run 和最新 Clock，不能生成“读档”身份。9.3 提供可复用的手动重连入口，自动检测、退避和持续重试留给后续阶段。
+SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新时间。Clock.sequence 在当前 run 内递增；显式重新连接时继续当前 run 和最新 Clock，不能生成“读档”身份。世界切换和手动重连取消旧流，后台等待旧接收循环结束后，通过主线程队列建立新流并完成全套握手；返回标题使待启动请求失效。WorldBindingReady 在主线程确认绑定并发布最新 Clock，再开放后续有序更新。9.3 提供可复用的手动重连入口，自动检测、退避和持续重试留给后续阶段。
 
 ### 3.2 MeetingContract
 
@@ -70,6 +70,8 @@ SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新�
 等价键按 game/world/NPC/player/landmark/规范化 start/end 稳定生成，不根据模型措辞变化。日期非法、地点不存在、目标日节日、节日信息未知、地点未开放、路线未支持或来不及出发均明确拒绝。
 
 当前 NPC 实际能否执行在出发时重新确认；创建成功不是未来路径畅通保证。
+
+DepartureAt 按地点 departure_lead_minutes 推算，必须位于目标日 06:00 及之后，且晚于当前 Clock；早于目标日执行窗口时返回 departure_outside_execution_window。沙滩提前量为 240 分钟时，最早预约开始时间为 10:00。
 
 ### 3.3 LandmarkCatalog
 
@@ -161,6 +163,8 @@ else：继续当前有界等待
 ```
 
 此先后顺序保证 [start,end)；恰好截止不算按时到达。跨阈值跳时如果漏过整个窗口，不能推断玩家一直未出现或 NPC 持续等待，结果标记中断/未知。
+
+监听保留首次注册是否不晚于 start 的事实。迟到注册后仍可凭实际相遇产生 met；到期未见面只产生 interrupted/wait_started_late。按时注册且有窗口内观测，才允许到期产生 expired；按时注册但跳过整个窗口产生 interrupted/time_jump_unknown。
 
 监听直接释放过期租约，即使 Runtime/LLM 不在线也不会让 NPC 永久停住。同一时刻产生 Evidence 和 Clock 时，经同一发送通道先发送 Evidence，再发送 WorldClockUpdate，使 Runtime 的截止扫描先看见确定性事实。future Task 的状态由 Runtime 协调，不在 Adapter 维护另一套任务状态机。
 
@@ -285,7 +289,7 @@ go test ./runtime/internal/agent -run '^TestStardewTaskExecutionBudget$' -count=
 - [ ] 先用 fake driver 测 Acquire/Transfer/Release、同 operation 重试、第三方接管。
 - [ ] 实现 GameNpcDriver 与 TaskExecutionDriver；通过 9.0 路线验证，禁止在 production 分支使用 fake 成功回执。
 - [ ] 验证酒馆/广场及所支持起点的真实路线、开放条件和行程预留，将通过的配置与 travel 提交一起交付；复用沙滩探针证据，并验证生产能力路径。
-- [ ] TestTaskTravelBudget 使用可控时钟验证 158 秒行程能在有效业务窗口内完成，后续等待登记和 Turn 均结束；行程超过 180 秒只中断并释放自身控制，不生成 unsatisfied。覆盖 Runtime 有限超时、取消及旧 move_to 回归，不在测试中真实等待数分钟。
+- [ ] TaskTravelTests 使用注入时钟验证 158 秒行程完成后可登记等待、180 秒边界中断且只释放自身控制；TestTaskTravelBudget 通过真实 gRPC/SQLite 和短实时时限验证 Async 行动不受 Sync 截止约束，抵达后 Sync 等待登记使 Turn 结束、Task 进入 waiting。TestStardewTaskExecutionBudget 验证生产配置实际值；Runtime 超时、取消及旧 move_to 另运行既有回归，不在测试中真实等待数分钟。
 - [ ] 实现 wait_for_player 和 MeetingWaitMonitor，确保 Sync Action 返回后仍有有限世界监听。
 - [ ] 更新 Observation 与 TaskEvidence；对同 operation 只产生一次终态 fact_id。
 - [ ] TaskSourceContextStoreTests 与 TaskOperationReceiptsTests 覆盖启动版本保留：来源 start_revision=4，任务后续版本为 5，原 operation 的进展、终态及重复查询回执仍为 4；通过 C# Mapper 和协议序列化往返后保持不变。
@@ -300,7 +304,7 @@ MeetingWaitMonitorTests
 ```
 
 ```powershell
-dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj --filter "FullyQualifiedName~NpcControlLeaseTests|FullyQualifiedName~TaskExecutionDriverTests|FullyQualifiedName~MeetingWaitMonitorTests|FullyQualifiedName~TaskSourceContextStoreTests|FullyQualifiedName~TaskOperationReceiptsTests"
+dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj --filter "FullyQualifiedName~NpcControlLeaseTests|FullyQualifiedName~TaskTravelTests|FullyQualifiedName~TaskExecutionDriverTests|FullyQualifiedName~MeetingWaitMonitorTests|FullyQualifiedName~TaskSourceContextStoreTests|FullyQualifiedName~TaskOperationReceiptsTests"
 go test ./runtime/internal/gateway -run '^TestTaskTravelBudget$' -count=1
 ```
 
@@ -332,7 +336,7 @@ public void TiesUseRightAfterBlockedUp()
 ```
 
 ```powershell
-dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj --filter "FullyQualifiedName~AdjacentTileSelectorTests|FullyQualifiedName~ApproachPlayerTests"
+dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj --filter "FullyQualifiedName~AdjacentTileSelectorTests|FullyQualifiedName~TaskTravelTests"
 dotnet test adapters/stardew/tests/ActionCancellationRegistry.Tests/ActionCancellationRegistry.Tests.csproj
 ```
 
@@ -360,6 +364,7 @@ NpcInteractionLifecycleTests
 dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.csproj
 dotnet test adapters/stardew/tests/ProtocolMapper.Tests/ProtocolMapper.Tests.csproj
 dotnet test adapters/stardew/tests/PlayerInteractProbe.Tests/PlayerInteractProbe.Tests.csproj
+dotnet test adapters/stardew/tests/RuntimeClient.Tests/RuntimeClient.Tests.csproj
 powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-context-static.ps1
 dotnet build adapters/stardew/GameAgent.Stardew.csproj --configuration Debug
 ```

@@ -90,6 +90,29 @@ public sealed class MeetingContractTests
         Assert.Equal("departure_too_late", result.Code);
     }
 
+    [Theory]
+    [InlineData(1, "spring", 2, 240, 800, false)]
+    [InlineData(1, "spring", 2, 240, 1000, true)]
+    [InlineData(1, "spring", 2, 60, 700, true)]
+    [InlineData(1, "summer", 1, 240, 800, false)]
+    [InlineData(2, "spring", 1, 480, 600, false)]
+    public void DepartureMustFitTheTargetDaysExecutionWindow(int year, string season, int day, int lead, int start, bool accepted)
+    {
+        string json = LandmarkCatalogTests.ValidCatalogJson.Replace("\"departure_lead_minutes\":240", $"\"departure_lead_minutes\":{lead}");
+        MeetingResolution result = MeetingContract.Resolve(World, "npc:Linus", "player:local", "Mountain",
+            new MeetingRequest("beach_meeting_spot", new MeetingDate(year, season, day), start, start + 100),
+            FestivalKnowledge.NotFestival, LandmarkCatalog.Parse(json));
+
+        Assert.Equal(accepted, result.Accepted);
+        if (accepted)
+            Assert.Equal(GameClock.ToTick(year, GameClock.SeasonIndex(season), day, 600), result.Agreement!.DepartureAt);
+        else
+        {
+            Assert.Equal("departure_outside_execution_window", result.Code);
+            Assert.Null(result.Agreement);
+        }
+    }
+
     private static MeetingResolution Resolve(
         FestivalKnowledge knowledge = FestivalKnowledge.NotFestival,
         string npc = "npc:Linus",

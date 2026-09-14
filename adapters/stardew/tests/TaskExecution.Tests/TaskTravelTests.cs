@@ -152,6 +152,28 @@ public sealed class TaskTravelTests
     }
 
     [Fact]
+    public void TravelAt158SecondsCanRegisterWaitWithoutHoldingAnActiveAction()
+    {
+        long elapsed = 0;
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        TaskExecutionDriver driver = Driver(npc, () => elapsed);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson);
+        driver.BeginTravel(travel, World, "beach_meeting_spot", catalog);
+        elapsed = 158_000;
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+
+        Assert.Equal("arrived", driver.Poll(travel.Operation, World).Result.Code);
+        TaskOperationSource wait = travel with { Operation = travel.Operation with { OperationId = "wait" } };
+        Assert.Equal("wait_registered", driver.BeginWait(wait, World, catalog).Result.Code);
+        Assert.False(driver.IsActive(travel.Operation));
+        Assert.False(driver.IsActive(wait.Operation));
+        Assert.Equal(0, npc.ReleaseCount);
+        Assert.True(driver.FinishWait(wait.Operation, "met"));
+        Assert.Equal(1, npc.ReleaseCount);
+    }
+
+    [Fact]
     public void WaitWithoutAnArrivalHandoffHasNoSideEffects()
     {
         FakeNpcDriver npc = new(new WorldPosition("Beach", 28, 36));

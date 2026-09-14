@@ -81,6 +81,9 @@ public static class MeetingContract
         }
 
         long departureAt = checked(startAt - landmark.DepartureLeadMinutes);
+        long executionStartsAt = GameClock.ToTick(request.TargetDate.Year, seasonIndex, request.TargetDate.DayOfMonth, 600);
+        if (departureAt < executionStartsAt)
+            return Reject("departure_outside_execution_window", "meeting departure must be at or after 0600 on the target date");
         if (departureAt <= world.NowTick)
             return Reject("departure_too_late", "meeting departure time must remain in the future");
 
