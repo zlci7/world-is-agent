@@ -21,6 +21,7 @@
     <Compile Include="..\..\src\Tasks\TaskSourceContextStore.cs" Link="TaskSourceContextStore.cs" />
     <Compile Include="..\..\src\Tasks\TaskOperationReceipts.cs" Link="TaskOperationReceipts.cs" />
     <Compile Include="..\..\src\Tasks\NpcControlLease.cs" Link="NpcControlLease.cs" />
+    <Compile Include="..\..\src\Tasks\OrdinaryInteractionLifecycle.cs" Link="OrdinaryInteractionLifecycle.cs" />
     <Compile Include="..\..\src\Tasks\TaskExecutionDriver.cs" Link="TaskExecutionDriver.cs" />
     <Compile Include="..\..\src\Tasks\TaskNpcDriver.cs" Link="TaskNpcDriver.cs" />
     <Compile Include="..\..\src\Tasks\TaskTravelPolicy.cs" Link="TaskTravelPolicy.cs" />

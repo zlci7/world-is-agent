@@ -94,8 +94,8 @@ public sealed class GameNpcDriver : ITaskNpcDriver
             travel.Controller,
             travel.Npc.temporaryController,
             () => travel.Npc.controller = null,
-            travel.Npc.Halt);
-        if (restoreNative && ownsMain && !foreign)
+            () => { if (!Game1.eventUp) travel.Npc.Halt(); });
+        if (restoreNative && ownsMain && !foreign && !Game1.eventUp)
             this.restorer.Restore(travel.Npc);
     }
 
@@ -115,11 +115,19 @@ public sealed class GameNpcDriver : ITaskNpcDriver
     }
 
     public bool Hold(OperationKey operation)
+        => this.Hold(operation, allowNativeSchedule: false);
+
+    public bool HoldInteraction(OperationKey operation)
+        => this.Hold(operation, allowNativeSchedule: true);
+
+    private bool Hold(OperationKey operation, bool allowNativeSchedule)
     {
         if (this.active.ContainsKey(operation))
             return this.Owns(operation);
         NPC npc = RequireNpc(operation.NpcEntityId);
-        if (npc.currentLocation is null || npc.controller is not null || npc.temporaryController is not null)
+        if (npc.currentLocation is null || npc.temporaryController is not null ||
+            (npc.controller is not null && (!allowNativeSchedule || !npc.controller.NPCSchedule)) ||
+            Game1.eventUp)
             return false;
 
         WorldPosition target = Position(npc);
@@ -128,6 +136,7 @@ public sealed class GameNpcDriver : ITaskNpcDriver
         npc.ignoreScheduleToday = true;
         npc.controller = controller;
         this.active.Add(operation, hold);
+        npc.Halt();
         return true;
     }
 
@@ -178,6 +187,8 @@ public sealed class GameNpcDriver : ITaskNpcDriver
 
         public override bool update(GameTime time)
         {
+            if (this.npc.temporaryController is not null || !ReferenceEquals(this.npc.controller, this) || Game1.eventUp)
+                return false;
             if (At(this.npc, this.target))
             {
                 this.npc.Halt();

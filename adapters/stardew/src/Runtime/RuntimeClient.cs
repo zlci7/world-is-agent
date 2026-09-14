@@ -33,6 +33,7 @@ public sealed class RuntimeClient : IDisposable
     private readonly LandmarkCatalog landmarkCatalog;
     private readonly TaskExecutionDriver taskExecutionDriver;
     private readonly NpcControlLease npcControlLease;
+    private readonly OrdinaryInteractionLifecycle ordinaryInteractions;
     private readonly MeetingWaitMonitor meetingWaitMonitor;
     private readonly NpcInteractionLifecycle taskInteractionLifecycle;
     private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
@@ -91,6 +92,9 @@ public sealed class RuntimeClient : IDisposable
         this.landmarkCatalog = landmarkCatalog;
         this.taskExecutionDriver = taskExecutionDriver;
         this.npcControlLease = npcControlLease;
+        GameNpcDriver interactionDriver = new();
+        this.ordinaryInteractions = new OrdinaryInteractionLifecycle(
+            npcControlLease, interactionDriver, interactionDriver.HoldInteraction, () => Environment.TickCount64);
         this.meetingWaitMonitor = meetingWaitMonitor;
         this.taskInteractionLifecycle = taskInteractionLifecycle;
         this.monitor = monitor;
@@ -211,10 +215,20 @@ public sealed class RuntimeClient : IDisposable
         {
             this.presentDialogueCapability.CloseForNpc(npcEntityId);
             string conversationId = this.conversationStore.PrepareInteraction(worldId, npcEntityId, ProtocolMapper.PlayerEntityId, eventId);
+            RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
+            OperationKey interactionScope = new(world.WorldId, world.WorldRunId, world.ExecutionGeneration,
+                npcEntityId, "interaction:" + conversationId, eventId);
+            if (!this.ordinaryInteractions.Begin(conversationId, eventId, interactionScope))
+            {
+                this.conversationStore.DiscardPending(eventId);
+                reason = "npc_control_busy";
+                return false;
+            }
             InteractionContextSnapshot snapshot = this.BuildInteractionContextSnapshot(eventId, worldId, npc, player, conversationId);
             if (!this.interactionContextStore.TryReserve(snapshot, out reason))
             {
                 this.conversationStore.DiscardPending(eventId);
+                this.ordinaryInteractions.End(conversationId);
                 return false;
             }
 
@@ -226,6 +240,7 @@ public sealed class RuntimeClient : IDisposable
         }
         catch (Exception ex)
         {
+            this.ordinaryInteractions.TurnEnded(eventId);
             this.conversationStore.DiscardPending(eventId);
             this.interactionContextStore.DiscardPending(eventId);
             this.presentDialogueCapability.CloseWaitingForNpc(npcEntityId);
@@ -250,6 +265,7 @@ public sealed class RuntimeClient : IDisposable
         }
         catch
         {
+            this.dispatcher.Enqueue(() => this.ordinaryInteractions.TurnEnded(eventId));
             this.conversationStore.DiscardPending(eventId);
             this.interactionContextStore.DiscardPending(eventId);
             this.CloseWaitingForNpcOnMainThread(gameEvent.TargetEntityId);
@@ -313,6 +329,7 @@ public sealed class RuntimeClient : IDisposable
                 return;
             }
 
+            this.ordinaryInteractions.BindEvent(submission.ConversationId, eventId);
             this.presentDialogueCapability.QueueWaitingForNpc(npcEntityId);
             await this.SendAsync(
                 new AdapterMessage
@@ -866,6 +883,7 @@ public sealed class RuntimeClient : IDisposable
 
         if (!string.IsNullOrWhiteSpace(completion.EventId))
         {
+            this.ordinaryInteractions.TurnEnded(completion.EventId);
             InteractionContextSnapshot? current = this.interactionContextStore.TryGet(completion.EventId);
             string? conversationId = current?.ConversationId ??
                 this.taskInteractionConversations.FindPresentationConversation(completion.EventId);
@@ -975,6 +993,17 @@ public sealed class RuntimeClient : IDisposable
 
     public void UpdateTaskActions()
     {
+        foreach (var ended in this.ordinaryInteractions.Expire(npcId =>
+        {
+            NPC npc = this.RequireNpc(npcId);
+            return !Game1.eventUp && ReferenceEquals(npc.currentLocation, Game1.player.currentLocation) &&
+                InteractionPolicy.IsWithinMaxInteractionDistance(npc.TilePoint.X, npc.TilePoint.Y,
+                    Game1.player.TilePoint.X, Game1.player.TilePoint.Y);
+        }))
+        {
+            this.conversationStore.CloseIfConversation(this.currentWorldId, ended.Npc, ProtocolMapper.PlayerEntityId, ended.Conversation);
+            this.presentDialogueCapability.CloseForNpc(ended.Npc);
+        }
         RuntimeWorldSnapshot? world = this.worldContext.Current;
         if (world is null)
             return;
@@ -1379,21 +1408,34 @@ public sealed class RuntimeClient : IDisposable
                 isCancelled: () => this.actionCancellationRegistry.TryConsumeCancelled(request.ActionId),
                 onCancelled: () =>
                 {
+                    this.ordinaryInteractions.End(interaction!.ConversationId);
                     this.CompleteTaskInteraction(taskInteractionEventId, "dialogue_cancelled");
                     this.SendActionResult(ProtocolMapper.BuildCancelledActionResult(request, "action cancelled before dialogue display"), request.Capability);
                 },
-                onDisplayed: conversationId => this.SendActionResult(ProtocolMapper.BuildPresentDialogueSucceededActionResult(request, conversationId, input), request.Capability),
+                onDisplayed: conversationId =>
+                {
+                    this.ordinaryInteractions.Presented(request.SourceEventId);
+                    this.SendActionResult(ProtocolMapper.BuildPresentDialogueSucceededActionResult(request, conversationId, input), request.Capability);
+                },
                 onFailed: ex =>
                 {
+                    this.ordinaryInteractions.End(interaction!.ConversationId);
                     this.CompleteTaskInteraction(taskInteractionEventId, "dialogue_failed");
                     this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "action_failed", ex), request.Capability);
                 },
                 onSubmitted: submission => this.SendPlayerDialogueSubmission(guardedNpc, Game1.player, submission),
-                onAbandoned: () => this.ReleaseInteractionContext(request.SourceEventId),
+                onAbandoned: () =>
+                {
+                    this.ordinaryInteractions.End(interaction!.ConversationId);
+                    this.ReleaseInteractionContext(request.SourceEventId);
+                },
                 onFinished: () =>
                 {
                     if (finalDialogue)
+                    {
+                        this.ordinaryInteractions.End(interaction!.ConversationId);
                         this.CompleteTaskInteraction(taskInteractionEventId, "dialogue_finished");
+                    }
                 }
             );
         }
@@ -1463,6 +1505,12 @@ public sealed class RuntimeClient : IDisposable
             }
             else
             {
+                if (!this.ordinaryInteractions.SuspendForMove(request.SourceEventId, request.ActionId))
+                {
+                    this.CloseInteractionConversation(interaction);
+                    this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "control_lost", "interaction control is unavailable"), request.Capability);
+                    return;
+                }
                 operation = new OperationKey(
                     world.WorldId,
                     world.WorldRunId,
@@ -1542,7 +1590,7 @@ public sealed class RuntimeClient : IDisposable
         LeaseToken? lease = null;
         try
         {
-            if (!this.TryGuardInteractionContext(request, requireProximity: true, out NPC? npc, out _, out ActionResult? rejected))
+            if (!this.TryGuardInteractionContext(request, requireProximity: true, out NPC? npc, out InteractionContextSnapshot? interaction, out ActionResult? rejected))
             {
                 this.SendActionResult(rejected ?? throw new InvalidOperationException("interaction guard rejected without ActionResult"), request.Capability);
                 return;
@@ -1563,6 +1611,12 @@ public sealed class RuntimeClient : IDisposable
                 request.EntityId,
                 "interaction:" + request.SourceEventId,
                 request.ActionId);
+            if (!this.ordinaryInteractions.SuspendForMove(request.SourceEventId, request.ActionId))
+            {
+                this.CloseInteractionConversation(interaction);
+                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "control_lost", "interaction control is unavailable"), request.Capability);
+                return;
+            }
             LeaseAttempt leaseAttempt = this.npcControlLease.Acquire(operation, "travelling");
             if (!leaseAttempt.Acquired)
             {
@@ -1710,6 +1764,7 @@ public sealed class RuntimeClient : IDisposable
             return;
 
         this.conversationStore.CloseIfConversation(snapshot.WorldId, snapshot.NpcEntityId, snapshot.PlayerEntityId, snapshot.ConversationId);
+        this.ordinaryInteractions.End(snapshot.ConversationId);
     }
 
     private void ReleaseInteractionContext(string eventId)
@@ -1753,6 +1808,7 @@ public sealed class RuntimeClient : IDisposable
 
     private void ResetTaskRuntimeState(string reason)
     {
+        this.ordinaryInteractions.Clear();
         this.taskInteractionLifecycle.Clear(reason);
         this.taskExecutionDriver.Clear();
         this.activeTaskActions.Clear();
@@ -1767,6 +1823,7 @@ public sealed class RuntimeClient : IDisposable
         string taskInteractionEventId,
         string reason)
     {
+        this.ordinaryInteractions.End(conversationId);
         if (string.IsNullOrWhiteSpace(taskInteractionEventId))
             return;
         this.CompleteTaskInteraction(taskInteractionEventId, reason);
@@ -1796,6 +1853,7 @@ public sealed class RuntimeClient : IDisposable
 
     private void SendActionResult(ActionResult result, string capability)
     {
+        this.ordinaryInteractions.MoveFinished(result.ActionId);
         this.SendFireAndForget(
             this.SendAsync(
                 new AdapterMessage
