@@ -289,6 +289,30 @@ public sealed class TaskTravelTests
         Assert.Equal(2, npc.ReleaseCount);
     }
 
+    [Fact]
+    public void ApproachAfterForeignTakeoverReleasesLeaseWithoutTakingControlBack()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        NpcControlLease leases = new();
+        TaskExecutionDriver driver = new(new TaskSourceContextStore(), new TaskOperationReceipts(), leases, npc);
+        TaskOperationSource travel = TaskSourceContextStoreTests.Source();
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson);
+        driver.BeginTravel(travel, World, "beach_meeting_spot", catalog);
+        npc.Next = new DriverResult("succeeded", "arrived", new WorldPosition("Beach", 28, 36));
+        driver.Poll(travel.Operation, World);
+        OperationKey wait = travel.Operation with { OperationId = "wait" };
+        driver.BeginWait(travel with { Operation = wait }, World, catalog);
+        driver.PromoteWaitToInteraction(wait);
+        driver.CommitInteraction(wait);
+        npc.ControlOwned = false;
+
+        Assert.False(driver.BeginInteractionApproach(wait, wait with { OperationId = "approach" }));
+        Assert.False(leases.HasOwner(wait.NpcEntityId));
+        Assert.False(driver.IsHandedOff(wait.TaskId, wait.OperationId));
+        Assert.False(npc.ControlOwned);
+        Assert.Equal(0, npc.HoldCount);
+    }
+
     private static TaskExecutionDriver Driver(FakeNpcDriver npc, Func<long> elapsed) =>
         new(new TaskSourceContextStore(), new TaskOperationReceipts(), new NpcControlLease(), npc, elapsed);
 

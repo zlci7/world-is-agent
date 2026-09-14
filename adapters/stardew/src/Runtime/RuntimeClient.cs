@@ -1419,6 +1419,7 @@ public sealed class RuntimeClient : IDisposable
                 operation = taskArrival.Source.Operation with { OperationId = "approach:" + request.ActionId };
                 if (!this.taskInteractionLifecycle.TryBeginApproach(taskArrival.EventId, operation))
                 {
+                    this.CompleteTaskInteraction(taskArrival.EventId, "control_lost");
                     this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "control_lost", "task interaction control is unavailable"), request.Capability);
                     return;
                 }
