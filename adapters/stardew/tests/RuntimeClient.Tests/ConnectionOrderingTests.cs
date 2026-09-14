@@ -7,24 +7,63 @@ namespace GameAgent.Stardew.Tests;
 
 public sealed class ConnectionOrderingTests
 {
-    [Fact]
-    public async Task EmptyTargetsSendTheCapturedWorldNpcDirectory()
+    [Theory]
+    [InlineData(EventAckStatus.Accepted)]
+    [InlineData(EventAckStatus.Duplicate)]
+    public async Task RebindingOnlyAnnouncesInteractedNpcsWithinTheCurrentRun(EventAckStatus status)
     {
         var fixture = new ClientFixture();
+        fixture.Field<AdapterConfig>("config").AgentTargets.AddRange(new[] { "Linus", "Abigail" });
+        var world = fixture.Field<RuntimeWorldContext>("worldContext");
+        world.BeginWorld("world", 600);
+        Assert.Equal(new[] { "player:local" }, (await SendBinding(fixture)).Entities.Select(entity => entity.EntityId));
+
+        Assert.True(fixture.Contexts.TryReserveHandoff(ClientFixture.Snapshot("ordinary"), out _));
+        fixture.Call("HandleEventAck", new EventAck { EventId = "ordinary", Status = status });
+        fixture.Client.Reconnect();
+        fixture.Call("StopConnection");
+        world.AdvanceClock(610);
+
+        Assert.Equal(new[] { "player:local", "npc:Linus" }, (await SendBinding(fixture)).Entities.Select(entity => entity.EntityId));
+        world.BeginWorld("world", 600);
+        Assert.Equal(new[] { "player:local" }, (await SendBinding(fixture)).Entities.Select(entity => entity.EntityId));
+        Assert.False(fixture.Client.IsTaskReady);
+    }
+
+    private static async Task<WorldBinding> SendBinding(ClientFixture fixture)
+    {
         var transport = Attach(fixture);
         var state = fixture.Field<RuntimeSessionState>("sessionState");
+        state.Disconnect();
         state.BeginConnection();
         state.AcceptEnvironmentReady(new[] { RuntimeSessionState.TaskExtension }, out _);
         state.AcceptCapabilityRequest(out _);
         state.MarkCapabilitiesSent();
-        fixture.Field<RuntimeWorldContext>("worldContext").BeginWorld("world", 600);
-        fixture.SetField("availableVillagerNames", new[] { "Linus", "Abigail" });
-
+        fixture.SetField("worldBindingSent", 0);
+        fixture.Field<WorldBindingExchange>("worldBindingExchange").Reset();
         await ((Task)fixture.Call("TrySendWorldBindingAsync", CancellationToken.None)!).WaitAsync(TimeSpan.FromSeconds(2));
+        return Assert.Single(transport.Writer.Messages).WorldBinding;
+    }
 
-        var message = Assert.Single(transport.Writer.Messages);
-        Assert.Equal(new[] { "player:local", "npc:Abigail", "npc:Linus" }, message.WorldBinding.Entities.Select(entity => entity.EntityId));
-        Assert.False(fixture.Client.IsTaskReady);
+    [Theory]
+    [InlineData(EventAckStatus.Rejected)]
+    [InlineData(EventAckStatus.Unspecified)]
+    public async Task UnacceptedInteractionDoesNotEnterReconnectDirectory(EventAckStatus status)
+    {
+        var fixture = new ClientFixture();
+        fixture.Field<RuntimeWorldContext>("worldContext").BeginWorld("world", 600);
+        Assert.True(fixture.Contexts.TryReserveHandoff(ClientFixture.Snapshot("ordinary"), out _));
+        fixture.Call("HandleEventAck", new EventAck { EventId = "ordinary", Status = status });
+        Assert.Equal(new[] { "player:local" }, (await SendBinding(fixture)).Entities.Select(entity => entity.EntityId));
+    }
+
+    [Fact]
+    public async Task UnknownAcknowledgementDoesNotCreateAnNpcIdentity()
+    {
+        var fixture = new ClientFixture();
+        fixture.Field<RuntimeWorldContext>("worldContext").BeginWorld("world", 600);
+        fixture.Call("HandleEventAck", new EventAck { EventId = "unknown", Status = EventAckStatus.Accepted });
+        Assert.Equal(new[] { "player:local" }, (await SendBinding(fixture)).Entities.Select(entity => entity.EntityId));
     }
 
     [Fact]

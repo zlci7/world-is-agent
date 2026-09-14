@@ -18,6 +18,7 @@ public sealed class RuntimeWorldContext
     private readonly string gameId;
     private readonly string clockId;
     private readonly Func<string> runIdFactory;
+    private readonly HashSet<string> knownNpcNames = new(StringComparer.Ordinal);
 
     public RuntimeWorldContext(string gameId, string clockId, Func<string>? runIdFactory = null)
     {
@@ -33,11 +34,31 @@ public sealed class RuntimeWorldContext
         get { lock (this.gate) return this.current; }
     }
 
+    public bool RememberNpc(string worldId, string npcName)
+    {
+        lock (this.gate)
+        {
+            if (this.current?.WorldId != worldId || string.IsNullOrWhiteSpace(npcName) || npcName != npcName.Trim())
+                return false;
+            this.knownNpcNames.Add(npcName);
+            return true;
+        }
+    }
+
+    public string[] KnownNpcNames(RuntimeWorldSnapshot snapshot)
+    {
+        lock (this.gate)
+            return this.current?.WorldRunId == snapshot.WorldRunId && this.current.WorldId == snapshot.WorldId
+                ? this.knownNpcNames.OrderBy(name => name, StringComparer.Ordinal).ToArray()
+                : Array.Empty<string>();
+    }
+
     public void BeginWorld(string worldId, long nowTick)
     {
         string runId = RequireIdentity(this.runIdFactory(), "worldRunId");
         lock (this.gate)
         {
+            this.knownNpcNames.Clear();
             this.current = new RuntimeWorldSnapshot(
                 this.gameId,
                 RequireIdentity(worldId, nameof(worldId)),
@@ -91,7 +112,10 @@ public sealed class RuntimeWorldContext
     public void Clear()
     {
         lock (this.gate)
+        {
             this.current = null;
+            this.knownNpcNames.Clear();
+        }
     }
 
     private static string RequireIdentity(string value, string name)

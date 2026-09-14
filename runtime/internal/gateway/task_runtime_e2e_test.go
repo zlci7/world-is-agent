@@ -32,10 +32,10 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 	n := p.calls.Add(1)
 	d := model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlContinue}}
 	switch p.mode {
-	case "unregistered_owner":
+	case "ordinary_without_task_source":
 		for _, entry := range req.Tools {
 			if entry.Name == "create_task" || entry.Name == "update_task" {
-				return model.Response{}, errors.New("Task tools exposed for unregistered owner")
+				return model.Response{}, errors.New("Task tools exposed without task interaction source")
 			}
 		}
 		if n == 1 {
@@ -44,7 +44,7 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 			for _, message := range req.Messages {
 				for _, result := range message.ToolResults {
 					if _, exists := result.Output["proposal_ref"]; exists {
-						return model.Response{}, errors.New("proposal authority exposed for unregistered owner")
+						return model.Response{}, errors.New("proposal authority exposed without task interaction source")
 					}
 				}
 			}
@@ -147,6 +147,10 @@ func newTaskWireFixture(t *testing.T, create bool, options ...func(*agent.Config
 }
 
 func newTaskWireFixtureWithRouteMode(t *testing.T, create bool, routeMode protocol.ExecutionMode, options ...func(*agent.Config)) *taskWireFixture {
+	return newTaskWireFixtureWithBinding(t, create, routeMode, worldRequest(), options...)
+}
+
+func newTaskWireFixtureWithBinding(t *testing.T, create bool, routeMode protocol.ExecutionMode, binding *protocol.WorldBinding, options ...func(*agent.Config)) *taskWireFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	dbPath := filepath.Join(t.TempDir(), "tasks.sqlite")
@@ -215,7 +219,7 @@ func newTaskWireFixtureWithRouteMode(t *testing.T, create bool, routeMode protoc
 	}
 	caps = append(caps, &protocol.Capability{Name: "confirm_agreement", Description: "Confirm an agreement after it is saved", InputSchemaJson: `{"type":"object","properties":{},"additionalProperties":false}`, ExecutionMode: protocol.ExecutionMode_EXECUTION_MODE_SYNC, ConcurrencyMode: protocol.CapabilityConcurrencyMode_CAPABILITY_CONCURRENCY_MODE_SEQUENTIAL, Extensions: toolPolicyExtensionsForGateway(true, true)})
 	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_Capabilities{Capabilities: &protocol.CapabilityList{Capabilities: caps}}})
-	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_WorldBinding{WorldBinding: worldRequest()}})
+	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_WorldBinding{WorldBinding: binding}})
 	r := f.next().GetWorldBindingReady()
 	if r.GetStatus() != "ready" {
 		t.Fatalf("bind: %v", r)

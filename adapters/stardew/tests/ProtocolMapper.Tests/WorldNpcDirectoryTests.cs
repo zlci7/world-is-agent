@@ -5,35 +5,38 @@ namespace GameAgent.Stardew.Tests;
 
 public sealed class WorldNpcDirectoryTests
 {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void BindingRegistersAvailableVillagersAllowedByInteractionConfiguration(bool explicitTargets)
+    [Fact]
+    public void BindingContainsOnlyKnownNpcsAndRepeatedInteractionsAreIdempotent()
     {
         var world = new RuntimeWorldContext("stardew-valley", "clock");
         world.BeginWorld("world", 600);
-        string[] configured = explicitTargets ? new[] { " Linus ", "Missing", "Linus" } : Array.Empty<string>();
-        var binding = ProtocolMapper.BuildWorldBinding(world.Current!, configured,
-            new[] { "Linus", "Abigail", "Linus" });
-
-        Assert.Equal(explicitTargets ? new[] { "player:local", "npc:Linus" }
-            : new[] { "player:local", "npc:Abigail", "npc:Linus" },
-            binding.Entities.Select(entity => entity.EntityId));
-        Assert.All(binding.Entities.Where(entity => entity.EntityType == "npc"),
-            entity => Assert.Equal(entity.EntityId, entity.DefinitionId));
+        Assert.True(world.RememberNpc("world", "Linus"));
+        Assert.True(world.RememberNpc("world", "Linus"));
+        Assert.False(world.RememberNpc("other-world", "Abigail"));
+        Assert.False(world.RememberNpc("world", ""));
+        var snapshot = world.Current!;
+        var binding = ProtocolMapper.BuildWorldBinding(snapshot, world.KnownNpcNames(snapshot));
+        Assert.Equal(new[] { "player:local", "npc:Linus" }, binding.Entities.Select(entity => entity.EntityId));
+        Assert.Equal("npc:Linus", binding.Entities[1].DefinitionId);
     }
 
     [Fact]
-    public void BindingDoesNotCarryNpcNamesBetweenWorldSnapshots()
+    public void NewRunAndClearDropKnownNpcsButClockAndRebindingPreserveThem()
     {
         var world = new RuntimeWorldContext("stardew-valley", "clock");
-        world.BeginWorld("first", 600);
-        var first = ProtocolMapper.BuildWorldBinding(world.Current!, Array.Empty<string>(), new[] { "Linus" });
-        world.BeginWorld("second", 600);
-        var second = ProtocolMapper.BuildWorldBinding(world.Current!, Array.Empty<string>(), new[] { "Abigail" });
-        Assert.Contains(first.Entities, entity => entity.EntityId == "npc:Linus");
-        Assert.DoesNotContain(second.Entities, entity => entity.EntityId == "npc:Linus");
-        Assert.Contains(second.Entities, entity => entity.EntityId == "npc:Abigail");
-        Assert.NotEqual(first.Scope.WorldRunId, second.Scope.WorldRunId);
+        world.BeginWorld("world", 600);
+        world.RememberNpc("world", "Linus");
+        var first = world.Current!;
+        world.AdvanceClock(610);
+        Assert.True(world.TryApplyBinding(first.GameId, first.WorldId, first.WorldRunId, 2, out _));
+        Assert.Equal(new[] { "Linus" }, world.KnownNpcNames(world.Current!));
+        world.BeginWorld("world", 600);
+        Assert.Empty(world.KnownNpcNames(world.Current!));
+        Assert.Empty(world.KnownNpcNames(first));
+        world.RememberNpc("world", "Abigail");
+        var second = world.Current!;
+        world.Clear();
+        Assert.Empty(world.KnownNpcNames(second));
+        Assert.False(world.RememberNpc("world", "Linus"));
     }
 }

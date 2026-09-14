@@ -54,11 +54,6 @@ public static partial class ProtocolMapper
         return hello;
     }
 
-    public static WorldBinding BuildWorldBinding(RuntimeWorldSnapshot snapshot, IEnumerable<string> configuredTargets, IEnumerable<string> availableVillagers)
-    {
-        return BuildWorldBinding(snapshot, AgentTargetPolicy.SelectNames(availableVillagers, configuredTargets));
-    }
-
     public static WorldBinding BuildWorldBinding(RuntimeWorldSnapshot snapshot, IEnumerable<string> npcNames)
     {
         ArgumentNullException.ThrowIfNull(snapshot);

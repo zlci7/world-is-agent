@@ -27,7 +27,6 @@
     <Compile Include="..\..\src\Runtime\RuntimeSessionState.cs" Link="RuntimeSessionState.cs" />
     <Compile Include="..\..\src\Runtime\WorldBindingExchange.cs" Link="WorldBindingExchange.cs" />
     <Compile Include="..\..\src\Runtime\ProtocolMapper.Task.cs" Link="ProtocolMapper.Task.cs" />
-    <Compile Include="..\..\src\Runtime\AgentTargetPolicy.cs" Link="AgentTargetPolicy.cs" />
     <Compile Include="..\..\src\Runtime\TaskOutboundBatch.cs" Link="TaskOutboundBatch.cs" />
     <Compile Include="..\..\src\Tasks\GameClock.cs" Link="GameClock.cs" />
     <Compile Include="..\..\src\Tasks\LandmarkCatalog.cs" Link="LandmarkCatalog.cs" />

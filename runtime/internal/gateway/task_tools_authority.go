@@ -1,9 +1,45 @@
 package gateway
 
 import (
+	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/task"
 	"gameagent/runtime/internal/tool"
 )
+
+// Event targets and binding seeds share one current-world identity directory.
+// Identity admission does not grant player interaction or task execution rights.
+func (a *worldTaskAuthority) RegisterEventTarget(event *protocol.GameEvent, target *protocol.EntityRef) *protocol.Error {
+	slot := a.registry.slot(a.world, false)
+	if slot == nil {
+		return nil
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	if slot.owner == nil || slot.owner.env != a.env {
+		return taskErrorToProtocol(task.ErrGenerationStale)
+	}
+	if !slot.ready || slot.saving {
+		return nil
+	}
+	if event.GetWorldId() != a.world.WorldID {
+		return taskErrorToProtocol(task.ErrWorldMismatch)
+	}
+	if source := event.GetInteractionSource(); source != nil {
+		binding, err := taskBindingFromProtocol(source.GetScope())
+		if err != nil || binding != slot.head.Binding {
+			return taskErrorToProtocol(task.ErrSourceInvalid)
+		}
+	}
+	if target.GetEntityId() == "" || target.GetEntityType() == "" || target.GetDefinitionId() == "" {
+		return &protocol.Error{Code: "target_entity_invalid", Message: "target entity requires id, type and definition_id"}
+	}
+	if prior := slot.entities[target.EntityId]; prior != nil &&
+		(prior.EntityType != target.EntityType || prior.DefinitionId != target.DefinitionId) {
+		return &protocol.Error{Code: "target_entity_conflict", Message: "target entity conflicts with the current world identity"}
+	}
+	slot.entities[target.EntityId] = cloneEntityRef(target)
+	return nil
+}
 
 type worldTaskAuthority struct {
 	registry *WorldRegistry

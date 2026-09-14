@@ -402,6 +402,12 @@ func (s *Server) dispatchGameEvent(
 		return nil
 	}
 
+	if env.taskAuthority != nil {
+		if ackErr := env.taskAuthority.RegisterEventTarget(event, resolved.Target); ackErr != nil {
+			return env.send(eventAckMessage(messageID, event.EventId, protocolv1alpha2.EventAckStatus_EVENT_ACK_STATUS_REJECTED, ackErr))
+		}
+	}
+
 	// Step 3：按身份 key 拿/建该 Agent 的 ExecutionLane。
 	// 每个 Agent 一条 lane = 同一 Agent 的事件 FIFO 串行、不同 Agent 并行。
 	// GetOrCreate 失败（store 已 Close）→ environment_closed。

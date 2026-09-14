@@ -63,6 +63,14 @@ public static int ToMinute(int hhmm);
 
 SaveLoaded 生成新 world_run_id；DayStarted 保留同一个 run，只更新时间。Clock.sequence 在当前 run 内递增；显式重新连接时继续当前 run 和最新 Clock，不能生成“读档”身份。世界切换和手动重连取消旧流，后台等待旧接收循环结束后，通过主线程队列建立新流并完成全套握手；返回标题使待启动请求失效。WorldBindingReady 在主线程确认绑定并发布最新 Clock，再开放后续有序更新。9.3 提供可复用的手动重连入口，自动检测、退避和持续重试留给后续阶段。
 
+#### 按需实体登记
+
+WorldBinding.entities 是当前 Adapter 已知实体的初始目录，不要求枚举存档中的全部 NPC。首次绑定可只包含玩家。Gateway 复用有效 GameEvent 的 canonical target，在普通事件进入 lane 前校验当前连接、世界、来源 scope 和完整身份字段，再将目标 EntityRef 登记到当前世界目录。只登记 target_entity_id 指定的实体；相同身份重复上报幂等，entity_type 或 definition_id 冲突时拒绝当前事件。身份登记与队列接纳分离：队列拒绝不撤回已确认的身份事实，也不创建 Task 或执行 Turn。
+
+create_task 仍需有效玩家交互来源、proposal_ref 和已登记 owner，并在持久化临界区复验当前绑定。实体登记不代表当前位置、路线可达性或行动权限；这些条件由 Adapter 在执行时检查。
+
+Adapter 根据 Accepted/Duplicate 交互回执记录本次 run 已交互的 NPC。记录随同一 run 的手动重连或 Runtime 重启保留，并通过现有 WorldBinding.entities 重新上报；DayStarted 保留目录。SaveLoaded 创建新 run，ReturnedToTitle 清理目录。跨 run 的任务恢复遵循 Phase9.4 检查点合同。
+
 ### 3.2 MeetingContract
 
 不可变合同包含：SchemaVersion=1、LandmarkId、ParticipantEntityId、TargetDate、ClockId、DepartureAt、StartAt、EndAt。外层 TaskProposal 保存通用 wake/deadline/参与者/等价键，payload 保存游戏约定；读取时校验两层时间和参与者一致。
@@ -256,7 +264,7 @@ NpcNativeBehaviorRestorer 只恢复本租约改变的暂停/朝向/移动标记�
 | --- | --- |
 | GameLaunched | 配置、能力、路线资源加载 |
 | SaveLoaded | 新 run，清理旧控制权/来源，读取检查点标记并发起绑定 |
-| DayStarted | 保留 run，更新 Clock 与实体目录；不清空未来 Task |
+| DayStarted | 保留 run 与已交互实体目录，更新 Clock；不清空未来 Task |
 | TimeChanged | 先处理当前等待边界，同一采样产生终态时严格按 Evidence → Clock 发布 |
 | UpdateTicked | dispatcher、移动状态、等待采样、UI 结束、原生恢复 |
 | DayEnding | 结束当日临时世界占用，保留 Runtime 未来 Task |
