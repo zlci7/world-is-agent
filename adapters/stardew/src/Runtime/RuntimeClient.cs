@@ -55,6 +55,7 @@ public sealed class RuntimeClient : IDisposable
     // currentWorldId is maintained from SMAPI main-thread lifecycle events.
     // Background gRPC threads must not resolve Stardew world state directly.
     private volatile string currentWorldId = string.Empty;
+    private volatile string[] availableVillagerNames = Array.Empty<string>();
     private long eventSequence;
     private int worldBindingSent;
     private long worldBindingClockSequence;
@@ -135,6 +136,7 @@ public sealed class RuntimeClient : IDisposable
     public void Reconnect()
     {
         this.ResetTaskRuntimeState("manual_rebind");
+        this.CaptureWorldVillagers();
         this.RestartConnection();
     }
 
@@ -530,15 +532,16 @@ public sealed class RuntimeClient : IDisposable
         {
             this.worldBindingExchange.Begin(requestId);
             Interlocked.Exchange(ref this.worldBindingClockSequence, checked((long)snapshot.ClockSequence));
+            WorldBinding binding = ProtocolMapper.BuildWorldBinding(snapshot, this.config.AgentTargets, this.availableVillagerNames);
             await this.SendAsync(
                 new AdapterMessage
                 {
                     MessageId = requestId,
-                    WorldBinding = ProtocolMapper.BuildWorldBinding(snapshot, this.config.AgentTargets),
+                    WorldBinding = binding,
                 },
                 cancellationToken
             );
-            this.monitor.Log($"GameAgent WorldBinding sent: world_id={snapshot.WorldId} run_id={snapshot.WorldRunId} sequence={snapshot.ClockSequence}.", LogLevel.Info);
+            this.monitor.Log($"GameAgent WorldBinding sent: world_id={snapshot.WorldId} run_id={snapshot.WorldRunId} sequence={snapshot.ClockSequence} entities=[{string.Join(",", binding.Entities.Select(entity => entity.EntityId))}].", LogLevel.Info);
         }
         catch
         {
@@ -944,8 +947,17 @@ public sealed class RuntimeClient : IDisposable
         this.ClearConversations();
         this.currentWorldId = worldId;
         this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick());
+        this.CaptureWorldVillagers();
         this.RestartConnection();
         this.monitor.Log($"GameAgent world context started: world_id={worldId} run_id={this.worldContext.Current?.WorldRunId}", LogLevel.Debug);
+    }
+
+    // Called only from the main-thread world/reconnect lifecycle, never per tick.
+    private void CaptureWorldVillagers()
+    {
+        this.availableVillagerNames = this.worldContext.Current is null
+            ? Array.Empty<string>()
+            : Utility.getAllVillagers().Select(npc => npc.Name).ToArray();
     }
 
     public void RefreshWorldClock()
@@ -977,6 +989,7 @@ public sealed class RuntimeClient : IDisposable
         this.moveToCapability.CancelAll("world context cleared before movement completed");
         this.presentDialogueCapability.CloseAll();
         this.currentWorldId = string.Empty;
+        this.availableVillagerNames = Array.Empty<string>();
         this.worldContext.Clear();
         this.sessionState.PauseTasks();
         Interlocked.Exchange(ref this.worldBindingSent, 0);

@@ -13,7 +13,7 @@ import (
 
 type TaskWorld interface {
 	Current() (task.Head, uint64, bool)
-	Guard(task.Binding, uint64, func(task.Head) error) error
+	GuardOwner(task.Binding, uint64, string, func(task.Head) error) error
 }
 
 const createTaskSchema = `{"type":"object","properties":{"proposal_ref":{"type":"string","minLength":1},"instruction":{"type":"string","minLength":1,"maxLength":2048}},"required":["proposal_ref","instruction"],"additionalProperties":false}`
@@ -75,7 +75,7 @@ func (t *TaskTools) guard(ctx context.Context, rc RuntimeCallContext, fn func(ta
 	if err := t.checkContext(rc); err != nil {
 		return err
 	}
-	return t.world.Guard(rc.Execution.Binding, rc.AuthorityEpoch, func(head task.Head) error {
+	return t.world.GuardOwner(rc.Execution.Binding, rc.AuthorityEpoch, rc.Execution.Owner.EntityID, func(head task.Head) error {
 		if head.Clock.ID != t.authority.Execution.Clock.ID {
 			return task.ErrClockMismatch
 		}

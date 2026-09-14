@@ -23,7 +23,7 @@ type taskToolWorld struct {
 }
 
 func (w *taskToolWorld) Current() (task.Head, uint64, bool) { return w.head, w.epoch, w.ready }
-func (w *taskToolWorld) Guard(binding task.Binding, epoch uint64, fn func(task.Head) error) error {
+func (w *taskToolWorld) GuardOwner(binding task.Binding, epoch uint64, entityID string, fn func(task.Head) error) error {
 	if !w.ready {
 		return task.ErrWorldNotReady
 	}

@@ -1,3 +1,5 @@
+using GameAgent.Stardew.Runtime;
+
 namespace GameAgent.Stardew.Events;
 
 public sealed record InteractCandidate(
@@ -24,11 +26,11 @@ public static class PlayerInteractTargetSelector
         bool allowAdjacentTile = true
     )
     {
-        HashSet<string> allowed = new(allowedNames, StringComparer.Ordinal);
-        bool hasAllowList = allowed.Count > 0;
+        InteractCandidate[] available = candidates.ToArray();
+        HashSet<string> allowed = new(AgentTargetPolicy.SelectNames(available.Select(candidate => candidate.Name), allowedNames), StringComparer.Ordinal);
 
-        return candidates
-            .Where(candidate => !hasAllowList || allowed.Contains(candidate.Name))
+        return available
+            .Where(candidate => allowed.Contains(candidate.Name))
             .Select(candidate => Evaluate(candidate, cursorPixelX, cursorPixelY, grabTileX, grabTileY, allowAdjacentTile))
             .Where(hit => hit is not null)
             .Select(hit => hit!)

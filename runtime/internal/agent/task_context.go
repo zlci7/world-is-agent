@@ -40,6 +40,9 @@ func (l *Loop) beginTaskContext(env Environment, key session.AgentSessionKey, ev
 	if !ready {
 		return nil
 	}
+	if err := world.GuardOwner(head.Binding, epoch, key.EntityID, func(task.Head) error { return nil }); err != nil {
+		return nil
+	}
 	source := event.GetInteractionSource()
 	scope := source.GetScope()
 	if source.GetKind() != "player" || strings.TrimSpace(source.GetSourceId()) == "" || strings.TrimSpace(source.GetPlayerEntityId()) == "" || source.GetTaskId() != "" || source.GetOperationId() != "" || strings.TrimSpace(event.GetEventId()) == "" ||

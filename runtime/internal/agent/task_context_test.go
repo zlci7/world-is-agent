@@ -21,7 +21,7 @@ type taskContextWorld struct {
 }
 
 func (w *taskContextWorld) Current() (task.Head, uint64, bool) { return w.head, w.epoch, w.ready }
-func (w *taskContextWorld) Guard(b task.Binding, e uint64, fn func(task.Head) error) error {
+func (w *taskContextWorld) GuardOwner(b task.Binding, e uint64, entityID string, fn func(task.Head) error) error {
 	if !w.ready {
 		return task.ErrWorldNotReady
 	}

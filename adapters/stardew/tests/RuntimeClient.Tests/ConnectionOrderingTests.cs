@@ -8,6 +8,26 @@ namespace GameAgent.Stardew.Tests;
 public sealed class ConnectionOrderingTests
 {
     [Fact]
+    public async Task EmptyTargetsSendTheCapturedWorldNpcDirectory()
+    {
+        var fixture = new ClientFixture();
+        var transport = Attach(fixture);
+        var state = fixture.Field<RuntimeSessionState>("sessionState");
+        state.BeginConnection();
+        state.AcceptEnvironmentReady(new[] { RuntimeSessionState.TaskExtension }, out _);
+        state.AcceptCapabilityRequest(out _);
+        state.MarkCapabilitiesSent();
+        fixture.Field<RuntimeWorldContext>("worldContext").BeginWorld("world", 600);
+        fixture.SetField("availableVillagerNames", new[] { "Linus", "Abigail" });
+
+        await ((Task)fixture.Call("TrySendWorldBindingAsync", CancellationToken.None)!).WaitAsync(TimeSpan.FromSeconds(2));
+
+        var message = Assert.Single(transport.Writer.Messages);
+        Assert.Equal(new[] { "player:local", "npc:Abigail", "npc:Linus" }, message.WorldBinding.Entities.Select(entity => entity.EntityId));
+        Assert.False(fixture.Client.IsTaskReady);
+    }
+
+    [Fact]
     public async Task BindingReadyUsesLatestClockOnlyWhenMainThreadProcessesIt()
     {
         var fixture = new ClientFixture();

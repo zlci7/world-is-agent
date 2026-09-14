@@ -41,7 +41,20 @@ func (a *worldTaskAuthority) Current() (task.Head, uint64, bool) {
 	return slot.head, slot.authorityEpoch, true
 }
 
+func (a *worldTaskAuthority) GuardOwner(binding task.Binding, epoch uint64, entityID string, fn func(task.Head) error) error {
+	return a.guardEntry(binding, epoch, func(entry WorldEntry) error {
+		if entry.Entities[entityID] == nil {
+			return task.ErrSourceInvalid
+		}
+		return fn(entry.Head)
+	})
+}
+
 func (a *worldTaskAuthority) Guard(binding task.Binding, epoch uint64, fn func(task.Head) error) error {
+	return a.guardEntry(binding, epoch, func(entry WorldEntry) error { return fn(entry.Head) })
+}
+
+func (a *worldTaskAuthority) guardEntry(binding task.Binding, epoch uint64, fn func(WorldEntry) error) error {
 	if binding.World != a.world {
 		return task.ErrWorldMismatch
 	}
@@ -49,6 +62,6 @@ func (a *worldTaskAuthority) Guard(binding task.Binding, epoch uint64, fn func(t
 		if entry.AuthorityEpoch != epoch {
 			return task.ErrGenerationStale
 		}
-		return fn(entry.Head)
+		return fn(entry)
 	})
 }

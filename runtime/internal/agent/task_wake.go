@@ -55,7 +55,7 @@ func (t *taskTurnContext) stopped(ctx context.Context) (bool, error) {
 		return true, err
 	}
 	var result task.ReconcileResult
-	err = t.world.Guard(t.authority.Execution.Binding, t.authority.AuthorityEpoch, func(head task.Head) error {
+	err = t.world.GuardOwner(t.authority.Execution.Binding, t.authority.AuthorityEpoch, t.authority.Execution.Owner.EntityID, func(head task.Head) error {
 		exec := t.authority.Execution
 		exec.Clock, exec.ExpectedRevision = head.Clock, record.Revision
 		var err error

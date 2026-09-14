@@ -10,6 +10,35 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
+func TestUnregisteredOwnerKeepsOrdinaryTurnWithoutTaskAuthority(t *testing.T) {
+	f := newTaskWireFixture(t, false)
+	slot := f.server.worlds.slot(f.head.Binding.World, false)
+	slot.mu.Lock()
+	delete(slot.entities, f.key.EntityID)
+	slot.mu.Unlock()
+	f.model.mode = "unregistered_owner"
+	f.event("unregistered-input", nil, &protocol.InteractionSource{SourceId: "input", Kind: "player", PlayerEntityId: "player", Scope: taskScopeToProtocol(f.head.Binding)})
+	if f.next().GetEventAck().GetStatus() != protocol.EventAckStatus_EVENT_ACK_STATUS_ACCEPTED {
+		t.Fatal("ordinary event rejected")
+	}
+	f.observe(f.next())
+	request := f.next().GetAction()
+	if request.GetCapability() != "inspect_contract" || request.TaskSource != nil {
+		t.Fatal("ordinary action unavailable", request)
+	}
+	f.result(request, nil, &protocol.TaskProposal{Clock: worldRequest().Clock, WakeAt: 11, DeadlineAt: 100})
+	if completion := f.next().GetTurnCompletion(); completion.GetStatus() != protocol.TurnCompletionStatus_TURN_COMPLETION_STATUS_COMPLETED {
+		t.Fatalf("ordinary turn interrupted: %v", completion)
+	}
+	records, err := f.service.ListActive(f.ctx, f.key, 10)
+	if err != nil || len(records) != 0 {
+		t.Fatal("unregistered task persisted", records, err)
+	}
+	if _, ready := f.server.worlds.Current(f.head.Binding.World); !ready {
+		t.Fatal("world paused")
+	}
+}
+
 func TestAdapterPlayerEventCreatesDurableTaskBeforeConfirmation(t *testing.T) {
 	for _, kind := range []string{"click", "option", "free_text"} {
 		t.Run(kind, func(t *testing.T) {
@@ -49,6 +78,28 @@ func TestAdapterPlayerEventCreatesDurableTaskBeforeConfirmation(t *testing.T) {
 			}
 			if f.model.calls.Load() != 3 {
 				t.Fatal("expected resolve, create, confirm in three steps")
+			}
+			f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_WorldClock{WorldClock: &protocol.WorldClockUpdate{Scope: taskScopeToProtocol(f.head.Binding), Clock: &protocol.WorldClock{ClockId: "game", NowTick: 11, Sequence: 2}}}})
+			f.observe(f.next())
+			action := f.next().GetAction()
+			source := action.GetTaskSource()
+			if action.GetCapability() != "follow_route" || source.GetTaskId() != records[0].ID || source.GetOperationId() == "" {
+				t.Fatalf("clock did not dispatch the registered owner: %v", action)
+			}
+			running, err := f.service.Read(f.ctx, f.key, records[0].ID)
+			if err != nil || len(running.Operations) != 1 || running.Operations[0].ActionID != action.ActionId {
+				t.Fatalf("action sent before operation registration: %+v %v", running, err)
+			}
+			waitUntil := int64(20)
+			f.result(action, []*protocol.TaskEvidence{{FactId: "arrived", TaskId: source.TaskId, OperationId: source.OperationId, Scope: source.Scope, StartRevision: source.StartRevision, OccurredAt: 11, Outcome: "progress", WaitUntil: &waitUntil}}, nil)
+			if completion := f.next().GetTurnCompletion(); completion.GetStatus() != protocol.TurnCompletionStatus_TURN_COMPLETION_STATUS_COMPLETED {
+				t.Fatalf("wake turn failed: %v", completion)
+			}
+			f.awaitRecord(records[0].ID, func(r task.Record) bool {
+				return r.State == task.StateWaiting && r.NextWakeAt != nil && *r.NextWakeAt == 20
+			})
+			if _, ready := f.server.worlds.Current(f.head.Binding.World); !ready {
+				t.Fatal("valid wake paused the world")
 			}
 		})
 	}

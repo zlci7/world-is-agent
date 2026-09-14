@@ -32,6 +32,25 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 	n := p.calls.Add(1)
 	d := model.ModelDecision{Control: model.ControlDirective{Kind: model.ControlContinue}}
 	switch p.mode {
+	case "unregistered_owner":
+		for _, entry := range req.Tools {
+			if entry.Name == "create_task" || entry.Name == "update_task" {
+				return model.Response{}, errors.New("Task tools exposed for unregistered owner")
+			}
+		}
+		if n == 1 {
+			d.ToolCalls = []model.ToolCall{{ID: "proposal", Name: "inspect_contract", Arguments: map[string]any{}}}
+		} else {
+			for _, message := range req.Messages {
+				for _, result := range message.ToolResults {
+					if _, exists := result.Output["proposal_ref"]; exists {
+						return model.Response{}, errors.New("proposal authority exposed for unregistered owner")
+					}
+				}
+			}
+			d.Control.Kind = model.ControlSettle
+		}
+		return model.Response{Decision: d}, nil
 	case "travel_budget":
 		name := "follow_route"
 		if n == 2 {
