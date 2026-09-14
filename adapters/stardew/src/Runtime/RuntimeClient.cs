@@ -233,6 +233,7 @@ public sealed class RuntimeClient : IDisposable
             }
 
             GameEvent gameEvent = ProtocolMapper.BuildPlayerInteractedWithNpcEvent(npc, player, conversationId, trigger, sequence, worldId, eventId);
+            ProtocolMapper.AttachPlayerInteractionSource(gameEvent, this.IsTaskReady ? this.worldContext.Current : null);
             this.presentDialogueCapability.QueueWaitingForNpc(npcEntityId);
             this.SendFireAndForget(this.SendPreparedGameEventAsync(gameEvent, eventId), "GameEvent");
             reason = string.Empty;
@@ -330,6 +331,8 @@ public sealed class RuntimeClient : IDisposable
             }
 
             this.ordinaryInteractions.BindEvent(submission.ConversationId, eventId);
+            if (string.IsNullOrWhiteSpace(taskInteractionEventId))
+                ProtocolMapper.AttachPlayerInteractionSource(gameEvent, this.IsTaskReady ? this.worldContext.Current : null);
             this.presentDialogueCapability.QueueWaitingForNpc(npcEntityId);
             await this.SendAsync(
                 new AdapterMessage

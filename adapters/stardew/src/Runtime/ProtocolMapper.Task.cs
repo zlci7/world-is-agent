@@ -9,6 +9,30 @@ namespace GameAgent.Stardew.Runtime;
 
 public static partial class ProtocolMapper
 {
+    public static void AttachPlayerInteractionSource(GameEvent gameEvent, RuntimeWorldSnapshot? readyWorld)
+    {
+        ArgumentNullException.ThrowIfNull(gameEvent);
+        if (gameEvent.InteractionSource is not null)
+            throw new ArgumentException("existing interaction source must be preserved");
+        if (readyWorld is null)
+            return;
+        if (gameEvent.EventType is not ("player_interacted_with_npc" or "player_said_to_npc") ||
+            string.IsNullOrWhiteSpace(gameEvent.EventId) ||
+            !string.Equals(gameEvent.WorldId, readyWorld.WorldId, StringComparison.Ordinal) ||
+            readyWorld.ExecutionGeneration == 0)
+            throw new ArgumentException("player interaction does not match a ready world");
+        EntityRef[] players = gameEvent.Entities.Where(entity => entity.EntityType == "player").ToArray();
+        if (players.Length != 1 || string.IsNullOrWhiteSpace(players[0].EntityId))
+            throw new ArgumentException("player interaction requires one player entity");
+        gameEvent.InteractionSource = new InteractionSource
+        {
+            Kind = "player",
+            SourceId = gameEvent.EventId,
+            PlayerEntityId = players[0].EntityId,
+            Scope = BuildTaskScope(readyWorld),
+        };
+    }
+
     public static AdapterHello BuildAdapterHello(
         string adapterId,
         string adapterVersion,

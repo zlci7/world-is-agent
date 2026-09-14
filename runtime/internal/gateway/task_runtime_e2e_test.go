@@ -81,8 +81,21 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 				}
 			}
 		}
+		if p.mode == "adapter_player" {
+			available := false
+			for _, entry := range req.Tools {
+				available = available || entry.Name == "create_task"
+			}
+			if !available || ref == "" {
+				return model.Response{}, errors.New("player proposal did not expose create_task and proposal_ref")
+			}
+		}
 		d.ToolCalls = []model.ToolCall{{ID: "create", Name: "create_task", Arguments: map[string]any{"proposal_ref": ref, "instruction": "Inspect the agreed location later"}}}
 	case 3:
+		if p.mode == "adapter_player" {
+			d.ToolCalls = []model.ToolCall{{ID: "confirm", Name: "confirm_agreement", Arguments: map[string]any{}}}
+			break
+		}
 		d.Control.Kind = model.ControlSettle
 	case 4:
 		if !strings.Contains(req.Messages[0].Content, "task_wake") {
@@ -181,6 +194,7 @@ func newTaskWireFixtureWithRouteMode(t *testing.T, create bool, routeMode protoc
 		}
 		caps = append(caps, &protocol.Capability{Name: name, Description: "Generic operation", InputSchemaJson: `{"type":"object","properties":{},"additionalProperties":false}`, ExecutionMode: mode, ConcurrencyMode: protocol.CapabilityConcurrencyMode_CAPABILITY_CONCURRENCY_MODE_SEQUENTIAL})
 	}
+	caps = append(caps, &protocol.Capability{Name: "confirm_agreement", Description: "Confirm an agreement after it is saved", InputSchemaJson: `{"type":"object","properties":{},"additionalProperties":false}`, ExecutionMode: protocol.ExecutionMode_EXECUTION_MODE_SYNC, ConcurrencyMode: protocol.CapabilityConcurrencyMode_CAPABILITY_CONCURRENCY_MODE_SEQUENTIAL, Extensions: toolPolicyExtensionsForGateway(true, true)})
 	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_Capabilities{Capabilities: &protocol.CapabilityList{Capabilities: caps}}})
 	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_WorldBinding{WorldBinding: worldRequest()}})
 	r := f.next().GetWorldBindingReady()
