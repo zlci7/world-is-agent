@@ -960,13 +960,13 @@ public sealed class RuntimeClient : IDisposable
         this.worldContext.AdvanceClock(this.ReadCurrentWorldTick());
         if (this.IsTaskReady && this.worldContext.Current is RuntimeWorldSnapshot snapshot)
         {
-            IReadOnlyList<AdapterMessage> messages = TaskOutboundBatch.EvidenceThenClock(
-                this.CollectWaitEvidence(snapshot),
+            IReadOnlyList<AdapterMessage> messages = TaskOutboundBatch.ClockThenEvidence(
                 new AdapterMessage
                 {
                     MessageId = ProtocolMapper.NewMessageId("world_clock"),
                     WorldClock = ProtocolMapper.BuildWorldClockUpdate(snapshot),
-                });
+                },
+                this.CollectWaitEvidence(snapshot));
             this.SendFireAndForget(
                 this.SendBatchAsync(messages, this.cancellation?.Token ?? CancellationToken.None),
                 "TaskEvidence/WorldClockUpdate"

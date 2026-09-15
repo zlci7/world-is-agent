@@ -174,7 +174,7 @@ else：继续当前有界等待
 
 监听保留首次注册是否不晚于 start 的事实。迟到注册后仍可凭实际相遇产生 met；到期未见面只产生 interrupted/wait_started_late。按时注册且有窗口内观测，才允许到期产生 expired；按时注册但跳过整个窗口产生 interrupted/time_jump_unknown。
 
-监听直接释放过期租约，即使 Runtime/LLM 不在线也不会让 NPC 永久停住。同一时刻产生 Evidence 和 Clock 时，经同一发送通道先发送 Evidence，再发送 WorldClockUpdate，使 Runtime 的截止扫描先看见确定性事实。future Task 的状态由 Runtime 协调，不在 Adapter 维护另一套任务状态机。
+监听直接释放过期租约，即使 Runtime/LLM 不在线也不会让 NPC 永久停住。同一时刻产生 Evidence 和 Clock 时，经同一发送通道先发送 WorldClockUpdate，再发送 Evidence：Runtime 拒绝时间戳晚于已知时钟的证据，先发送时钟才能让该时刻的确定性事实入库。截止扫描可能因此先看到一个已到期的 waiting Task，此时该 Task 尚未有终态事实，扫描回合不下发模型请求即可收口。future Task 的状态由 Runtime 协调，不在 Adapter 维护另一套任务状态机。
 
 ### 4.3 固定目标 approach_player
 

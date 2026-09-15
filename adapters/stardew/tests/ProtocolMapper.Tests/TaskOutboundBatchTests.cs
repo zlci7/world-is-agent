@@ -7,16 +7,16 @@ namespace GameAgent.Stardew.Tests;
 public sealed class TaskOutboundBatchTests
 {
     [Fact]
-    public void PlacesEveryEvidenceEventBeforeTheClockUpdate()
+    public void PlacesTheClockUpdateBeforeEveryEvidenceEvent()
     {
         AdapterMessage first = Evidence("first");
         AdapterMessage second = Evidence("second");
         AdapterMessage clock = new() { MessageId = "clock", WorldClock = new WorldClockUpdate() };
 
-        IReadOnlyList<AdapterMessage> batch = TaskOutboundBatch.EvidenceThenClock(new[] { first, second }, clock);
+        IReadOnlyList<AdapterMessage> batch = TaskOutboundBatch.ClockThenEvidence(clock, new[] { first, second });
 
-        Assert.Equal(new[] { "first", "second", "clock" }, batch.Select(message => message.MessageId));
-        Assert.Equal(AdapterMessage.PayloadOneofCase.WorldClock, batch[^1].PayloadCase);
+        Assert.Equal(new[] { "clock", "first", "second" }, batch.Select(message => message.MessageId));
+        Assert.Equal(AdapterMessage.PayloadOneofCase.WorldClock, batch[0].PayloadCase);
     }
 
     private static AdapterMessage Evidence(string id) => new()
