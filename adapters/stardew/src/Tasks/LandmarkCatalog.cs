@@ -32,6 +32,9 @@ public sealed class LandmarkCatalogException : Exception
 
 public sealed class LandmarkCatalog
 {
+    // A route field set to this value matches every NPC or every origin location.
+    public const string AnyRoute = "*";
+
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
     private readonly IReadOnlyDictionary<string, Landmark> landmarks;
@@ -129,9 +132,12 @@ public sealed class LandmarkCatalog
     {
         Landmark? landmark = this.Find(landmarkId);
         return landmark is not null && landmark.SupportedRoutes.Any(route =>
-            string.Equals(route.NpcId, npcId, StringComparison.Ordinal) &&
-            string.Equals(route.OriginLocation, originLocation, StringComparison.Ordinal));
+            RouteMatches(route.NpcId, npcId) && RouteMatches(route.OriginLocation, originLocation));
     }
+
+    private static bool RouteMatches(string allowed, string actual) =>
+        string.Equals(allowed, AnyRoute, StringComparison.Ordinal) ||
+        string.Equals(allowed, actual, StringComparison.Ordinal);
 
     private static Landmark BuildLandmark(LandmarkDocument source)
     {
@@ -140,7 +146,8 @@ public sealed class LandmarkCatalog
         foreach (RouteDocument route in source.SupportedRoutes ?? new List<RouteDocument>())
         {
             ValidateIdentity(route.NpcId, "invalid_route_npc");
-            if (!route.NpcId.StartsWith("npc:", StringComparison.Ordinal))
+            if (!string.Equals(route.NpcId, AnyRoute, StringComparison.Ordinal) &&
+                !route.NpcId.StartsWith("npc:", StringComparison.Ordinal))
                 throw new LandmarkCatalogException("invalid_route_npc", $"route NPC {route.NpcId} is not canonical");
             ValidateIdentity(route.OriginLocation, "invalid_route_origin");
             string key = route.NpcId + "\n" + route.OriginLocation;

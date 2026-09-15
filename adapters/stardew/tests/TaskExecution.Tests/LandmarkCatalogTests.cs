@@ -88,6 +88,41 @@ public sealed class LandmarkCatalogTests
         Assert.Null(catalog.Find("tavern_door"));
     }
 
+    [Fact]
+    public void WildcardRouteAcceptsAnyNpcFromAnyOrigin()
+    {
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(AnyRouteCatalogJson);
+
+        Assert.True(catalog.SupportsRoute("npc:Linus", "Mountain", "town_square"));
+        Assert.True(catalog.SupportsRoute("npc:Abigail", "Town", "town_square"));
+        Assert.True(catalog.SupportsRoute("npc:Abigail", "Beach", "town_square"));
+    }
+
+    [Fact]
+    public void WildcardRouteDoesNotLoosenConcreteRoutes()
+    {
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(ValidCatalogJson).WithLandmark(new Landmark(
+            "town_square", "Town square", new WorldPosition("Town", 10, 20), 600, 2200, 10,
+            new[] { new SupportedRoute("*", "*") }));
+
+        Assert.True(catalog.SupportsRoute("npc:Abigail", "Town", "town_square"));
+        Assert.False(catalog.SupportsRoute("npc:Abigail", "Town", "beach_meeting_spot"));
+        Assert.False(catalog.SupportsRoute("npc:Linus", "Town", "beach_meeting_spot"));
+    }
+
+    [Fact]
+    public void WildcardCatalogRoundTrips()
+    {
+        LandmarkCatalog catalog = LandmarkCatalog.Parse(AnyRouteCatalogJson);
+
+        LandmarkCatalog reparsed = LandmarkCatalog.Parse(catalog.ToJson());
+
+        Assert.True(reparsed.SupportsRoute("npc:Shane", "Forest", "town_square"));
+    }
+
     public const string ValidCatalogJson =
         "{\"landmarks\":[{\"landmark_id\":\"beach_meeting_spot\",\"display_name\":\"Beach meeting spot\",\"location\":\"Beach\",\"tile\":{\"x\":28,\"y\":36},\"open_start\":600,\"open_end\":2200,\"departure_lead_minutes\":240,\"supported_routes\":[{\"npc_id\":\"npc:Linus\",\"origin_location\":\"Mountain\"}]}]}";
+
+    public const string AnyRouteCatalogJson =
+        "{\"landmarks\":[{\"landmark_id\":\"town_square\",\"display_name\":\"Town square\",\"location\":\"Town\",\"tile\":{\"x\":10,\"y\":20},\"open_start\":600,\"open_end\":2200,\"departure_lead_minutes\":10,\"supported_routes\":[{\"npc_id\":\"*\",\"origin_location\":\"*\"}]}]}";
 }

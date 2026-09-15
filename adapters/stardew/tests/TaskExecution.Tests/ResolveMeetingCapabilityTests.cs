@@ -26,10 +26,24 @@ public sealed class ResolveMeetingCapabilityTests
 
         store.Replace(store.Current.WithLandmark(new Landmark(
             "tavern_door", "Tavern door", new WorldPosition("Town", 12, 20), 600, 2200, 10,
-            new[] { new SupportedRoute("npc:Linus", "Town") })));
+            new[] { new SupportedRoute("*", "*") })));
 
         MeetingResolution after = capability.Resolve(World, "npc:Linus", "player:local", "Town", TavernMeeting, FestivalKnowledge.NotFestival);
         Assert.True(after.Accepted);
         Assert.Equal("tavern_door", after.Agreement!.LandmarkId);
+    }
+
+    [Fact]
+    public void AMarkedLandmarkAcceptsAnyNpcFromAnyOrigin()
+    {
+        LandmarkCatalogStore store = new(LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson).WithLandmark(new Landmark(
+            "tavern_door", "Tavern door", new WorldPosition("Town", 12, 20), 600, 2200, 10,
+            new[] { new SupportedRoute("*", "*") })));
+        ResolveMeetingCapability capability = new(store);
+
+        MeetingResolution other = capability.Resolve(World, "npc:Abigail", "player:local", "Beach", TavernMeeting, FestivalKnowledge.NotFestival);
+
+        Assert.True(other.Accepted);
+        Assert.Equal("tavern_door", other.Agreement!.LandmarkId);
     }
 }

@@ -110,7 +110,6 @@ public sealed class ModEntry : Mod
         );
         LandmarkMarker.RegisterCommand(
             helper,
-            this.config,
             landmarkAssetPath,
             landmarkCatalogStore,
             this.Monitor

@@ -9,27 +9,24 @@ namespace GameAgent.Stardew.Authoring;
 /// <summary>Console-only helper that captures the player's tile as a meeting landmark.</summary>
 internal static class LandmarkMarker
 {
-    private const string NpcEntityPrefix = "npc:";
     private const int DefaultOpenStart = 600;
     private const int DefaultOpenEnd = 2200;
     private const int DefaultDepartureLeadMinutes = 10;
 
     public static void RegisterCommand(
         IModHelper helper,
-        AdapterConfig config,
         string assetPath,
         LandmarkCatalogStore catalogStore,
         IMonitor monitor)
     {
         helper.ConsoleCommands.Add(
             "gameagent_mark_landmark",
-            "Capture the player's current tile as a meeting landmark. " +
-            "Usage: gameagent_mark_landmark <landmark_id> [npc] [origin_location] [departure_lead_minutes]",
-            (_, args) => Run(config, assetPath, catalogStore, monitor, args));
+            "Capture the player's current tile as a meeting landmark that any NPC may travel to. " +
+            "Usage: gameagent_mark_landmark <landmark_id> [departure_lead_minutes]",
+            (_, args) => Run(assetPath, catalogStore, monitor, args));
     }
 
     public static void Run(
-        AdapterConfig config,
         string assetPath,
         LandmarkCatalogStore catalogStore,
         IMonitor monitor,
@@ -44,20 +41,7 @@ internal static class LandmarkMarker
         string landmarkId = args.Length > 0 ? args[0].Trim() : string.Empty;
         if (landmarkId.Length == 0)
         {
-            monitor.Log("Usage: gameagent_mark_landmark <landmark_id> [npc] [origin_location] [departure_lead_minutes]", LogLevel.Warn);
-            return;
-        }
-
-        string npcArgument = args.Length > 1 && args[1].Trim().Length > 0
-            ? args[1].Trim()
-            : config.AgentTargets?.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? "Linus";
-        string npcName = npcArgument.StartsWith(NpcEntityPrefix, StringComparison.Ordinal)
-            ? npcArgument[NpcEntityPrefix.Length..]
-            : npcArgument;
-        NPC? npc = npcName.Length == 0 ? null : Game1.getCharacterFromName(npcName, mustBeVillager: true);
-        if (npc is null)
-        {
-            monitor.Log($"Could not find {npcArgument} in this save.", LogLevel.Warn);
+            monitor.Log("Usage: gameagent_mark_landmark <landmark_id> [departure_lead_minutes]", LogLevel.Warn);
             return;
         }
 
@@ -65,15 +49,6 @@ internal static class LandmarkMarker
         if (playerLocation.Length == 0)
         {
             monitor.Log("Player location is unavailable; landmark not written.", LogLevel.Warn);
-            return;
-        }
-
-        string originLocation = args.Length > 2 && args[2].Trim().Length > 0
-            ? args[2].Trim()
-            : npc.currentLocation?.NameOrUniqueName ?? string.Empty;
-        if (originLocation.Length == 0)
-        {
-            monitor.Log($"Origin location for {npcName} is unavailable; landmark not written.", LogLevel.Warn);
             return;
         }
 
@@ -90,7 +65,7 @@ internal static class LandmarkMarker
             DefaultOpenStart,
             DefaultOpenEnd,
             departureLeadMinutes,
-            new[] { new SupportedRoute(NpcEntityPrefix + npcName, originLocation) });
+            new[] { new SupportedRoute(LandmarkCatalog.AnyRoute, LandmarkCatalog.AnyRoute) });
 
         LandmarkCatalog updated;
         try
@@ -116,23 +91,17 @@ internal static class LandmarkMarker
         catalogStore.Replace(updated);
         monitor.Log(
             $"GameAgent landmark {landmarkId} at {playerLocation} ({landmark.Position.X},{landmark.Position.Y}), " +
-            $"{NpcEntityPrefix}{npcName} from {originLocation}, departure lead {departureLeadMinutes} minutes. " +
+            $"any NPC from any location, departure lead {departureLeadMinutes} minutes. " +
             "Run gameagent_runtime_reconnect to advertise it to the Runtime.",
             LogLevel.Info);
-        if (!string.Equals(playerLocation, npc.currentLocation?.NameOrUniqueName, StringComparison.Ordinal))
-        {
-            monitor.Log(
-                $"{npcName} is currently in {npc.currentLocation?.NameOrUniqueName ?? "an unknown location"}; this route crosses locations.",
-                LogLevel.Info);
-        }
     }
 
     private static bool TryReadDepartureLead(string[] args, out int departureLeadMinutes)
     {
         departureLeadMinutes = DefaultDepartureLeadMinutes;
-        if (args.Length <= 3 || args[3].Trim().Length == 0)
+        if (args.Length <= 1 || args[1].Trim().Length == 0)
             return true;
-        return int.TryParse(args[3].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out departureLeadMinutes) &&
+        return int.TryParse(args[1].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out departureLeadMinutes) &&
             departureLeadMinutes > 0 && departureLeadMinutes % 10 == 0;
     }
 }
