@@ -110,7 +110,10 @@ public sealed class MeetingContractTests
         if (accepted)
             Assert.Equal(result.Agreement!.StartAt, result.Agreement!.DepartureAt);
         else
+        {
             Assert.Equal("meeting_window_below_travel_time", result.Code);
+            Assert.Contains($"{Math.Max(travelMinutes, measuredTravel)} minutes", result.Message);
+        }
     }
 
     private static MeetingResolution Resolve(

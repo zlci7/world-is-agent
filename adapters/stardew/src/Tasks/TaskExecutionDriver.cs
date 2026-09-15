@@ -164,7 +164,7 @@ public sealed class TaskExecutionDriver : ITaskInteractionControl
                     string.Equals(result.Code, "arrived", StringComparison.Ordinal));
 
         TaskOperationSource source = this.sources.Find(operation) ?? throw new InvalidOperationException("active operation has no task source");
-        if (world.NowTick >= source.Contract.StartAt)
+        if (world.NowTick >= source.Contract.EndAt)
             return this.Complete(operation, new DriverResult("interrupted", "arrival_deadline_missed", result.Position));
         return new TaskExecutionOutcome(result, active.Lease, false);
     }

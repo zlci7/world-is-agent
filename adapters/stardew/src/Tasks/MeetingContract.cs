@@ -90,7 +90,10 @@ public static class MeetingContract
             );
         int travelMinutes = Math.Max(landmark.MeasuredTravelMinutes ?? 0, landmark.DepartureLeadMinutes);
         if (endAt - startAt < travelMinutes)
-            return Reject("meeting_window_below_travel_time", "the agreed window is shorter than the NPC travel time");
+            return Reject(
+                "meeting_window_below_travel_time",
+                $"the agreed window is shorter than the NPC travel time; end_time must be at least {travelMinutes} minutes after start_time"
+            );
 
         MeetingAgreement agreement = new(
             SchemaVersion,

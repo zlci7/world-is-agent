@@ -30,7 +30,6 @@ public sealed class MeetingWaitMonitor
             source,
             target,
             observedAt,
-            observedAt <= source.Contract.StartAt,
             observedAt >= source.Contract.StartAt && observedAt < source.Contract.EndAt));
         return true;
     }
@@ -55,12 +54,14 @@ public sealed class MeetingWaitMonitor
 
         if (world.NowTick >= wait.Source.Contract.EndAt)
         {
-            bool canProveExpired = wait.RegisteredByStart && wait.ObservedInsideWindow;
+            // The NPC departs at the agreed time, so its wait normally starts inside
+            // the window; observing that window up to its end proves the miss.
+            bool canProveExpired = wait.ObservedInsideWindow;
             return this.Finish(
                 wait,
                 world.NowTick,
                 canProveExpired ? "unsatisfied" : "interrupted",
-                canProveExpired ? "expired" : wait.RegisteredByStart ? "time_jump_unknown" : "wait_started_late",
+                canProveExpired ? "expired" : "time_jump_unknown",
                 npc.Position);
         }
 
@@ -119,6 +120,5 @@ public sealed class MeetingWaitMonitor
         TaskOperationSource Source,
         WorldPosition Target,
         long LastObservedAt,
-        bool RegisteredByStart,
         bool ObservedInsideWindow);
 }

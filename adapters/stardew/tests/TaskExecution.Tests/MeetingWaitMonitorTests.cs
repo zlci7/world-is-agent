@@ -73,21 +73,18 @@ public sealed class MeetingWaitMonitorTests
     }
 
     [Theory]
-    [InlineData(10, false)]
-    [InlineData(10, true)]
-    [InlineData(60, false)]
-    public void LateRegistrationCannotProvePlayerMissedTheWindow(int delay, bool observeInside)
+    [InlineData(10)]
+    [InlineData(50)]
+    public void RegistrationInsideTheWindowProvesPlayerMissedTheMeeting(int delay)
     {
         TaskOperationSource source = WaitSource();
         MeetingWaitMonitor monitor = Registered(source.Contract.StartAt + delay);
-        if (observeInside)
-            Assert.Null(monitor.Observe(source.Operation, World with { NowTick = source.Contract.StartAt + delay }, new(Target, true), null));
 
         WaitEvidence? result = monitor.Observe(source.Operation,
             World with { NowTick = source.Contract.EndAt }, new(Target, true), null);
 
-        Assert.Equal("interrupted", result!.Outcome);
-        Assert.Equal("wait_started_late", result.Code);
+        Assert.Equal("unsatisfied", result!.Outcome);
+        Assert.Equal("expired", result.Code);
         Assert.Null(monitor.Observe(source.Operation, World with { NowTick = source.Contract.EndAt }, new(Target, true), null));
     }
 

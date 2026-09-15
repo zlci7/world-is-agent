@@ -64,7 +64,7 @@ public sealed class TaskTravelTests
     }
 
     [Fact]
-    public void DoesNotInstallANewRouteAtTheArrivalBoundary()
+    public void StartsTravelWhileTheAgreedWindowIsStillOpen()
     {
         FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
         TaskExecutionDriver driver = Driver(npc, () => 0);
@@ -73,6 +73,23 @@ public sealed class TaskTravelTests
         TaskExecutionOutcome result = driver.BeginTravel(
             source,
             World with { NowTick = source.Contract.StartAt },
+            "beach_meeting_spot",
+            LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
+
+        Assert.Equal("running", result.Result.Status);
+        Assert.Equal(1, npc.StartCount);
+    }
+
+    [Fact]
+    public void DoesNotInstallANewRouteAfterTheAgreedWindowCloses()
+    {
+        FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
+        TaskExecutionDriver driver = Driver(npc, () => 0);
+        TaskOperationSource source = TaskSourceContextStoreTests.Source();
+
+        TaskExecutionOutcome result = driver.BeginTravel(
+            source,
+            World with { NowTick = source.Contract.EndAt },
             "beach_meeting_spot",
             LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
 
@@ -97,14 +114,14 @@ public sealed class TaskTravelTests
     }
 
     [Fact]
-    public void StopsAtStartBoundaryWhenNpcHasNotArrived()
+    public void StopsAfterTheAgreedWindowClosesWhenNpcHasNotArrived()
     {
         FakeNpcDriver npc = new(new WorldPosition("Mountain", 29, 9));
         TaskExecutionDriver driver = Driver(npc, () => 0);
         TaskOperationSource source = TaskSourceContextStoreTests.Source();
         driver.BeginTravel(source, World, "beach_meeting_spot", LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
 
-        TaskExecutionOutcome result = driver.Poll(source.Operation, World with { NowTick = source.Contract.StartAt });
+        TaskExecutionOutcome result = driver.Poll(source.Operation, World with { NowTick = source.Contract.EndAt });
 
         Assert.Equal("interrupted", result.Result.Status);
         Assert.Equal("arrival_deadline_missed", result.Result.Code);

@@ -92,7 +92,7 @@ public static class CapabilityCatalog
                 {
                     Name = "resolve_meeting",
                     Version = "0.1.0",
-                    Description = "Validates a player-agreed future meeting. start_time is the moment the NPC departs, so it must be later than the current in-game time. On success, use the returned proposal_ref with create_task in the next step. Only confirm the appointment after create_task succeeds; validation alone does not save or schedule a task.",
+                    Description = "Validates a player-agreed future meeting. start_time is the moment the NPC departs, so it must be later than the current in-game time, and end_time must stay open long enough to cover the NPC's trip. On success, use the returned proposal_ref with create_task in the next step. Only confirm the appointment after create_task succeeds; validation alone does not save or schedule a task.",
                     InputSchemaJson = $"{{\"type\":\"object\",\"properties\":{{\"landmark_id\":{{\"type\":\"string\",\"enum\":{landmarkEnum}}},\"target_date\":{{\"type\":\"object\",\"properties\":{{\"year\":{{\"type\":\"integer\",\"minimum\":1}},\"season\":{{\"type\":\"string\",\"enum\":[\"spring\",\"summer\",\"fall\",\"winter\"]}},\"day_of_month\":{{\"type\":\"integer\",\"minimum\":1,\"maximum\":28}}}},\"required\":[\"year\",\"season\",\"day_of_month\"],\"additionalProperties\":false}},\"start_time\":{{\"type\":\"integer\"}},\"end_time\":{{\"type\":\"integer\"}}}},\"required\":[\"landmark_id\",\"target_date\",\"start_time\",\"end_time\"],\"additionalProperties\":false}}",
                     ExecutionMode = ExecutionMode.Sync,
                     ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
