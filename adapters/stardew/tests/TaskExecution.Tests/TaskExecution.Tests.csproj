@@ -35,6 +35,10 @@
     <Compile Include="..\..\src\Tasks\NpcInteractionLifecycle.cs" Link="NpcInteractionLifecycle.cs" />
     <Compile Include="..\..\src\Tasks\NpcNativeSchedulePolicy.cs" Link="NpcNativeSchedulePolicy.cs" />
     <Compile Include="..\..\src\Tasks\ControllerOwnership.cs" Link="ControllerOwnership.cs" />
+    <Compile Include="..\..\src\Tasks\CheckpointMarker.cs" Link="CheckpointMarker.cs" />
+    <Compile Include="..\..\src\Tasks\TaskCheckpointContracts.cs" Link="TaskCheckpointContracts.cs" />
+    <Compile Include="..\..\src\Tasks\CheckpointReplyInbox.cs" Link="CheckpointReplyInbox.cs" />
+    <Compile Include="..\..\src\Tasks\TaskCheckpointBridge.cs" Link="TaskCheckpointBridge.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\assets\landmarks.json" Link="assets\landmarks.json" CopyToOutputDirectory="PreserveNewest" />

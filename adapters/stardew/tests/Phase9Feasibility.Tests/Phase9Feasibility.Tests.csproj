@@ -17,5 +17,7 @@
     <Compile Include="../../src/Diagnostics/SaveProbe.cs" Link="SaveProbe.cs" />
     <Compile Include="../../src/Diagnostics/SaveProbeTransport.cs" Link="SaveProbeTransport.cs" />
     <Compile Include="../../src/Runtime/AdapterConfig.cs" Link="AdapterConfig.cs" />
+    <Compile Include="../../src/Tasks/TaskCheckpointContracts.cs" Link="TaskCheckpointContracts.cs" />
+    <Compile Include="../../src/Tasks/CheckpointMarker.cs" Link="CheckpointMarker.cs" />
   </ItemGroup>
 </Project>

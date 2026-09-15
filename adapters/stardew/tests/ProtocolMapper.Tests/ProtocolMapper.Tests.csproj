@@ -29,6 +29,8 @@
     <Compile Include="..\..\src\Runtime\ProtocolMapper.Task.cs" Link="ProtocolMapper.Task.cs" />
     <Compile Include="..\..\src\Runtime\TaskOutboundBatch.cs" Link="TaskOutboundBatch.cs" />
     <Compile Include="..\..\src\Tasks\GameClock.cs" Link="GameClock.cs" />
+    <Compile Include="..\..\src\Tasks\CheckpointMarker.cs" Link="CheckpointMarker.cs" />
+    <Compile Include="..\..\src\Tasks\TaskCheckpointContracts.cs" Link="TaskCheckpointContracts.cs" />
     <Compile Include="..\..\src\Tasks\LandmarkCatalog.cs" Link="LandmarkCatalog.cs" />
     <Compile Include="..\..\src\Tasks\MeetingContract.cs" Link="MeetingContract.cs" />
     <Compile Include="..\..\src\Tasks\TaskExecutionContracts.cs" Link="TaskExecutionContracts.cs" />

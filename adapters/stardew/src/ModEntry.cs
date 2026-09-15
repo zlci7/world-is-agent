@@ -18,6 +18,7 @@ namespace GameAgent.Stardew;
 public sealed class ModEntry : Mod
 {
     private AdapterConfig? config;
+    private IModHelper? helper;
     private MainThreadDispatcher? dispatcher;
     private ConversationStateStore? conversationStore;
     private DialogueInteractionController? dialogueController;
@@ -36,6 +37,7 @@ public sealed class ModEntry : Mod
 
     public override void Entry(IModHelper helper)
     {
+        this.helper = helper;
         this.config = helper.ReadConfig<AdapterConfig>();
         this.phase9SaveProbe = StardewSaveProbe.Create(helper, this.Monitor, this.config);
         if (this.config.EnablePhase9RouteProbe)
@@ -93,6 +95,8 @@ public sealed class ModEntry : Mod
 
         helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
         helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
+        helper.Events.GameLoop.Saving += this.OnSaving;
+        helper.Events.GameLoop.Saved += this.OnSaved;
         helper.Events.GameLoop.DayStarted += this.OnDayStarted;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
         helper.Events.GameLoop.TimeChanged += this.OnTimeChanged;
@@ -159,11 +163,69 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
-        this.runtimeClient?.BeginWorldContext();
+        this.runtimeClient?.AbortPendingCheckpointSave("save_reloaded");
+        this.runtimeClient?.BeginWorldContext(this.ReadCheckpointMarker());
+    }
+
+    private CheckpointMarkerRead ReadCheckpointMarker()
+    {
+        if (this.helper is null)
+            return CheckpointMarkerRead.Absent;
+        try
+        {
+            Dictionary<string, string>? data = this.helper.Data.ReadSaveData<Dictionary<string, string>>(CheckpointMarker.SaveDataKey);
+            return CheckpointMarker.Read(data);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"GameAgent could not read the task checkpoint marker: {ex}", LogLevel.Warn);
+            return CheckpointMarkerRead.Invalid("save_data");
+        }
+    }
+
+    /// <summary>
+    /// Runs while the game saves: the marker written here is what the next load refers to, so an
+    /// unconfirmed outcome is written rather than leaving a stale confirmed reference behind.
+    /// </summary>
+    private void OnSaving(object? sender, SavingEventArgs e)
+    {
+        CheckpointMarker? marker;
+        try
+        {
+            marker = this.runtimeClient?.PrepareTaskCheckpointSave();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"GameAgent task checkpoint prepare failed: {ex}", LogLevel.Error);
+            return;
+        }
+        if (marker is null || this.helper is null)
+            return;
+        try
+        {
+            this.helper.Data.WriteSaveData(CheckpointMarker.SaveDataKey, marker.ToSaveData());
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"GameAgent could not write the task checkpoint marker: {ex}", LogLevel.Error);
+        }
+    }
+
+    private void OnSaved(object? sender, SavedEventArgs e)
+    {
+        try
+        {
+            this.runtimeClient?.OnWorldSaved();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"GameAgent task checkpoint finish failed: {ex}", LogLevel.Error);
+        }
     }
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
+        this.runtimeClient?.AbortPendingCheckpointSave("day_started_before_saved");
         this.runtimeClient?.RefreshWorldClock();
     }
 
@@ -174,6 +236,7 @@ public sealed class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        this.runtimeClient?.AbortPendingCheckpointSave("returned_to_title");
         this.runtimeClient?.ClearWorldContext();
     }
 

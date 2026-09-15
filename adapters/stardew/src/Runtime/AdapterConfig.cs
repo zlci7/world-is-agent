@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using GameAgent.Stardew.Tasks;
 
 namespace GameAgent.Stardew.Runtime;
 
@@ -23,4 +24,6 @@ public sealed class AdapterConfig
     public int Phase9SaveProbeTimeoutSeconds { get; set; } = 5;
 
     public string Phase9TestSaveSlot { get; set; } = "";
+
+    public int CheckpointPrepareTimeoutMilliseconds { get; set; } = CheckpointBridgeOptions.DefaultTimeoutMilliseconds;
 }

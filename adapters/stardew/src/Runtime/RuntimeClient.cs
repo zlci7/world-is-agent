@@ -15,9 +15,13 @@ using StardewValley;
 
 namespace GameAgent.Stardew.Runtime;
 
-public sealed class RuntimeClient : IDisposable
+public sealed class RuntimeClient : IDisposable, ICheckpointTransport
 {
     private const string ProtocolVersion = "v1alpha2";
+    // The runtime retires a save barrier ten seconds after a handoff it never finished, so the
+    // Adapter keeps retrying the post-save rebind for a bounded window above that bound.
+    private const int SaveRecoveryWindowMs = 12_000;
+    private const int SaveRecoveryRetryIntervalMs = 1_000;
 
     private readonly AdapterConfig config;
     private readonly MainThreadDispatcher dispatcher;
@@ -45,6 +49,9 @@ public sealed class RuntimeClient : IDisposable
     private readonly RuntimeSessionState sessionState = new();
     private readonly RuntimeWorldContext worldContext;
     private readonly WorldBindingExchange worldBindingExchange = new();
+    private readonly CheckpointReplyInbox checkpointReplies = new();
+    private readonly TaskCheckpointBridge checkpointBridge;
+    private readonly TimeSpan checkpointTimeout;
 
     private GrpcChannel? channel;
     private AsyncDuplexStreamingCall<AdapterMessage, RuntimeMessage>? stream;
@@ -58,6 +65,9 @@ public sealed class RuntimeClient : IDisposable
     private long eventSequence;
     private int worldBindingSent;
     private long worldBindingClockSequence;
+    private long saveRecoveryDeadlineTicks;
+    private long saveRecoveryNextAttemptTicks;
+    private bool taskWorldBoundThisRun;
     private bool disposed;
 
     public RuntimeClient(
@@ -99,6 +109,8 @@ public sealed class RuntimeClient : IDisposable
         this.taskInteractionLifecycle = taskInteractionLifecycle;
         this.monitor = monitor;
         this.worldContext = new RuntimeWorldContext(this.config.GameId, GameClock.ClockId);
+        this.checkpointTimeout = CheckpointBridgeOptions.RequireTimeout(this.config.CheckpointPrepareTimeoutMilliseconds);
+        this.checkpointBridge = new TaskCheckpointBridge(this, message => this.monitor.Log(message, LogLevel.Debug));
     }
 
     public bool IsReady => this.sessionState.CanUseRuntime && this.stream is not null;
@@ -410,6 +422,8 @@ public sealed class RuntimeClient : IDisposable
             this.sessionState.Disconnect();
             Interlocked.Exchange(ref this.worldBindingSent, 0);
             Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+            this.checkpointReplies.FailAll("disconnected");
+            this.checkpointBridge.OnDisconnected("runtime_disconnected");
             this.dispatcher.Enqueue(() => this.ClearRuntimeStreamStateOnMainThread());
         }
     }
@@ -455,6 +469,12 @@ public sealed class RuntimeClient : IDisposable
 
             case RuntimeMessage.PayloadOneofCase.WorldBindingReady:
                 await this.HandleWorldBindingReadyAsync(message.CorrelationId, message.WorldBindingReady, cancellationToken);
+                break;
+
+            case RuntimeMessage.PayloadOneofCase.CheckpointPrepared:
+                // The save thread is blocked inside the game's own save here, so the reply must
+                // release the waiting handoff on this thread instead of the main-thread queue.
+                this.HandleCheckpointPrepared(message.CorrelationId, message.CheckpointPrepared);
                 break;
 
             case RuntimeMessage.PayloadOneofCase.TaskControl:
@@ -517,37 +537,47 @@ public sealed class RuntimeClient : IDisposable
 
     private async Task TrySendWorldBindingAsync(CancellationToken cancellationToken)
     {
-        RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
-        if (snapshot is null ||
-            this.sessionState.Phase != RuntimeSessionPhase.AwaitingWorldBindingReady ||
-            Interlocked.CompareExchange(ref this.worldBindingSent, 1, 0) != 0)
-        {
+        if (!this.TryTakeWorldBinding(out string requestId, out AdapterMessage message, out RuntimeWorldSnapshot snapshot))
             return;
-        }
-
-        string requestId = ProtocolMapper.NewMessageId("world_binding");
         try
         {
-            this.worldBindingExchange.Begin(requestId);
-            Interlocked.Exchange(ref this.worldBindingClockSequence, checked((long)snapshot.ClockSequence));
-            WorldBinding binding = ProtocolMapper.BuildWorldBinding(snapshot, this.worldContext.KnownNpcNames(snapshot));
-            await this.SendAsync(
-                new AdapterMessage
-                {
-                    MessageId = requestId,
-                    WorldBinding = binding,
-                },
-                cancellationToken
-            );
-            this.monitor.Log($"GameAgent WorldBinding sent: world_id={snapshot.WorldId} run_id={snapshot.WorldRunId} sequence={snapshot.ClockSequence} entities=[{string.Join(",", binding.Entities.Select(entity => entity.EntityId))}].", LogLevel.Info);
+            await this.SendAsync(message, cancellationToken);
+            this.monitor.Log($"GameAgent WorldBinding sent: world_id={snapshot.WorldId} run_id={snapshot.WorldRunId} sequence={snapshot.ClockSequence} entities=[{string.Join(",", message.WorldBinding.Entities.Select(entity => entity.EntityId))}].", LogLevel.Info);
         }
         catch
         {
-            this.worldBindingExchange.Cancel(requestId);
-            Interlocked.Exchange(ref this.worldBindingSent, 0);
-            Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
+            this.CancelWorldBinding(requestId);
             throw;
         }
+    }
+
+    private bool TryTakeWorldBinding(out string requestId, out AdapterMessage message, out RuntimeWorldSnapshot snapshot)
+    {
+        requestId = string.Empty;
+        message = new AdapterMessage();
+        snapshot = null!;
+        RuntimeWorldSnapshot? current = this.worldContext.Current;
+        if (current is null ||
+            this.sessionState.Phase != RuntimeSessionPhase.AwaitingWorldBindingReady ||
+            Interlocked.CompareExchange(ref this.worldBindingSent, 1, 0) != 0)
+        {
+            return false;
+        }
+
+        requestId = ProtocolMapper.NewMessageId("world_binding");
+        this.worldBindingExchange.Begin(requestId);
+        Interlocked.Exchange(ref this.worldBindingClockSequence, checked((long)current.ClockSequence));
+        WorldBinding binding = ProtocolMapper.BuildWorldBinding(current, this.worldContext.KnownNpcNames(current));
+        message = new AdapterMessage { MessageId = requestId, WorldBinding = binding };
+        snapshot = current;
+        return true;
+    }
+
+    private void CancelWorldBinding(string requestId)
+    {
+        this.worldBindingExchange.Cancel(requestId);
+        Interlocked.Exchange(ref this.worldBindingSent, 0);
+        Interlocked.Exchange(ref this.worldBindingClockSequence, 0);
     }
 
     private async Task HandleWorldBindingReadyAsync(string correlationId, WorldBindingReady? ready, CancellationToken cancellationToken)
@@ -589,6 +619,8 @@ public sealed class RuntimeClient : IDisposable
                 this.sessionState.PauseTasks();
                 throw new InvalidOperationException(bindingError);
             }
+            this.taskWorldBoundThisRun = true;
+            this.saveRecoveryDeadlineTicks = 0;
         }
 
         if (!this.sessionState.AcceptWorldBindingReady(ready.Status, out string stateError))
@@ -606,6 +638,188 @@ public sealed class RuntimeClient : IDisposable
         {
             await this.SendWorldClockAsync(current, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Runs on the SMAPI save thread while the game saves. The marker this returns is written into
+    /// the save; a runtime that cannot confirm the snapshot yields an unconfirmed marker instead.
+    /// </summary>
+    public CheckpointMarker? PrepareTaskCheckpointSave()
+    {
+        RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
+        bool holdsTaskWork = this.taskWorldBoundThisRun ||
+            (snapshot?.CheckpointMarker.State is CheckpointMarkerState.Confirmed or CheckpointMarkerState.Unconfirmed or CheckpointMarkerState.Invalid);
+        if (snapshot is null || !holdsTaskWork)
+            return null;
+        if (!this.sessionState.TaskExtensionAccepted || !this.IsTaskReady)
+            return CheckpointMarker.Unconfirmed(snapshot.GameId, snapshot.WorldId, "task_runtime_unavailable");
+
+        CheckpointPrepareRequest request = new(
+            new CheckpointScope(snapshot.GameId, snapshot.WorldId, snapshot.WorldRunId, snapshot.ExecutionGeneration),
+            snapshot.NowTick,
+            snapshot.ClockSequence,
+            ProtocolMapper.NewMessageId("checkpoint_save")
+        );
+        CheckpointMarker marker = this.checkpointBridge.PrepareForSaving(request, this.checkpointTimeout);
+        this.monitor.Log(
+            $"GameAgent task checkpoint prepared: save_request_id={request.SaveRequestId} status={marker.Status} reference={marker.CheckpointId ?? string.Empty} reason={marker.Reason ?? string.Empty}.",
+            marker.IsConfirmed ? LogLevel.Info : LogLevel.Warn
+        );
+        return marker;
+    }
+
+    /// <summary>Runs on the SMAPI save thread once the save finished and its marker is on disk.</summary>
+    public void OnWorldSaved() => this.CompleteTaskCheckpointSave(aborted: false, endsWorld: false, reason: "saved");
+
+    public void OnSaveAborted(string reason) => this.CompleteTaskCheckpointSave(aborted: true, endsWorld: false, reason: reason);
+
+    /// <summary>
+    /// A save that never reached Saved is aborted by the next Saving, SaveLoaded, ReturnedToTitle or
+    /// DayStarted. The runtime reference is released without rebinding because the world is going.
+    /// </summary>
+    public void AbortPendingCheckpointSave(string reason)
+    {
+        if (!this.checkpointBridge.HasPendingFinish)
+            return;
+        this.CompleteTaskCheckpointSave(aborted: true, endsWorld: true, reason: reason);
+    }
+
+    private void CompleteTaskCheckpointSave(bool aborted, bool endsWorld, string reason)
+    {
+        CheckpointFinishRequest? finish = aborted
+            ? this.checkpointBridge.OnSaveAborted(reason)
+            : this.checkpointBridge.OnSaved();
+        RuntimeWorldSnapshot? snapshot = this.worldContext.Current;
+        if (endsWorld || snapshot is null)
+        {
+            if (finish is not null)
+                this.SendCheckpointFinish(finish, reason);
+            return;
+        }
+        if (finish is not null &&
+            finish.Scope.ExecutionGeneration != 0 &&
+            finish.Scope.SameRun(new CheckpointScope(snapshot.GameId, snapshot.WorldId, snapshot.WorldRunId, snapshot.ExecutionGeneration)))
+        {
+            this.worldContext.TryApplyBinding(finish.Scope.GameId, finish.Scope.WorldId, finish.Scope.WorldRunId, finish.Scope.ExecutionGeneration, out _);
+        }
+        this.RebindAfterSave(finish, reason);
+    }
+
+    // A save fenced the world: the Adapter sends the one Finish it owns and rebinds in the same
+    // ordered batch, then keeps retrying inside a bounded window while the runtime still refuses.
+    private void RebindAfterSave(CheckpointFinishRequest? finish, string reason)
+    {
+        if (this.worldContext.Current is null || !this.sessionState.TaskExtensionAccepted)
+            return;
+        List<AdapterMessage> batch = new();
+        if (finish is not null)
+        {
+            batch.Add(new AdapterMessage
+            {
+                MessageId = ProtocolMapper.NewMessageId("checkpoint_finish"),
+                CheckpointFinish = ProtocolMapper.BuildCheckpointFinish(finish),
+            });
+        }
+        this.saveRecoveryDeadlineTicks = Environment.TickCount64 + SaveRecoveryWindowMs;
+        this.saveRecoveryNextAttemptTicks = Environment.TickCount64 + SaveRecoveryRetryIntervalMs;
+        this.sessionState.PrepareWorldBinding();
+        Interlocked.Exchange(ref this.worldBindingSent, 0);
+        if (this.TryTakeWorldBinding(out string requestId, out AdapterMessage binding, out _))
+        {
+            batch.Add(binding);
+            this.SendFireAndForget(this.SendBatchAsync(batch, this.cancellation?.Token ?? CancellationToken.None), $"checkpoint finish and rebind after {reason}");
+            return;
+        }
+        if (batch.Count > 0)
+            this.SendFireAndForget(this.SendBatchAsync(batch, this.cancellation?.Token ?? CancellationToken.None), $"checkpoint finish after {reason}");
+    }
+
+    private void SendCheckpointFinish(CheckpointFinishRequest finish, string reason)
+    {
+        AdapterMessage message = new()
+        {
+            MessageId = ProtocolMapper.NewMessageId("checkpoint_finish"),
+            CheckpointFinish = ProtocolMapper.BuildCheckpointFinish(finish),
+        };
+        this.SendFireAndForget(this.SendAsync(message, this.cancellation?.Token ?? CancellationToken.None), $"checkpoint finish after {reason}");
+    }
+
+    // Retries are driven from the game's own update tick so nothing here needs a timer thread.
+    private void UpdateSaveRecovery()
+    {
+        if (this.saveRecoveryDeadlineTicks == 0)
+            return;
+        long now = Environment.TickCount64;
+        if (now > this.saveRecoveryDeadlineTicks)
+        {
+            this.saveRecoveryDeadlineTicks = 0;
+            this.monitor.Log("GameAgent task rebind after a save gave up: the runtime still refuses this world.", LogLevel.Warn);
+            return;
+        }
+        if (now < this.saveRecoveryNextAttemptTicks ||
+            this.worldContext.Current is null ||
+            !this.sessionState.TaskExtensionAccepted ||
+            this.sessionState.CanUseTasks)
+        {
+            return;
+        }
+        this.saveRecoveryNextAttemptTicks = now + SaveRecoveryRetryIntervalMs;
+        this.sessionState.PrepareWorldBinding();
+        Interlocked.Exchange(ref this.worldBindingSent, 0);
+        if (this.TryTakeWorldBinding(out string requestId, out AdapterMessage binding, out _))
+            this.SendFireAndForget(this.SendAsync(binding, this.cancellation?.Token ?? CancellationToken.None), $"checkpoint rebind retry {requestId}");
+    }
+
+    private void HandleCheckpointPrepared(string correlationId, CheckpointPrepared? message)
+    {
+        if (message is null)
+            return;
+        CheckpointPreparedReply reply;
+        try
+        {
+            reply = ProtocolMapper.ReadCheckpointPrepared(message);
+        }
+        catch (Exception ex)
+        {
+            this.monitor.Log($"GameAgent CheckpointPrepared rejected: {ex.Message}", LogLevel.Warn);
+            return;
+        }
+        if (!this.checkpointReplies.TryResolve(correlationId, reply.SaveRequestId, reply.Scope, reply.Reference, reply.ErrorCode))
+        {
+            this.monitor.Log(
+                $"Ignoring CheckpointPrepared correlation_id={correlationId} save_request_id={reply.SaveRequestId}: it does not match a pending save.",
+                LogLevel.Debug
+            );
+        }
+    }
+
+    Task<CheckpointPreparedReply> ICheckpointTransport.PrepareAsync(CheckpointPrepareRequest request, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        string messageId = ProtocolMapper.NewMessageId("checkpoint_prepare");
+        return this.SendCheckpointPrepareAsync(messageId, request, this.cancellation?.Token ?? CancellationToken.None);
+    }
+
+    private async Task<CheckpointPreparedReply> SendCheckpointPrepareAsync(string messageId, CheckpointPrepareRequest request, CancellationToken cancellationToken)
+    {
+        Task<CheckpointPreparedReply> completion = this.checkpointReplies.Register(messageId, request.SaveRequestId, request.Scope);
+        try
+        {
+            await this.SendAsync(
+                new AdapterMessage
+                {
+                    MessageId = messageId,
+                    CheckpointPrepare = ProtocolMapper.BuildCheckpointPrepare(request),
+                },
+                cancellationToken
+            );
+        }
+        catch (Exception ex)
+        {
+            this.checkpointReplies.TryFail(messageId, "prepare_send_failed");
+            this.monitor.Log($"GameAgent CheckpointPrepare send failed: {ex.Message}", LogLevel.Warn);
+        }
+        return await completion;
     }
 
     private async Task HandleTaskControlAsync(TaskControlRequest? request, CancellationToken cancellationToken)
@@ -935,7 +1149,7 @@ public sealed class RuntimeClient : IDisposable
         return npc;
     }
 
-    public void BeginWorldContext()
+    public void BeginWorldContext(CheckpointMarkerRead checkpointMarker)
     {
         string worldId = this.ResolveCurrentWorldId();
         if (!RuntimeWorldScope.IsAvailable(worldId))
@@ -947,7 +1161,9 @@ public sealed class RuntimeClient : IDisposable
         this.ResetTaskRuntimeState("world_replaced");
         this.ClearConversations();
         this.currentWorldId = worldId;
-        this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick());
+        this.taskWorldBoundThisRun = false;
+        this.saveRecoveryDeadlineTicks = 0;
+        this.worldContext.BeginWorld(worldId, this.ReadCurrentWorldTick(), checkpointMarker);
         this.RestartConnection();
         this.monitor.Log($"GameAgent world context started: world_id={worldId} run_id={this.worldContext.Current?.WorldRunId}", LogLevel.Debug);
     }
@@ -981,6 +1197,10 @@ public sealed class RuntimeClient : IDisposable
         this.moveToCapability.CancelAll("world context cleared before movement completed");
         this.presentDialogueCapability.CloseAll();
         this.currentWorldId = string.Empty;
+        this.taskWorldBoundThisRun = false;
+        this.saveRecoveryDeadlineTicks = 0;
+        this.checkpointReplies.FailAll("world_cleared");
+        this.checkpointBridge.OnDisconnected("world_cleared");
         this.worldContext.Clear();
         this.sessionState.PauseTasks();
         Interlocked.Exchange(ref this.worldBindingSent, 0);
@@ -1000,6 +1220,7 @@ public sealed class RuntimeClient : IDisposable
 
     public void UpdateTaskActions()
     {
+        this.UpdateSaveRecovery();
         foreach (EndedInteraction ended in this.ordinaryInteractions.Expire(npcId =>
         {
             NPC npc = this.RequireNpc(npcId);

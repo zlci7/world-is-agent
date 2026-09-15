@@ -1,4 +1,5 @@
 using System;
+using GameAgent.Stardew.Tasks;
 
 namespace GameAgent.Stardew.Runtime;
 
@@ -10,7 +11,10 @@ public sealed record RuntimeWorldSnapshot(
     string ClockId,
     long NowTick,
     ulong ClockSequence
-);
+)
+{
+    public CheckpointMarkerRead CheckpointMarker { get; init; } = CheckpointMarkerRead.Absent;
+}
 
 public sealed class RuntimeWorldContext
 {
@@ -53,7 +57,7 @@ public sealed class RuntimeWorldContext
                 : Array.Empty<string>();
     }
 
-    public void BeginWorld(string worldId, long nowTick)
+    public void BeginWorld(string worldId, long nowTick, CheckpointMarkerRead? checkpointMarker = null)
     {
         string runId = RequireIdentity(this.runIdFactory(), "worldRunId");
         lock (this.gate)
@@ -67,7 +71,10 @@ public sealed class RuntimeWorldContext
                 this.clockId,
                 RequireTick(nowTick),
                 1
-            );
+            )
+            {
+                CheckpointMarker = checkpointMarker ?? CheckpointMarkerRead.Absent,
+            };
         }
     }
 

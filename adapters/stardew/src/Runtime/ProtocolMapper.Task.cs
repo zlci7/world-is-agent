@@ -63,12 +63,7 @@ public static partial class ProtocolMapper
         {
             Scope = BuildTaskScope(snapshot),
             Clock = BuildWorldClock(snapshot),
-            Checkpoint = new TaskCheckpointRef
-            {
-                GameId = snapshot.GameId,
-                WorldId = snapshot.WorldId,
-                Status = "absent",
-            },
+            Checkpoint = BuildCheckpointReference(snapshot),
         };
         binding.Entities.Add(BuildTaskEntity(PlayerEntityId, "player", "Player"));
         foreach (string npcName in npcNames
@@ -90,6 +85,95 @@ public static partial class ProtocolMapper
             Scope = BuildTaskScope(snapshot),
             Clock = BuildWorldClock(snapshot),
         };
+    }
+
+    /// <summary>
+    /// A save proves its task snapshot only through a confirmed reference. Every other on-disk
+    /// state travels as an explicit marker so the runtime pauses instead of guessing.
+    /// </summary>
+    private static TaskCheckpointRef BuildCheckpointReference(RuntimeWorldSnapshot snapshot)
+    {
+        CheckpointMarkerRead read = snapshot.CheckpointMarker;
+        CheckpointMarker? marker = read.Marker;
+        if (marker is null)
+        {
+            return new TaskCheckpointRef
+            {
+                GameId = snapshot.GameId,
+                WorldId = snapshot.WorldId,
+                Status = read.State == CheckpointMarkerState.Invalid ? CheckpointMarker.StatusUnconfirmed : CheckpointMarker.StatusAbsent,
+                SchemaVersion = read.State == CheckpointMarkerState.Invalid ? (uint)CheckpointMarker.CurrentSchemaVersion : 0u,
+                Reason = read.State == CheckpointMarkerState.Invalid ? read.Reason : string.Empty,
+            };
+        }
+        return new TaskCheckpointRef
+        {
+            GameId = snapshot.GameId,
+            WorldId = snapshot.WorldId,
+            Status = marker.Status,
+            SchemaVersion = (uint)marker.SchemaVersion,
+            CheckpointId = marker.CheckpointId ?? string.Empty,
+            Checksum = marker.Checksum ?? string.Empty,
+            Reason = marker.Reason ?? string.Empty,
+        };
+    }
+
+    public static CheckpointPrepare BuildCheckpointPrepare(CheckpointPrepareRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return new CheckpointPrepare
+        {
+            Scope = new TaskScope
+            {
+                GameId = request.Scope.GameId,
+                WorldId = request.Scope.WorldId,
+                WorldRunId = request.Scope.WorldRunId,
+                ExecutionGeneration = request.Scope.ExecutionGeneration,
+            },
+            Clock = new WorldClock
+            {
+                ClockId = GameClock.ClockId,
+                NowTick = request.NowTick,
+                Sequence = request.ClockSequence,
+            },
+            SaveRequestId = request.SaveRequestId,
+        };
+    }
+
+    public static CheckpointFinish BuildCheckpointFinish(CheckpointFinishRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return new CheckpointFinish
+        {
+            Scope = new TaskScope
+            {
+                GameId = request.Scope.GameId,
+                WorldId = request.Scope.WorldId,
+                WorldRunId = request.Scope.WorldRunId,
+                ExecutionGeneration = request.Scope.ExecutionGeneration,
+            },
+            SaveRequestId = request.SaveRequestId,
+            Saved = request.Saved,
+        };
+    }
+
+    public static CheckpointPreparedReply ReadCheckpointPrepared(CheckpointPrepared message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        TaskScope scope = message.Scope ?? throw new ArgumentException("checkpoint prepared scope is required");
+        CheckpointScope answered = new(scope.GameId, scope.WorldId, scope.WorldRunId, scope.ExecutionGeneration);
+        CheckpointMarker? reference = null;
+        TaskCheckpointRef? checkpoint = message.Checkpoint;
+        if (checkpoint is not null && string.Equals(checkpoint.Status, CheckpointMarker.StatusConfirmed, StringComparison.Ordinal))
+        {
+            reference = CheckpointMarker.Confirmed(
+                checkpoint.GameId,
+                checkpoint.WorldId,
+                checkpoint.CheckpointId,
+                checkpoint.Checksum
+            );
+        }
+        return new CheckpointPreparedReply(answered, message.SaveRequestId, reference, message.Error?.Code ?? string.Empty);
     }
 
     public static MeetingRequest RequireResolveMeetingArgument(ActionRequest request)
