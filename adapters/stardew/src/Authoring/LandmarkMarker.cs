@@ -105,7 +105,7 @@ internal static class LandmarkMarker
 
         try
         {
-            File.WriteAllText(assetPath, updated.ToJson() + Environment.NewLine);
+            LandmarkAssetWriter.Write(assetPath, updated.ToJson() + Environment.NewLine);
         }
         catch (Exception ex)
         {

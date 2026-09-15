@@ -17,6 +17,7 @@
     <Compile Include="..\..\src\Tasks\LandmarkCatalog.cs" Link="LandmarkCatalog.cs" />
     <Compile Include="..\..\src\Tasks\LandmarkCatalogStore.cs" Link="LandmarkCatalogStore.cs" />
     <Compile Include="..\..\src\Capabilities\ResolveMeetingCapability.cs" Link="ResolveMeetingCapability.cs" />
+    <Compile Include="..\..\src\Authoring\LandmarkAssetWriter.cs" Link="LandmarkAssetWriter.cs" />
     <Compile Include="..\..\src\Tasks\MeetingContract.cs" Link="MeetingContract.cs" />
     <Compile Include="..\..\src\Runtime\RuntimeWorldContext.cs" Link="RuntimeWorldContext.cs" />
     <Compile Include="..\..\src\Tasks\TaskExecutionContracts.cs" Link="TaskExecutionContracts.cs" />
