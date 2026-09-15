@@ -26,4 +26,14 @@ public sealed class InteractionPolicyTests
             playerTileY: 10
         ));
     }
+
+    [Theory]
+    [InlineData("interaction_in_flight", true)]
+    [InlineData("npc_control_busy", true)]
+    [InlineData("world_not_ready", false)]
+    [InlineData("", false)]
+    public void SuppressesOnlyRejectionsThatWouldOpenAGameOwnedDialogue(string reason, bool suppresses)
+    {
+        Assert.Equal(suppresses, InteractionPolicy.SuppressesInput(reason));
+    }
 }

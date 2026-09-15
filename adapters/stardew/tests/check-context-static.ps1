@@ -152,7 +152,7 @@ Require-Content 'src/Runtime/InteractionContextStore.cs' 'requireProximity\s*&&'
 Require-Content 'src/Runtime/InteractionPolicy.cs' 'MaxInteractionDistance' 'InteractionPolicy must define the shared max interaction distance.'
 Require-Content 'src/Events/PlayerInteractProbe.cs' 'TrySendPlayerInteracted' 'PlayerInteractProbe must call RuntimeClient gate before suppressing input.'
 Require-Content 'src/Events/PlayerInteractProbe.cs' 'reason=' 'PlayerInteractProbe must log ignored interaction reasons.'
-Require-Content 'src/Events/PlayerInteractProbe.cs' 'interaction_in_flight' 'PlayerInteractProbe must suppress in-flight interactions without sending a duplicate GameEvent.'
+Require-Content 'src/Runtime/InteractionPolicy.cs' 'interaction_in_flight' 'InteractionPolicy must suppress in-flight interactions without sending a duplicate GameEvent.'
 Require-Content 'src/Runtime/RuntimeClient.cs' 'turn_id=' 'RuntimeClient must log TurnCompletion turn_id.'
 Require-Content 'tests/ProtocolMapper.Tests/InteractionContextStoreTests.cs' 'InteractionContextStore' 'ProtocolMapper tests must cover interaction context lifecycle.'
 Require-Content 'src/Runtime/RuntimeClient.cs' 'TryConsumeCancelled\(request\.ActionId\)' 'RuntimeClient must let delayed dialogue display honor CancelAction.'
@@ -262,10 +262,12 @@ if (Test-Path -LiteralPath $runtimeClientPath) {
 $playerInteractProbePath = Join-Path $Root 'src/Events/PlayerInteractProbe.cs'
 if (Test-Path -LiteralPath $playerInteractProbePath) {
     $probeSource = Get-Content -LiteralPath $playerInteractProbePath -Raw
-    if ($probeSource -notmatch 'reason\s*==\s*"interaction_in_flight"[\s\S]{0,200}input\.Suppress\(e\.Button\)') {
-        $failures.Add('PlayerInteractProbe must suppress interaction_in_flight clicks while avoiding duplicate GameEvents.') | Out-Null
+    if ($probeSource -notmatch 'InteractionPolicy\.SuppressesInput\(reason\)[\s\S]{0,200}input\.Suppress\(e\.Button\)') {
+        $failures.Add('PlayerInteractProbe must suppress rejected clicks that would otherwise open a game-owned dialogue.') | Out-Null
     }
 }
+
+Require-Content 'src/Runtime/InteractionPolicy.cs' 'npc_control_busy' 'InteractionPolicy must suppress clicks on an NPC held by a task wait.'
 
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'pathfindToNextScheduleLocation' 'Phase9 diagnostic routes must use the local native NPC schedule pathfinder.'
 Require-Content 'src/Diagnostics/StardewRouteProbe.cs' 'checkSchedule\(Game1.timeOfDay\)' 'Phase9 diagnostic restoration must rejoin the current native schedule.'

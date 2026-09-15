@@ -53,7 +53,7 @@ public sealed class PlayerInteractProbe
         if (!this.runtimeClient.TrySendPlayerInteracted(target, Game1.player, TriggerForButton(e.Button), out string reason))
         {
             this.LogIgnored(reason, target.Name);
-            if (reason == "interaction_in_flight")
+            if (InteractionPolicy.SuppressesInput(reason))
             {
                 this.input.Suppress(e.Button);
                 return true;
