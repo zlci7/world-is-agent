@@ -719,6 +719,44 @@ func TestWakeAdmissionEndToEnd(t *testing.T) {
 	}
 }
 
+func TestBeginWakeTracksTheCurrentWakeNotTheOriginalSpec(t *testing.T) {
+	fixture, created, wake, _ := readyEnqueuedWake(t, 200, 500, 200)
+	first, _, err := fixture.svc.BeginWake(context.Background(), fixture.head.Binding, wake.ID, wake.ClaimID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Source.EventID, first.Source.TurnID, first.Source.CallID = "event-wait", "turn-wait", "call-wait"
+	next := int64(400)
+	if _, err := fixture.svc.ApplyIntent(context.Background(), first, Intent{Kind: "wait", NextWakeAt: &next}); err != nil {
+		t.Fatal(err)
+	}
+
+	later := Clock{ID: fixture.clock.ID, Tick: 400, Sequence: 3}
+	if _, err := fixture.svc.UpdateClock(context.Background(), fixture.head.Binding, later); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := fixture.svc.ClaimDue(context.Background(), fixture.head.Binding, later, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("ClaimDue = (%+v, %v)", claimed, err)
+	}
+	if err := fixture.svc.MarkEnqueued(context.Background(), fixture.head.Binding, claimed[0].ID, claimed[0].ClaimID); err != nil {
+		t.Fatal(err)
+	}
+	second, record, err := fixture.svc.BeginWake(context.Background(), fixture.head.Binding, claimed[0].ID, claimed[0].ClaimID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Spec.WakeAt != created.Task.Spec.WakeAt {
+		t.Fatalf("spec wake_at changed: %d", record.Spec.WakeAt)
+	}
+	if second.WakeDueAt != next || second.WakeDueAt == record.Spec.WakeAt {
+		t.Fatalf("current wake identity = %+v, spec wake_at = %d", second, record.Spec.WakeAt)
+	}
+	if second.WakeReason != claimed[0].Reason || second.WakeReason == "" {
+		t.Fatalf("current wake reason = %q, want %q", second.WakeReason, claimed[0].Reason)
+	}
+}
+
 func TestBeginWakeCarriesWakeIdentity(t *testing.T) {
 	fixture, created, wake, _ := readyEnqueuedWake(t, 200, 300, 200)
 

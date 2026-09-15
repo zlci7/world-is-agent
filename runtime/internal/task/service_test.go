@@ -1041,6 +1041,27 @@ func TestCreateRequiresReadyWorldAndSafeService(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsOversizedContractWithoutPersisting(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	spec := fixture.spec
+	spec.Contract = json.RawMessage(`{"pad":"` + strings.Repeat("x", MaxTaskContractBytes) + `"}`)
+	if len(spec.Contract) <= MaxTaskContractBytes {
+		t.Fatalf("fixture contract is %d bytes", len(spec.Contract))
+	}
+
+	if _, err := fixture.svc.Create(context.Background(), fixture.exec, spec, Admission{}); !errors.Is(err, ErrInvalidTaskSpec) {
+		t.Fatalf("Create error = %v, want ErrInvalidTaskSpec", err)
+	}
+	var count int
+	if err := fixture.store.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE game_id = ? AND world_id = ? AND entity_id = ?`,
+		fixture.exec.Owner.GameID, fixture.exec.Owner.WorldID, fixture.exec.Owner.EntityID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("oversized contract persisted %d tasks", count)
+	}
+}
+
 func createInputs(head Head, clock Clock, owner session.AgentSessionKey, eventID, turnID, callID, equivalenceKey string) (ExecutionContext, TaskSpec) {
 	source := SourceRef{
 		Kind:     SourceKindInternal,
