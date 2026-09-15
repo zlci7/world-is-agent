@@ -61,7 +61,7 @@ func (s *InMemoryHistoryStore) AppendHistory(ctx context.Context, batch HistoryB
 	if err != nil {
 		return HistorySource{}, err
 	}
-	if batch.Kind != HistoryKindTerminal {
+	if batch.Kind != HistoryKindTerminal && batch.Kind != HistoryKindTaskResult {
 		return HistorySource{}, fmt.Errorf("%w: terminal history is required", ErrInvalidHistory)
 	}
 	var stored HistoryBatch

@@ -42,7 +42,7 @@ func (s *SQLiteHistoryStore) AppendHistory(ctx context.Context, batch HistoryBat
 	if err != nil {
 		return HistorySource{}, err
 	}
-	if batch.Kind != HistoryKindTerminal {
+	if batch.Kind != HistoryKindTerminal && batch.Kind != HistoryKindTaskResult {
 		return HistorySource{}, fmt.Errorf("%w: legacy sources are imported by migration", ErrInvalidHistory)
 	}
 	conn, closeConn, err := s.openHistoryConn(ctx, batch.Owner)
@@ -244,7 +244,8 @@ func scanHistorySource(row interface{ Scan(...any) error }) (HistorySource, erro
 	if source.Sequence <= 0 || source.Bytes < 0 || source.BatchKey == "" || source.ID != "history_"+sha256LowerHex(source.BatchKey) || version != HistoryVersion {
 		return HistorySource{}, fmt.Errorf("%w: source header", ErrInvalidHistory)
 	}
-	if (kind != HistoryKindTerminal && kind != HistoryKindLegacy) || (kind == HistoryKindTerminal && source.LegacyMemoryID != "") || (kind == HistoryKindLegacy && source.LegacyMemoryID == "") {
+	segments := historyKeySegments(kind)
+	if segments == 0 || (kind == HistoryKindLegacy) != (source.LegacyMemoryID != "") {
 		return HistorySource{}, fmt.Errorf("%w: source kind or legacy identity", ErrInvalidHistory)
 	}
 	fingerprint, err := hex.DecodeString(source.Fingerprint)
@@ -260,10 +261,7 @@ func scanHistorySource(row interface{ Scan(...any) error }) (HistorySource, erro
 			return HistorySource{}, ErrInvalidHistory
 		}
 		var parts []any
-		count := 7
-		if kind == HistoryKindLegacy {
-			count = 6
-		}
+		count := segments
 		if err := decodeHistoryJSON([]byte(source.BatchKey), &parts); err != nil || len(parts) != count {
 			return HistorySource{}, fmt.Errorf("%w: pruned source key", ErrInvalidHistory)
 		}

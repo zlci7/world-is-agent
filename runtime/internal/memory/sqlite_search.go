@@ -282,10 +282,11 @@ func historySearchTextField(root map[string]any, path string) (HistoryTextField,
 	}
 	field := HistoryTextField{Path: path}
 	fact := len(parts) == 4 && parts[3] == "Text" && ((parts[0] == "event" && parts[1] == "facts") || (parts[0] == "legacy" && parts[1] == "SourceContextFacts"))
-	if !fact {
-		if len(parts) < 6 || parts[0] != "steps" {
-			return HistoryTextField{}, false
-		}
+	switch {
+	case fact:
+	case len(parts) == 2 && parts[0] == "task_result" && parts[1] == "reason":
+		field.Kind = "task_result"
+	case len(parts) >= 6 && parts[0] == "steps":
 		switch {
 		case parts[2] == "decision" && parts[3] == "ToolCalls" && parts[5] == "Arguments":
 			field.Kind = "tool_argument"
@@ -298,6 +299,8 @@ func historySearchTextField(root map[string]any, path string) (HistoryTextField,
 		default:
 			return HistoryTextField{}, false
 		}
+	default:
+		return HistoryTextField{}, false
 	}
 	var value any = root
 	for i, part := range parts {

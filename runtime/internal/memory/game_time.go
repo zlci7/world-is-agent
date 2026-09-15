@@ -26,6 +26,12 @@ const (
 	GameTimeTick
 )
 
+// TickGameTime builds a tick-only snapshot for a source that carries no calendar
+// fields. It compares only against other tick-only sources.
+func TickGameTime(tick int64) *GameTimeSnapshot {
+	return &GameTimeSnapshot{Tick: tick, PresentFields: gameTimeTick}
+}
+
 func SnapshotGameTime(value *protocolv1alpha2.GameTime) *GameTimeSnapshot {
 	if value == nil {
 		return nil

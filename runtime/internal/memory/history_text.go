@@ -50,6 +50,9 @@ func HistoryTextFields(batch HistoryBatch) []HistoryTextField {
 	}
 	appendFacts(historyTextObject(root["event"])["facts"], "/event/facts")
 	appendFacts(historyTextObject(root["legacy"])["SourceContextFacts"], "/legacy/SourceContextFacts")
+	if reason, _ := historyTextObject(root["task_result"])["reason"].(string); reason != "" {
+		fields = append(fields, HistoryTextField{Path: "/task_result/reason", Kind: "task_result", Text: reason})
+	}
 	for i, value := range historyTextArray(root["steps"]) {
 		step := historyTextObject(value)
 		path := fmt.Sprintf("/steps/%d", i)

@@ -15,12 +15,13 @@ import (
 )
 
 const (
-	HistorySchemaVersion = "phase8_2_history_v1"
-	HistoryKindTerminal  = "terminal_turn"
-	HistoryKindLegacy    = "legacy_recent"
-	HistoryVersion       = 1
-	HistoryAvailable     = "available"
-	HistoryPruned        = "pruned"
+	HistorySchemaVersion  = "phase8_2_history_v1"
+	HistoryKindTerminal   = "terminal_turn"
+	HistoryKindLegacy     = "legacy_recent"
+	HistoryKindTaskResult = "task_result"
+	HistoryVersion        = 1
+	HistoryAvailable      = "available"
+	HistoryPruned         = "pruned"
 )
 
 var (
@@ -68,6 +69,19 @@ type HistoryTerminal struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// HistoryTaskResult records one committed terminal task result. The owner comes
+// from HistoryBatch, and the source event carries the facts and the game time
+// the result belongs to; a result without a model turn keeps them absent.
+type HistoryTaskResult struct {
+	ResultID     string   `json:"result_id"`
+	TaskID       string   `json:"task_id"`
+	Revision     uint64   `json:"revision"`
+	State        string   `json:"state"`
+	Reason       string   `json:"reason"`
+	OccurredAt   int64    `json:"occurred_at"`
+	EvidenceRefs []string `json:"evidence_refs"`
+}
+
 type HistoryBatch struct {
 	Owner        session.AgentSessionKey `json:"owner"`
 	Kind         string                  `json:"kind"`
@@ -78,6 +92,7 @@ type HistoryBatch struct {
 	Steps        []HistoryStep           `json:"steps"`
 	Terminal     HistoryTerminal         `json:"terminal"`
 	Legacy       *Record                 `json:"legacy,omitempty"`
+	TaskResult   *HistoryTaskResult      `json:"task_result,omitempty"`
 }
 
 type HistoryTime struct {
@@ -147,13 +162,14 @@ func DefaultHistoryLimits() HistoryLimits {
 }
 
 func CanonicalHistoryBatch(batch HistoryBatch, maxBytes int) ([]byte, string, string, error) {
-	if _, err := session.Resolve(batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID); err != nil || batch.TurnID == "" || batch.Version != HistoryVersion {
+	if _, err := session.Resolve(batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID); err != nil || batch.Version != HistoryVersion {
 		return nil, "", "", ErrInvalidHistory
 	}
 	var keyParts []any
 	switch batch.Kind {
 	case HistoryKindTerminal:
-		if batch.Legacy != nil || (batch.Terminal.Status != "completed" && batch.Terminal.Status != "failed" && batch.Terminal.Status != "cancelled") {
+		if batch.TurnID == "" || batch.Legacy != nil || batch.TaskResult != nil ||
+			(batch.Terminal.Status != "completed" && batch.Terminal.Status != "failed" && batch.Terminal.Status != "cancelled") {
 			return nil, "", "", ErrInvalidHistory
 		}
 		keyParts = []any{batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID, batch.TurnID, batch.Event.ID, batch.Kind, batch.Version}
@@ -161,7 +177,16 @@ func CanonicalHistoryBatch(batch HistoryBatch, maxBytes int) ([]byte, string, st
 		if batch.Legacy == nil || batch.Legacy.SessionKey != batch.Owner || validateSQLiteRecord(*batch.Legacy) != nil {
 			return nil, "", "", ErrInvalidHistory
 		}
+		if batch.TaskResult != nil {
+			return nil, "", "", ErrInvalidHistory
+		}
 		keyParts = []any{batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID, batch.Legacy.ProjectionBatchKey, batch.Kind, batch.Version}
+	case HistoryKindTaskResult:
+		result := batch.TaskResult
+		if result == nil || batch.Legacy != nil || !validTaskResultBatch(batch) {
+			return nil, "", "", ErrInvalidHistory
+		}
+		keyParts = []any{batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID, result.ResultID, batch.Kind, batch.Version}
 	default:
 		return nil, "", "", ErrInvalidHistory
 	}
@@ -177,6 +202,39 @@ func CanonicalHistoryBatch(batch HistoryBatch, maxBytes int) ([]byte, string, st
 		return nil, "", "", err
 	}
 	return data, string(key), sha256LowerHex(string(data)), nil
+}
+
+// A task result batch carries no model turn: the result, its stable identity and
+// the game time are the whole source. Confirmed terminal states only.
+func validTaskResultBatch(batch HistoryBatch) bool {
+	result := batch.TaskResult
+	if result.ResultID == "" || result.TaskID == "" || result.Revision == 0 || result.OccurredAt <= 0 || batch.Event.GameTime == nil {
+		return false
+	}
+	switch result.State {
+	case "succeeded", "failed", "cancelled":
+	default:
+		return false
+	}
+	for _, ref := range result.EvidenceRefs {
+		if ref == "" {
+			return false
+		}
+	}
+	return batch.Terminal == HistoryTerminal{} && len(batch.Steps) == 0 && len(batch.Observations) == 0
+}
+
+// historyKeySegments keeps the canonical batch key segment count per kind, so a
+// trimmed record is still identifiable after its payload is pruned.
+func historyKeySegments(kind string) int {
+	switch kind {
+	case HistoryKindTerminal:
+		return 7
+	case HistoryKindLegacy, HistoryKindTaskResult:
+		return 6
+	default:
+		return 0
+	}
 }
 
 func (l HistoryLimits) WithDefaults() HistoryLimits {
