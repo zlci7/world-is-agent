@@ -17,7 +17,10 @@ public sealed record Landmark(
     int OpenStart,
     int OpenEnd,
     int DepartureLeadMinutes,
-    IReadOnlyList<SupportedRoute> SupportedRoutes
+    IReadOnlyList<SupportedRoute> SupportedRoutes,
+    // Longest travel time observed for this landmark, in game minutes. Null means
+    // unmeasured, and an unmeasured landmark resolves without a budget check.
+    int? MeasuredTravelMinutes = null
 );
 
 public sealed class LandmarkCatalogException : Exception
@@ -35,7 +38,11 @@ public sealed class LandmarkCatalog
     // A route field set to this value matches every NPC or every origin location.
     public const string AnyRoute = "*";
 
-    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions WriteOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     private readonly IReadOnlyDictionary<string, Landmark> landmarks;
 
@@ -82,6 +89,7 @@ public sealed class LandmarkCatalog
         OpenStart = landmark.OpenStart,
         OpenEnd = landmark.OpenEnd,
         DepartureLeadMinutes = landmark.DepartureLeadMinutes,
+        MeasuredTravelMinutes = landmark.MeasuredTravelMinutes,
         SupportedRoutes = landmark.SupportedRoutes
             .OrderBy(route => route.NpcId, StringComparer.Ordinal)
             .ThenBy(route => route.OriginLocation, StringComparer.Ordinal)
@@ -116,6 +124,8 @@ public sealed class LandmarkCatalog
                 throw new LandmarkCatalogException("invalid_landmark_window", $"landmark {source.LandmarkId} has an invalid open window");
             if (source.DepartureLeadMinutes <= 0 || source.DepartureLeadMinutes % 10 != 0)
                 throw new LandmarkCatalogException("invalid_departure_lead", $"landmark {source.LandmarkId} has an invalid departure lead");
+            if (source.MeasuredTravelMinutes is int measured && (measured <= 0 || measured % 10 != 0))
+                throw new LandmarkCatalogException("invalid_measured_travel", $"landmark {source.LandmarkId} has an invalid measured travel time");
             if (!result.TryAdd(source.LandmarkId, BuildLandmark(source)))
                 throw new LandmarkCatalogException("duplicate_landmark_id", $"duplicate landmark_id {source.LandmarkId}");
         }
@@ -163,7 +173,8 @@ public sealed class LandmarkCatalog
             source.OpenStart,
             source.OpenEnd,
             source.DepartureLeadMinutes,
-            supported
+            supported,
+            source.MeasuredTravelMinutes
         );
     }
 
@@ -216,6 +227,9 @@ public sealed class LandmarkCatalog
 
         [JsonPropertyName("departure_lead_minutes")]
         public int DepartureLeadMinutes { get; set; }
+
+        [JsonPropertyName("measured_travel_minutes")]
+        public int? MeasuredTravelMinutes { get; set; }
 
         [JsonPropertyName("supported_routes")]
         public List<RouteDocument>? SupportedRoutes { get; set; }

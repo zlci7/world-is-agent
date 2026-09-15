@@ -91,6 +91,25 @@ public sealed class MeetingContractTests
     }
 
     [Theory]
+    [InlineData(240, 220, true)]
+    [InlineData(220, 220, true)]
+    [InlineData(90, 220, false)]
+    public void RejectsWhenTheDepartureLeadDoesNotCoverTheMeasuredTravel(int lead, int measuredTravel, bool accepted)
+    {
+        string json = LandmarkCatalogTests.ValidCatalogJson
+            .Replace("\"departure_lead_minutes\":240,", $"\"departure_lead_minutes\":{lead},")
+            .Replace("\"supported_routes\"", $"\"measured_travel_minutes\":{measuredTravel},\"supported_routes\"");
+
+        MeetingResolution result = MeetingContract.Resolve(World, "npc:Linus", "player:local", "Mountain",
+            new MeetingRequest("beach_meeting_spot", new MeetingDate(1, "spring", 2), 1000, 1100),
+            FestivalKnowledge.NotFestival, LandmarkCatalog.Parse(json));
+
+        Assert.Equal(accepted, result.Accepted);
+        if (!accepted)
+            Assert.Equal("departure_lead_below_measured_travel", result.Code);
+    }
+
+    [Theory]
     [InlineData(1, "spring", 2, 240, 800, false)]
     [InlineData(1, "spring", 2, 240, 1000, true)]
     [InlineData(1, "spring", 2, 60, 700, true)]

@@ -65,6 +65,8 @@ public static class MeetingContract
             return Reject("invalid_meeting_window", "meeting end must be after start on the target date");
         if (request.StartTime < landmark.OpenStart || request.EndTime > landmark.OpenEnd)
             return Reject("landmark_closed", "meeting window is outside landmark opening hours");
+        if (landmark.MeasuredTravelMinutes is int measuredTravel && landmark.DepartureLeadMinutes < measuredTravel)
+            return Reject("departure_lead_below_measured_travel", "the configured departure lead does not cover the measured travel time");
 
         int seasonIndex;
         long startAt;

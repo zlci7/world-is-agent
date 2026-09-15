@@ -120,8 +120,39 @@ public sealed class LandmarkCatalogTests
         Assert.True(reparsed.SupportsRoute("npc:Shane", "Forest", "town_square"));
     }
 
+    [Fact]
+    public void ReadsAndWritesTheMeasuredTravelBudget()
+    {
+        LandmarkCatalog measured = LandmarkCatalog.Parse(MeasuredTravelCatalogJson);
+
+        Landmark landmark = Assert.IsType<Landmark>(measured.Find("beach_meeting_spot"));
+        Assert.Equal(220, landmark.MeasuredTravelMinutes);
+        Assert.Equal(220, Assert.IsType<Landmark>(LandmarkCatalog.Parse(measured.ToJson()).Find("beach_meeting_spot")).MeasuredTravelMinutes);
+
+        LandmarkCatalog unmeasured = LandmarkCatalog.Parse(ValidCatalogJson);
+        Assert.Null(Assert.IsType<Landmark>(unmeasured.Find("beach_meeting_spot")).MeasuredTravelMinutes);
+        Assert.DoesNotContain("measured_travel_minutes", unmeasured.ToJson());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-10)]
+    [InlineData(235)]
+    public void RejectsInvalidMeasuredTravelBudgets(int measured)
+    {
+        string json = ValidCatalogJson.Replace(
+            "\"departure_lead_minutes\":240,", $"\"departure_lead_minutes\":240,\"measured_travel_minutes\":{measured},");
+
+        LandmarkCatalogException error = Assert.Throws<LandmarkCatalogException>(() => LandmarkCatalog.Parse(json));
+
+        Assert.Equal("invalid_measured_travel", error.Code);
+    }
+
     public const string ValidCatalogJson =
         "{\"landmarks\":[{\"landmark_id\":\"beach_meeting_spot\",\"display_name\":\"Beach meeting spot\",\"location\":\"Beach\",\"tile\":{\"x\":28,\"y\":36},\"open_start\":600,\"open_end\":2200,\"departure_lead_minutes\":240,\"supported_routes\":[{\"npc_id\":\"npc:Linus\",\"origin_location\":\"Mountain\"}]}]}";
+
+    public const string MeasuredTravelCatalogJson =
+        "{\"landmarks\":[{\"landmark_id\":\"beach_meeting_spot\",\"display_name\":\"Beach meeting spot\",\"location\":\"Beach\",\"tile\":{\"x\":28,\"y\":36},\"open_start\":600,\"open_end\":2200,\"departure_lead_minutes\":240,\"measured_travel_minutes\":220,\"supported_routes\":[{\"npc_id\":\"npc:Linus\",\"origin_location\":\"Mountain\"}]}]}";
 
     public const string AnyRouteCatalogJson =
         "{\"landmarks\":[{\"landmark_id\":\"town_square\",\"display_name\":\"Town square\",\"location\":\"Town\",\"tile\":{\"x\":10,\"y\":20},\"open_start\":600,\"open_end\":2200,\"departure_lead_minutes\":10,\"supported_routes\":[{\"npc_id\":\"*\",\"origin_location\":\"*\"}]}]}";

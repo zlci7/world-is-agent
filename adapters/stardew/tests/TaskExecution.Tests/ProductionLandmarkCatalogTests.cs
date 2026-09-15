@@ -28,6 +28,7 @@ public sealed class ProductionLandmarkCatalogTests
 
         Landmark beach = Assert.IsType<Landmark>(catalog.Find("beach_meeting_spot"));
         Assert.Equal(new SupportedRoute("npc:Linus", "Mountain"), Assert.Single(beach.SupportedRoutes));
+        Assert.Equal(220, beach.MeasuredTravelMinutes);
         Assert.False(catalog.SupportsRoute("npc:Abigail", "Mountain", "beach_meeting_spot"));
     }
 

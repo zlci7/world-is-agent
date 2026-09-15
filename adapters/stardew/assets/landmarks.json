@@ -11,6 +11,7 @@
       "open_start": 600,
       "open_end": 2200,
       "departure_lead_minutes": 240,
+      "measured_travel_minutes": 220,
       "supported_routes": [
         {
           "npc_id": "npc:Linus",
