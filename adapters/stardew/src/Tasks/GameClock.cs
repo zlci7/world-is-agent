@@ -43,4 +43,13 @@ public static class GameClock
             _ => throw new ArgumentException("season must be spring, summer, fall, or winter", nameof(season)),
         };
     }
+
+    public static string ToClockText(long tick)
+    {
+        if (tick < 0)
+            throw new ArgumentOutOfRangeException(nameof(tick));
+
+        int minuteOfDay = (int)(tick % 1440);
+        return $"{minuteOfDay / 60:D2}:{minuteOfDay % 60:D2}";
+    }
 }

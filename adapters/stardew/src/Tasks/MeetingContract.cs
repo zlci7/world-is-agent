@@ -84,7 +84,10 @@ public static class MeetingContract
         // stays open long enough to cover the trip.
         long departureAt = startAt;
         if (departureAt <= world.NowTick)
-            return Reject("departure_too_late", "the agreed meeting time must remain in the future");
+            return Reject(
+                "departure_too_late",
+                $"the agreed meeting time has already passed; it is now {GameClock.ToClockText(world.NowTick)}, so confirm a later time today or tomorrow"
+            );
         int travelMinutes = Math.Max(landmark.MeasuredTravelMinutes ?? 0, landmark.DepartureLeadMinutes);
         if (endAt - startAt < travelMinutes)
             return Reject("meeting_window_below_travel_time", "the agreed window is shorter than the NPC travel time");

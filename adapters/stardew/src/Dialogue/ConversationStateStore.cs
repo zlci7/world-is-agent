@@ -77,7 +77,10 @@ public sealed class ConversationStateStore
         {
             ConversationState state = this.GetOrCreateState(key);
             // Dialogue input is modal, so one NPC/player pair has at most one unacked mutation.
+            // A newer interaction supersedes the earlier one for the same pair.
             state.Pending = PendingMutation.Interaction(pendingEventId);
+            state.PinnedEventIds.Clear();
+            state.PinnedEventIds.Add(pendingEventId);
             return state.ConversationId;
         }
     }
@@ -106,6 +109,8 @@ public sealed class ConversationStateStore
 
             // Dialogue input is modal, so one NPC/player pair has at most one unacked mutation.
             state.Pending = PendingMutation.PlayerLine(pendingEventId, line);
+            state.PinnedEventIds.Clear();
+            state.PinnedEventIds.Add(pendingEventId);
         }
     }
 
@@ -117,6 +122,31 @@ public sealed class ConversationStateStore
         {
             ConversationState state = this.GetOrCreateState(key);
             return state.ConversationId;
+        }
+    }
+
+    // The interaction turn owns the conversation identity: the native dialogue box
+    // may open and close while the agent is still deciding, and the pair keeps the
+    // same conversation until that turn completes.
+    public void ReleaseInteractionPin(string eventId)
+    {
+        if (string.IsNullOrWhiteSpace(eventId))
+            return;
+
+        string pinnedEventId = eventId.Trim();
+
+        lock (this.gate)
+        {
+            foreach (var pair in this.conversations.ToArray())
+            {
+                ConversationState state = pair.Value;
+                if (!state.PinnedEventIds.Remove(pinnedEventId))
+                    continue;
+
+                if (!state.Active && state.Pending is null && state.RecentLines.Count == 0)
+                    this.conversations.Remove(pair.Key);
+                return;
+            }
         }
     }
 
@@ -159,7 +189,7 @@ public sealed class ConversationStateStore
 
             state.Active = false;
             state.Pending = null;
-            if (state.RecentLines.Count == 0)
+            if (state.RecentLines.Count == 0 && state.PinnedEventIds.Count == 0)
                 this.conversations.Remove(key);
         }
     }
@@ -194,14 +224,35 @@ public sealed class ConversationStateStore
             foreach (var pair in this.conversations.ToArray())
             {
                 ConversationState state = pair.Value;
+                bool releasedPin = state.PinnedEventIds.Remove(pendingEventId);
                 if (state.Pending?.EventId != pendingEventId)
+                {
+                    // A discarded event never reaches the runtime, so its turn is over too.
+                    if (releasedPin && !state.Active && state.Pending is null && state.RecentLines.Count == 0)
+                        this.conversations.Remove(pair.Key);
                     continue;
+                }
 
                 state.Pending = null;
-                if (!state.Active && state.RecentLines.Count == 0)
+                if (!state.Active && state.RecentLines.Count == 0 && state.PinnedEventIds.Count == 0)
                     this.conversations.Remove(pair.Key);
                 return;
             }
+        }
+    }
+
+    // The conversation the interaction turn belongs to. Unlike the displayed
+    // conversation this keeps resolving while the turn is still running.
+    public ConversationSnapshot? GetCurrentConversation(string worldId, string npcEntityId, string playerEntityId)
+    {
+        ConversationKey key = BuildKey(worldId, npcEntityId, playerEntityId);
+        lock (this.gate)
+        {
+            if (!this.conversations.TryGetValue(key, out ConversationState? state) ||
+                (!state.Active && state.PinnedEventIds.Count == 0))
+                return null;
+
+            return Snapshot(state);
         }
     }
 
@@ -227,7 +278,8 @@ public sealed class ConversationStateStore
 
     private ConversationState GetOrCreateState(ConversationKey key)
     {
-        if (this.conversations.TryGetValue(key, out ConversationState? state) && (state.Active || state.Pending is not null))
+        if (this.conversations.TryGetValue(key, out ConversationState? state) &&
+            (state.Active || state.Pending is not null || state.PinnedEventIds.Count != 0))
             return state;
 
         state = new ConversationState(RequireNonEmpty(this.idGenerator.NextConversationId(), "conversation_id"));
@@ -299,6 +351,7 @@ public sealed class ConversationStateStore
         public int RecentLinesOmittedCount { get; set; }
         public List<ConversationLine> RecentLines { get; } = new();
         public PendingMutation? Pending { get; set; }
+        public HashSet<string> PinnedEventIds { get; } = new(StringComparer.Ordinal);
     }
 
     private sealed record PendingMutation(string EventId, ConversationLine? Line)

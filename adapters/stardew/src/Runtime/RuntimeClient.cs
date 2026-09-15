@@ -1108,6 +1108,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
         if (!string.IsNullOrWhiteSpace(completion.EventId))
         {
             this.ordinaryInteractions.TurnEnded(completion.EventId);
+            this.conversationStore.ReleaseInteractionPin(completion.EventId);
             InteractionContextSnapshot? current = this.interactionContextStore.TryGet(completion.EventId);
             string? conversationId = current?.ConversationId ??
                 this.taskInteractionConversations.FindPresentationConversation(completion.EventId);
@@ -1993,7 +1994,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
     private InteractionContextCurrentState BuildInteractionContextCurrentState(NPC npc, Farmer player)
     {
         string npcEntityId = ProtocolMapper.ToNpcEntityId(npc);
-        ConversationSnapshot? conversation = this.conversationStore.GetActiveConversation(this.currentWorldId, npcEntityId, ProtocolMapper.PlayerEntityId);
+        ConversationSnapshot? conversation = this.conversationStore.GetCurrentConversation(this.currentWorldId, npcEntityId, ProtocolMapper.PlayerEntityId);
         return new InteractionContextCurrentState(
             WorldId: this.currentWorldId,
             NpcEntityId: npcEntityId,
@@ -2029,6 +2030,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
             ? eventId
             : this.taskInteractionConversations.FindTaskEvent(conversationId) ?? eventId;
         this.CompleteTaskInteraction(taskInteractionEventId, "interaction_abandoned");
+        this.conversationStore.ReleaseInteractionPin(eventId);
         InteractionContextSnapshot? released = this.interactionContextStore.Release(eventId);
         this.LogReleasedInteractionContext(released);
         this.CloseWaitingForNpcOnMainThread(released?.NpcEntityId);
@@ -2075,6 +2077,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
         string reason)
     {
         this.ordinaryInteractions.End(conversationId);
+        this.conversationStore.ReleaseInteractionPin(taskInteractionEventId);
         if (string.IsNullOrWhiteSpace(taskInteractionEventId))
             return;
         this.CompleteTaskInteraction(taskInteractionEventId, reason);

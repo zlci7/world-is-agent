@@ -88,6 +88,8 @@ public sealed class MeetingContractTests
 
         Assert.False(result.Accepted);
         Assert.Equal("departure_too_late", result.Code);
+        Assert.Contains("12:00", result.Message);
+        Assert.True(result.Message.Length <= 120, result.Message);
     }
 
     [Theory]

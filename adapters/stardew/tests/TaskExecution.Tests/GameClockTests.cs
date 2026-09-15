@@ -58,4 +58,20 @@ public sealed class GameClockTests
     {
         Assert.Throws<ArgumentException>(() => GameClock.SeasonIndex("autumn"));
     }
+
+    [Theory]
+    [InlineData(1, 0, 1, 600, "06:00")]
+    [InlineData(1, 0, 2, 840, "08:40")]
+    [InlineData(1, 0, 2, 2030, "20:30")]
+    [InlineData(1, 0, 2, 2350, "23:50")]
+    public void FormatsAbsoluteTicksAsClockText(int year, int season, int day, int hhmm, string expected)
+    {
+        Assert.Equal(expected, GameClock.ToClockText(GameClock.ToTick(year, season, day, hhmm)));
+    }
+
+    [Fact]
+    public void RejectsNegativeTicksWhenFormatting()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => GameClock.ToClockText(-1));
+    }
 }

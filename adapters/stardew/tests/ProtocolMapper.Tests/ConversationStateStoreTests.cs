@@ -97,12 +97,91 @@ public sealed class ConversationStateStoreTests
     }
 
     [Fact]
+    public void PinnedInteractionKeepsIdentityWhileTheNativeDialogueCloses()
+    {
+        ConversationStateStore store = new(new FixedConversationIdGenerator("conv_1", "conv_2"));
+        store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_1");
+        store.CommitPending("event_interact_1");
+
+        store.CloseIfConversation("Farm_123456", "npc:Abigail", "player:local", "conv_1");
+
+        ConversationSnapshot? current = store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local");
+        Assert.Equal("conv_1", current?.ConversationId);
+        Assert.Null(store.GetActiveConversation("Farm_123456", "npc:Abigail", "player:local"));
+
+        string reusedConversationId = store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_2");
+        Assert.Equal("conv_1", reusedConversationId);
+    }
+
+    [Fact]
+    public void PinnedPlayerLineKeepsIdentityWhileTheNativeDialogueCloses()
+    {
+        ConversationStateStore store = new(new FixedConversationIdGenerator("conv_1", "conv_2"));
+        store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_1");
+        store.CommitPending("event_interact_1");
+
+        store.PreparePlayerLine("Farm_123456", "npc:Abigail", "player:local", "conv_1", "event_player_1", "player:local", "Local Farmer", "Let's go fishing.", 1820);
+        store.CloseIfConversation("Farm_123456", "npc:Abigail", "player:local", "conv_1");
+
+        Assert.Equal("conv_1", store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local")?.ConversationId);
+    }
+
+    [Fact]
+    public void DiscardingTheInteractionEventReleasesItsPin()
+    {
+        ConversationStateStore store = new(new FixedConversationIdGenerator("conv_1", "conv_2"));
+        store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_1");
+        store.CloseIfConversation("Farm_123456", "npc:Abigail", "player:local", "conv_1");
+
+        store.DiscardPending("event_interact_1");
+
+        Assert.Null(store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local"));
+        Assert.Equal("conv_2", store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_2"));
+    }
+
+    [Fact]
+    public void ReleasingTheTurnPinEndsTheConversationIdentity()
+    {
+        ConversationStateStore store = new(new FixedConversationIdGenerator("conv_1", "conv_2"));
+        store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_1");
+        store.CommitPending("event_interact_1");
+        store.CloseIfConversation("Farm_123456", "npc:Abigail", "player:local", "conv_1");
+
+        store.ReleaseInteractionPin("event_interact_other");
+        Assert.Equal("conv_1", store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local")?.ConversationId);
+
+        store.ReleaseInteractionPin("event_interact_1");
+        Assert.Null(store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local"));
+
+        string nextConversationId = store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_2");
+        Assert.Equal("conv_2", nextConversationId);
+    }
+
+    [Fact]
+    public void CurrentConversationRequiresActiveOrPinnedState()
+    {
+        ConversationStateStore store = new(new FixedConversationIdGenerator("conv_1", "conv_2"));
+        Assert.Null(store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local"));
+
+        store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_1");
+        Assert.Equal("conv_1", store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local")?.ConversationId);
+
+        store.CommitPending("event_interact_1");
+        store.ReleaseInteractionPin("event_interact_1");
+        Assert.Equal("conv_1", store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local")?.ConversationId);
+
+        store.CloseIfConversation("Farm_123456", "npc:Abigail", "player:local", "conv_1");
+        Assert.Null(store.GetCurrentConversation("Farm_123456", "npc:Abigail", "player:local"));
+    }
+
+    [Fact]
     public void ClosedAndClearedStoreStartNewConversationIds()
     {
         ConversationStateStore store = new(new FixedConversationIdGenerator("conv_1", "conv_3", "conv_4"));
         store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_1");
         store.CommitPending("event_interact_1");
         store.CloseIfConversation("Farm_123456", "npc:Abigail", "player:local", "conv_1");
+        store.ReleaseInteractionPin("event_interact_1");
 
         string conversationId = store.PrepareInteraction("Farm_123456", "npc:Abigail", "player:local", "event_interact_3");
         Assert.Equal("conv_3", conversationId);
