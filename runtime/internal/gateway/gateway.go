@@ -22,12 +22,13 @@ import (
 type Server struct {
 	protocolv1alpha2.UnimplementedGameAgentGatewayServer
 
-	agentLoop   eventHandler
-	worlds      *WorldRegistry
-	dispatcher  *task.Dispatcher
-	mu          sync.Mutex
-	connections map[*worldConnection]struct{}
-	stopped     bool
+	agentLoop     eventHandler
+	worlds        *WorldRegistry
+	dispatcher    *task.Dispatcher
+	resultHistory *ResultHistorySink
+	mu            sync.Mutex
+	connections   map[*worldConnection]struct{}
+	stopped       bool
 }
 
 type eventHandler interface {
@@ -48,6 +49,16 @@ func WithTaskService(service *task.Service) ServerOption {
 	}
 }
 
+// WithTaskResultHistory publishes committed task results into session history.
+// The store is the same Memory backend the agent loop reads from.
+func WithTaskResultHistory(store memory.HistoryStore) ServerOption {
+	return func(s *Server) {
+		if store != nil {
+			s.resultHistory = &ResultHistorySink{Store: store}
+		}
+	}
+}
+
 func NewServer(agentLoop eventHandler, options ...ServerOption) *Server {
 	s := &Server{
 		agentLoop:   agentLoop,
@@ -55,6 +66,9 @@ func NewServer(agentLoop eventHandler, options ...ServerOption) *Server {
 	}
 	for _, option := range options {
 		option(s)
+	}
+	if s.worlds != nil {
+		s.worlds.resultHistory = s.resultHistory
 	}
 	return s
 }

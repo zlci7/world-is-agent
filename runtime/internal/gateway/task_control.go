@@ -33,7 +33,7 @@ func (e *streamEnvironment) ReleaseTask(ctx context.Context, record task.Record)
 		if err != nil {
 			return err
 		}
-		return e.releaseTaskControl(cleanupCtx, head.Binding, current)
+		return e.commitTaskResult(cleanupCtx, head.Binding, current)
 	})
 }
 
@@ -63,7 +63,7 @@ func (e *streamEnvironment) releaseExecutionControl(ctx context.Context, exec ta
 		return err
 	}
 	if record.Result != nil {
-		return e.releaseTaskControl(ctx, head.Binding, record)
+		return e.commitTaskResult(ctx, head.Binding, record)
 	}
 	if record.State == task.StateWaiting {
 		return nil

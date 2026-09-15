@@ -30,7 +30,7 @@ func newGatewayRuntime(ctx context.Context, loop *agent.Loop, config agent.TaskC
 			return nil, err
 		}
 		process.store = store
-		options = append(options, gateway.WithTaskService(task.NewService(store)))
+		options = append(options, gateway.WithTaskService(task.NewService(store)), gateway.WithTaskResultHistory(loop.HistoryStore()))
 	}
 	process.gateway = gateway.NewServer(loop, options...)
 	if config.Enabled {

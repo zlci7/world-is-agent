@@ -63,6 +63,7 @@ type WorldRegistry struct {
 	interactions   map[string]struct{}
 	interactionMu  sync.Mutex
 	dispatchConfig task.DispatcherConfig
+	resultHistory  *ResultHistorySink
 }
 
 func NewWorldRegistry(service *task.Service) *WorldRegistry {

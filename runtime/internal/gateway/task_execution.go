@@ -149,7 +149,7 @@ func (e *streamEnvironment) reconcileTaskIDs(ctx context.Context, owner session.
 			return err
 		}
 		if record.Result != nil {
-			if err := e.releaseTaskControl(ctx, head.Binding, record); err != nil {
+			if err := e.commitTaskResult(ctx, head.Binding, record); err != nil {
 				return err
 			}
 		}
@@ -357,7 +357,7 @@ func (e *streamEnvironment) finishTaskExecution(ctx context.Context, exec task.E
 			continue
 		}
 		if record.Result != nil {
-			return e.releaseTaskControl(cleanupCtx, head.Binding, record)
+			return e.commitTaskResult(cleanupCtx, head.Binding, record)
 		}
 		if record.State != task.StateRunning {
 			return nil

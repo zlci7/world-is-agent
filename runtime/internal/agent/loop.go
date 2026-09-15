@@ -106,6 +106,14 @@ func WithHistoryStore(store memory.HistoryStore) LoopOption {
 	}
 }
 
+// HistoryStore 暴露 Loop 使用的 History backend，供同进程的下游投影复用同一份存储。
+func (l *Loop) HistoryStore() memory.HistoryStore {
+	if l == nil {
+		return nil
+	}
+	return l.historyStore
+}
+
 func WithSummaryGenerator(generator model.TextGenerator) LoopOption {
 	return func(loop *Loop) { loop.summaryGenerator = generator }
 }
