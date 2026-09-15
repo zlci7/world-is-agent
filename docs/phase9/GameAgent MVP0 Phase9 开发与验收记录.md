@@ -130,3 +130,109 @@ Phase9.1 在 `codex/phase9-durable-task` 上完成，代码范围为 `runtime/in
 ### 7.2 阶段边界
 
 Phase9.1 通过表示 Runtime Task 内核及其故障恢复边界可用。该阶段不接入 LLM、gRPC、Stardew API 或真实地图坐标，也不包含游戏预约、跨地图动作和实机存档联调；这些分别属于 Phase9.2–9.5，不能由本阶段自动化结果替代。
+
+---
+
+## 8. Phase9.2 Runtime Tools 与调度接入验收
+
+### 8.1 提交范围
+
+| 模块 | 提交 | 状态 |
+|---|---|---|
+| 合同锁定 | `7135236` | 通过 |
+| A1 协议消息 | `e4d351e` | 通过 |
+| A2 协议映射 | `71f2e1f` | 通过 |
+| B1 Runtime 自有工具 | `f0ab4c4` | 通过 |
+| C1 世界绑定 | `c969b8b` | 通过 |
+| B2 Runtime Task 工具 | `28c301e` | 通过 |
+| C2 wake 分发 | `79eb85e` | 通过 |
+| D 执行闭环 | `29d49f4` | 通过 |
+| 修复：运行期权威与有界收敛 | `f4c9917` | 通过 |
+| 修复：手写测试移出生成目录 | `07c2047` | 通过 |
+
+### 8.2 验证结果
+
+| 检查 | 结果 |
+|---|---|
+| `go test ./... -count=1` | passed |
+| `protocol/tests/check-protocol-static.ps1` | passed |
+| `protocol/tests/check-go-generation.ps1` | passed |
+| `scripts/check-architecture.ps1` | passed |
+| `git diff --check` | passed |
+
+9.2 的闭环证据全部来自真实 gRPC、临时 SQLite 与 fake Adapter/model。真实模型行为与真实游戏行为不属本阶段。
+
+### 8.3 阶段边界
+
+Phase9.2 通过表示 Runtime 侧的持久任务链路可用：协议消息、边界映射、Runtime 自有工具分流、世界绑定与 task-ready、wake 分发、执行收口。该阶段不接入 Stardew 真实能力、跨地图动作、原生日程与实机存档联调，也不能由 fake 闭环替代这些证据。
+
+---
+
+## 9. Phase9.3 Stardew 行动与交互验收
+
+### 9.1 实机闭环证据
+
+两条真实链路均在 Stardew Valley 实机、真实 Runtime、真实 SQLite 上完成。
+
+**约定达成（met）**：`task_1789450222152318800_2038`
+
+| 时刻 | 事实 |
+|---|---|
+| 07:00 | 出发（`community_center`，`Mountain` 起点） |
+| 08:40 | `arrived`，到达 `Town (55,22)` |
+| 08:50 | `wait_registered`，交出控制权并驻留 |
+| 11:00 | `satisfied / met` |
+
+终态 `succeeded`，`result.reason = satisfied`。清理结果为 `released`（移动）与 `handed_off`（等待已交接给合法对话）；对话结束后 NPC 恢复当前原生日程。
+
+**约定未达成（expired）**：`task_1789453595087640500_2070`
+
+| 时刻 | 事实 |
+|---|---|
+| 07:00 | 出发（`carpenter_shop`） |
+| 07:40 | `arrived`，到达 `Mountain (10,26)` |
+| 07:50 | `wait_registered` |
+| 09:00 | `unsatisfied / expired` |
+
+终态 `failed`，`result.reason = unsatisfied`，两个 operation 均 `released / task_terminal`。玩家全程未靠近，NPC 自行赴约并按时收口。
+
+两条闭环的构建来源：met 在 `2fdd269` 上验证，expired 在 `5286b14` 上验证。此后到当前 HEAD 的改动只涉及交互日志与点击抑制，不改变这两条路径。
+
+### 9.2 点位与路线范围变更
+
+原计划要求"沙滩、酒馆、广场的生产点位、受支持路线、行程预留和实际加载预算均有对应证据；未验证路线保持不可用"。实际交付与计划不同，此处明确记录为范围变更：
+
+```text
+保留     beach_meeting_spot，Beach (28,36)，实测 200–220 游戏分钟，预留 240，
+         supported_routes 固定为 npc:Linus + Mountain
+
+新增     community_center   Town (55,22)
+         pierre_store       Town (46,59)
+         trailer            Town (79,67)
+         mine_entrance      Mountain (53,6)
+         carpenter_shop     Mountain (10,26)
+         以上五点 supported_routes 为 "*" + "*"，即任意 NPC 从任意地图，
+         且均未记录 measured_travel_minutes
+```
+
+变更理由是实机测试需要就近点位，避免每次都走跨图长路线。代价是这五个点不构成"已验证路线"：行程是否可达由 NPC 出发时的原生寻路判定，行程是否够用由预留值与 180 秒现实时间上限共同限制。酒馆与广场点位未采集。
+
+### 9.3 已知限制
+
+```text
+- 等待期间不提供交流：等待持有 NPC 控制权，普通交互申请同一租约失败，
+  点击已被抑制，不再弹出无法继续的原生对话框。
+- 玩家离开两格范围会结束会话：NPC 待发的台词会丢失。该结束现在带原因日志
+  （player_not_near / control_lost / no_dialogue_before_deadline）。
+- update_task 参数为空时只返回 tool_arguments_invalid，对模型无指导性。
+- 每回合仅允许一个异步动作，模型不知道该限制，可能浪费一步。
+- 跨 run 任务恢复未接通，新 run 绑定无检查点时世界保持 paused。
+```
+
+### 9.4 阶段边界
+
+Phase9.3 通过表示 Stardew 侧可完成"约定 → 出发 → 驻留等待 → met 或 expired → 释放控制并恢复原生日程"的真实闭环。该阶段不包含生产保存检查点、跨 run 任务恢复（属 Phase9.4）、真实模型行为评测与最终系统验收（属 Phase9.5），也不把自动重连退避与未验证路线纳入交付。
+
+### 9.5 审查说明
+
+方案要求由两个只读子 agent 完成阶段内部 review。本次执行中子 agent 未按预期接收任务并返回占位结果，内部 review 由执行者逐行自查完成，覆盖状态机、并发、失败路径、测试缺口与兼容性，发现的问题以独立 `fix:` 提交修复。该项如实标注为自查替代，不代表已获得独立上下文审查。

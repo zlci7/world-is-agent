@@ -6,16 +6,21 @@
 |---|---|---|---|---|---|---|---:|---|
 | `beach_meeting_spot` | `npc:Linus` | `Mountain` | `Beach (28,36)` | 3/3 成功 | 143.132–157.915 秒；200–220 游戏分钟 | 3/3 `native_schedule_rejoined` | 240 | 已进入 `supported_routes` |
 
-生产配置只包含上表已有证据的路线。路线身份固定为 `npc_id + origin_location + landmark_id`；同一终点的其他 NPC 或其他起点仍是未验证路线。
+生产配置同时包含上表已验证路线和第 2 节的实机标注点位。路线身份固定为 `npc_id + origin_location + landmark_id`；同一终点的其他 NPC 或其他起点仍是未验证路线。
 
-## 2. 待采集点位
+## 2. 实机标注点位
 
-| landmark_id | 语义位置 | 游戏地图名 | X | Y | NPC | 起点 | 日期/时刻 | 状态 |
-|---|---|---|---:|---:|---|---|---|---|
-| `saloon_meeting_spot` | 酒馆会面点 | 待实机采集 | 待采集 | 待采集 | 待确定 | 待确定 | 待确定 | 不可用 |
-| `town_square` | 广场会面点 | 待实机采集 | 待采集 | 待采集 | 待确定 | 待确定 | 待确定 | 不可用 |
+以下点位由实机命令 `gameagent_mark_landmark` 采集，未走第 4 节的晋升流程：`supported_routes` 为通配（任意 NPC、任意起点），且未记录实测行程。
 
-候选格必须同时满足：语义位置明确、地图内整数格、NPC schedule 路径可达、等待期间不阻塞入口或固定事件位置，并能从当前日程恢复。
+| landmark_id | 位置 | 预留 | supported_routes | 实测行程 | 实机用途 |
+|---|---|---:|---|---|---|
+| `community_center` | Town (55,22) | 240 | `*` + `*` | 未记录 | 达成闭环（met） |
+| `carpenter_shop` | Mountain (10,26) | 90 | `*` + `*` | 未记录 | 未达成闭环（expired） |
+| `pierre_store` | Town (46,59) | 240 | `*` + `*` | 未记录 | 仅用于约定 |
+| `trailer` | Town (79,67) | 240 | `*` + `*` | 未记录 | 仅用于约定 |
+| `mine_entrance` | Mountain (53,6) | 240 | `*` + `*` | 未记录 | 仅用于约定 |
+
+原计划的酒馆与广场候选点位未采集。通配点位只用于当前实机测试；若需要成为"已验证路线"，必须按第 4 节补三条独立路线证据，并把 `supported_routes` 收敛为具体 NPC 与起点。
 
 ## 3. 单条路线采集记录
 
