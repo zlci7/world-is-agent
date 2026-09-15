@@ -42,6 +42,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
     private readonly NpcInteractionLifecycle taskInteractionLifecycle;
     private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
     private readonly TaskInteractionConversationIndex taskInteractionConversations = new();
+    private readonly TaskEvidenceInbox deferredTaskEvidence = new();
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
     private readonly IMonitor monitor;
     private readonly SemaphoreSlim sendMu = new(1, 1);
@@ -925,6 +926,8 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
             NPC npc = this.RequireNpc(request.EntityId);
             StardewObservation stardewObservation = this.observationBuilder.Build(npc, Game1.player, "runtime_observe", this.currentWorldId);
             Observation observation = ProtocolMapper.BuildObservation(request.EntityId, stardewObservation, this.currentWorldId);
+            foreach (TaskEvidence fact in this.deferredTaskEvidence.Take(request.EntityId))
+                observation.TaskEvidence.Add(fact);
 
             this.SendFireAndForget(
                 this.SendAsync(
@@ -1549,6 +1552,22 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
             if (evidence is null)
                 continue;
 
+            // A save moves the world to a new generation while the operation keeps its own binding.
+            // Such a fact may only be admitted through an observation reply, so it waits until the
+            // runtime asks for this entity instead of being pushed as an event.
+            if (evidence.Source.Operation.ExecutionGeneration != world.ExecutionGeneration)
+            {
+                if (evidence.Source.Operation.ExecutionGeneration > world.ExecutionGeneration)
+                {
+                    this.monitor.Log($"GameAgent wait evidence from a future generation ignored: {evidence.Code}.", LogLevel.Warn);
+                    continue;
+                }
+                this.deferredTaskEvidence.Add(operation.NpcEntityId, ProtocolMapper.BuildWaitEvidenceFact(evidence, world));
+                this.taskExecutionDriver.FinishWait(operation, evidence.Code);
+                this.monitor.Log($"GameAgent wait evidence {evidence.Code} held for the next observation of {operation.NpcEntityId}.", LogLevel.Debug);
+                continue;
+            }
+
             GameEvent gameEvent = ProtocolMapper.BuildWaitEvidenceEvent(
                 evidence,
                 world,
@@ -2045,6 +2064,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
         this.activeTaskActions.Clear();
         this.meetingWaitMonitor.Clear();
         this.taskInteractionConversations.Clear();
+        this.deferredTaskEvidence.Clear();
     }
 
     private void AbortTaskConversation(

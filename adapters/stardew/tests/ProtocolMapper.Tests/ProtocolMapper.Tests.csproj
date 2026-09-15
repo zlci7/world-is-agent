@@ -28,6 +28,7 @@
     <Compile Include="..\..\src\Runtime\WorldBindingExchange.cs" Link="WorldBindingExchange.cs" />
     <Compile Include="..\..\src\Runtime\ProtocolMapper.Task.cs" Link="ProtocolMapper.Task.cs" />
     <Compile Include="..\..\src\Runtime\TaskOutboundBatch.cs" Link="TaskOutboundBatch.cs" />
+    <Compile Include="..\..\src\Runtime\TaskEvidenceInbox.cs" Link="TaskEvidenceInbox.cs" />
     <Compile Include="..\..\src\Tasks\GameClock.cs" Link="GameClock.cs" />
     <Compile Include="..\..\src\Tasks\CheckpointMarker.cs" Link="CheckpointMarker.cs" />
     <Compile Include="..\..\src\Tasks\TaskCheckpointContracts.cs" Link="TaskCheckpointContracts.cs" />

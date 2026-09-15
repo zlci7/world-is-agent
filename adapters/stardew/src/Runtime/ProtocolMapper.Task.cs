@@ -412,25 +412,10 @@ public static partial class ProtocolMapper
 
     public static GameEvent BuildWaitEvidenceEvent(WaitEvidence evidence, RuntimeWorldSnapshot world, ulong sequence)
     {
-        if (!string.Equals(evidence.Source.Operation.WorldId, world.WorldId, StringComparison.Ordinal) ||
-            !string.Equals(evidence.Source.Operation.WorldRunId, world.WorldRunId, StringComparison.Ordinal) ||
-            evidence.Source.Operation.ExecutionGeneration != world.ExecutionGeneration)
-        {
-            throw new ArgumentException("wait evidence scope does not match the active world");
-        }
-
-        string factId = $"{evidence.Source.Operation.TaskId}:{evidence.Source.Operation.OperationId}:{evidence.Code}";
-        TaskEvidence fact = BuildEvidence(
-            evidence.Source,
-            world with { NowTick = evidence.OccurredAt },
-            factId,
-            evidence.Outcome,
-            evidence.Code,
-            evidence.NpcPosition,
-            evidence.WaitUntil);
+        TaskEvidence fact = BuildWaitEvidenceFact(evidence, world);
         GameEvent result = new()
         {
-            EventId = "task_fact:" + factId,
+            EventId = "task_fact:" + fact.FactId,
             EventType = "task_evidence",
             WorldId = world.WorldId,
             TargetEntityId = evidence.Source.Operation.NpcEntityId,
@@ -453,6 +438,39 @@ public static partial class ProtocolMapper
             };
         }
         return result;
+    }
+
+    /// <summary>
+    /// Builds one durable fact for the operation that produced it. A save moves the world to a new
+    /// generation while the operation keeps its original binding, so the fact names the operation's
+    /// own run and generation; the runtime then decides how that binding is revalidated.
+    /// </summary>
+    public static TaskEvidence BuildWaitEvidenceFact(WaitEvidence evidence, RuntimeWorldSnapshot world)
+    {
+        ArgumentNullException.ThrowIfNull(evidence);
+        ArgumentNullException.ThrowIfNull(world);
+        if (!string.Equals(evidence.Source.Operation.WorldId, world.WorldId, StringComparison.Ordinal) ||
+            !string.Equals(evidence.Source.Operation.WorldRunId, world.WorldRunId, StringComparison.Ordinal) ||
+            evidence.Source.Operation.ExecutionGeneration > world.ExecutionGeneration)
+        {
+            throw new ArgumentException("wait evidence scope does not match the active world");
+        }
+
+        string factId = $"{evidence.Source.Operation.TaskId}:{evidence.Source.Operation.OperationId}:{evidence.Code}";
+        return BuildEvidence(
+            evidence.Source,
+            world with
+            {
+                WorldId = evidence.Source.Operation.WorldId,
+                WorldRunId = evidence.Source.Operation.WorldRunId,
+                ExecutionGeneration = evidence.Source.Operation.ExecutionGeneration,
+                NowTick = evidence.OccurredAt,
+            },
+            factId,
+            evidence.Outcome,
+            evidence.Code,
+            evidence.NpcPosition,
+            evidence.WaitUntil);
     }
 
     public static ActionResult BuildTaskDriverActionResult(
