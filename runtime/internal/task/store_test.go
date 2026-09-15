@@ -16,6 +16,8 @@ func TestStoreOptionsResolveAppliesExactDefaults(t *testing.T) {
 		MaxTaskBytes:     256 << 10,
 		MaxSnapshotBytes: 32 << 20,
 		MaxTasksPerWorld: 1024,
+		// The save barrier bound keeps its documented default unless a caller overrides it.
+		CheckpointBarrierTimeout: 10 * time.Second,
 	}
 	if got != want {
 		t.Fatalf("StoreOptions.Resolve() = %+v, want %+v", got, want)
@@ -24,11 +26,12 @@ func TestStoreOptionsResolveAppliesExactDefaults(t *testing.T) {
 
 func TestStoreOptionsResolvePreservesExplicitValues(t *testing.T) {
 	want := StoreOptions{
-		Path:             "tasks.sqlite",
-		BusyTimeout:      3 * time.Second,
-		MaxTaskBytes:     17,
-		MaxSnapshotBytes: 29,
-		MaxTasksPerWorld: 7,
+		Path:                     "tasks.sqlite",
+		BusyTimeout:              3 * time.Second,
+		MaxTaskBytes:             17,
+		MaxSnapshotBytes:         29,
+		MaxTasksPerWorld:         7,
+		CheckpointBarrierTimeout: 750 * time.Millisecond,
 	}
 	got, err := want.Resolve()
 	if err != nil {
@@ -50,6 +53,7 @@ func TestStoreOptionsRejectsMissingPathAndNegativeValues(t *testing.T) {
 		{name: "negative max task bytes", options: StoreOptions{Path: "tasks.sqlite", MaxTaskBytes: -1}},
 		{name: "negative max snapshot bytes", options: StoreOptions{Path: "tasks.sqlite", MaxSnapshotBytes: -1}},
 		{name: "negative max tasks per world", options: StoreOptions{Path: "tasks.sqlite", MaxTasksPerWorld: -1}},
+		{name: "negative checkpoint barrier timeout", options: StoreOptions{Path: "tasks.sqlite", CheckpointBarrierTimeout: -time.Millisecond}},
 	}
 
 	for _, tt := range tests {

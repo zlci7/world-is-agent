@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"time"
 
 	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/internal/session"
 	"gameagent/runtime/internal/task"
 )
 
@@ -71,6 +73,7 @@ func (r *WorldRegistry) PrepareCheckpoint(ctx context.Context, env *streamEnviro
 	}
 	slot.saving = true
 	slot.saveRequestID = saveRequestID
+	slot.saveReobserve = true
 	slot.authorityEpoch++
 	evidence, err := checkpointEvidence(finalEvidence)
 	if err != nil {
@@ -150,6 +153,59 @@ func (r *WorldRegistry) releaseExpiredSaveBarrier(ctx context.Context, world tas
 	}
 	return nil
 }
+
+// takeSaveReobserve reports whether this world just came back from a save.
+func (r *WorldRegistry) takeSaveReobserve(world task.WorldKey) bool {
+	slot := r.slot(world, false)
+	if slot == nil {
+		return false
+	}
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+	pending := slot.saveReobserve
+	slot.saveReobserve = false
+	return pending
+}
+
+// reobserveSavedOperations asks the Adapter for the current state of the tasks this world still
+// holds. A save moves the world to a new generation, and the observation reply is the one path
+// where the runtime admits evidence that still carries an operation's original binding; the sweep
+// is bounded by the entity directory and by one observation per entity.
+func (s *Server) reobserveSavedOperations(ctx context.Context, head task.Head, entities []*protocol.EntityRef) {
+	entry, ok := s.worlds.Current(head.Binding.World)
+	if !ok || entry.Head.Binding != head.Binding {
+		return
+	}
+	env, ok := entry.Environment.(*streamEnvironment)
+	if !ok {
+		return
+	}
+	visited := 0
+	for _, entity := range entities {
+		if visited >= maxSaveReobserveEntities {
+			return
+		}
+		owner := session.AgentSessionKey{
+			GameID: head.Binding.World.GameID, WorldID: head.Binding.World.WorldID, EntityID: entity.GetEntityId(),
+		}
+		records, err := s.worlds.service.ListActive(ctx, owner, 1)
+		if err != nil || len(records) == 0 {
+			continue
+		}
+		visited++
+		queryCtx, cancel := context.WithTimeout(context.WithValue(ctx, taskReconcileQueryKey{}, true), saveReobserveTimeout)
+		_, err = env.Observe(queryCtx, owner.WorldID, owner.EntityID)
+		cancel()
+		if err != nil {
+			log.Printf("task save reobserve game=%q world=%q entity=%q: %s", owner.GameID, owner.WorldID, owner.EntityID, logSafeError(err))
+		}
+	}
+}
+
+const (
+	maxSaveReobserveEntities = 32
+	saveReobserveTimeout     = time.Second
+)
 
 // finishCheckpoint applies a CheckpointFinish message and reports only failures, because a
 // released barrier needs no acknowledgement.

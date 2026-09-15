@@ -128,6 +128,10 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 	return model.Response{Decision: d}, nil
 }
 
+// Save fault windows shorten the kernel barrier bound so the same production path is observable
+// without waiting the documented ten seconds. Zero keeps the production default.
+var taskCheckpointBarrierTimeout time.Duration
+
 type taskWireFixture struct {
 	t        *testing.T
 	ctx      context.Context
@@ -155,7 +159,7 @@ func newTaskWireFixtureWithBinding(t *testing.T, create bool, routeMode protocol
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	dbPath := filepath.Join(t.TempDir(), "tasks.sqlite")
-	store, err := task.OpenSQLiteStore(ctx, task.StoreOptions{Path: dbPath})
+	store, err := task.OpenSQLiteStore(ctx, task.StoreOptions{Path: dbPath, CheckpointBarrierTimeout: taskCheckpointBarrierTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}

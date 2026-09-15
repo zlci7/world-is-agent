@@ -49,6 +49,7 @@ type worldSlot struct {
 	ready          bool
 	saving         bool
 	saveRequestID  string
+	saveReobserve  bool
 	failed         bool
 	authorityEpoch uint64
 }

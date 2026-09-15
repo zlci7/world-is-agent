@@ -250,6 +250,9 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 				if err := s.worlds.markReady(connection, head); err != nil {
 					return err
 				}
+				if s.worlds.takeSaveReobserve(head.Binding.World) {
+					go s.reobserveSavedOperations(context.WithoutCancel(stream.Context()), head, payload.WorldBinding.GetEntities())
+				}
 			}
 		case *protocolv1alpha2.AdapterMessage_WorldClock:
 			clockErr := error(task.ErrWorldNotReady)

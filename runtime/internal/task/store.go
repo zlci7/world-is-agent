@@ -18,6 +18,10 @@ type StoreOptions struct {
 	MaxTaskBytes     int
 	MaxSnapshotBytes int
 	MaxTasksPerWorld int
+	// CheckpointBarrierTimeout bounds how long a prepared save may hold the world before the
+	// kernel retires the barrier. Production keeps the documented ten seconds; fault-window
+	// tests shorten it to observe the same code path without waiting.
+	CheckpointBarrierTimeout time.Duration
 }
 
 func (o StoreOptions) Resolve() (StoreOptions, error) {
@@ -25,7 +29,8 @@ func (o StoreOptions) Resolve() (StoreOptions, error) {
 		o.BusyTimeout < 0 ||
 		o.MaxTaskBytes < 0 ||
 		o.MaxSnapshotBytes < 0 ||
-		o.MaxTasksPerWorld < 0 {
+		o.MaxTasksPerWorld < 0 ||
+		o.CheckpointBarrierTimeout < 0 {
 		return StoreOptions{}, ErrInvalidTaskSpec
 	}
 	if o.BusyTimeout == 0 {
@@ -39,6 +44,9 @@ func (o StoreOptions) Resolve() (StoreOptions, error) {
 	}
 	if o.MaxTasksPerWorld == 0 {
 		o.MaxTasksPerWorld = defaultMaxTasksPerWorld
+	}
+	if o.CheckpointBarrierTimeout == 0 {
+		o.CheckpointBarrierTimeout = time.Duration(checkpointBarrierTimeoutMS) * time.Millisecond
 	}
 	return o, nil
 }

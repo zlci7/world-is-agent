@@ -90,7 +90,7 @@ func (s *Service) releaseExpiredCheckpointBarrierTx(ctx context.Context, tx *sql
 	if now <= 0 {
 		return worldHeadRow{}, ErrInvalidTaskSpec
 	}
-	if now < current.BarrierPreparedAtUnixMS || now-current.BarrierPreparedAtUnixMS < checkpointBarrierTimeoutMS {
+	if now < current.BarrierPreparedAtUnixMS || now-current.BarrierPreparedAtUnixMS < s.store.options.CheckpointBarrierTimeout.Milliseconds() {
 		return current, nil
 	}
 	if err := s.store.validateRestartBarrierTx(ctx, tx, current); err != nil {
@@ -372,7 +372,7 @@ func (s *Service) ReadCheckpointBarrier(ctx context.Context, world WorldKey) (Ch
 		}
 		result = CheckpointBarrier{Held: true, SaveRequestID: current.SaveRequestID}
 		if current.BarrierPreparedAtUnixMS > 0 {
-			result.ExpiresAtUnixMS = current.BarrierPreparedAtUnixMS + checkpointBarrierTimeoutMS
+			result.ExpiresAtUnixMS = current.BarrierPreparedAtUnixMS + s.store.options.CheckpointBarrierTimeout.Milliseconds()
 		}
 		return nil
 	})
