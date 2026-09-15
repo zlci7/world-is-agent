@@ -1000,7 +1000,7 @@ public sealed class RuntimeClient : IDisposable
 
     public void UpdateTaskActions()
     {
-        foreach (var ended in this.ordinaryInteractions.Expire(npcId =>
+        foreach (EndedInteraction ended in this.ordinaryInteractions.Expire(npcId =>
         {
             NPC npc = this.RequireNpc(npcId);
             return !Game1.eventUp && ReferenceEquals(npc.currentLocation, Game1.player.currentLocation) &&
@@ -1008,8 +1008,11 @@ public sealed class RuntimeClient : IDisposable
                     Game1.player.TilePoint.X, Game1.player.TilePoint.Y);
         }))
         {
-            this.conversationStore.CloseIfConversation(this.currentWorldId, ended.Npc, ProtocolMapper.PlayerEntityId, ended.Conversation);
-            this.presentDialogueCapability.CloseForNpc(ended.Npc);
+            this.monitor.Log(
+                $"GameAgent ordinary interaction ended: npc={ended.NpcEntityId} conversation={ended.Conversation} reason={ended.Reason}.",
+                LogLevel.Debug);
+            this.conversationStore.CloseIfConversation(this.currentWorldId, ended.NpcEntityId, ProtocolMapper.PlayerEntityId, ended.Conversation);
+            this.presentDialogueCapability.CloseForNpc(ended.NpcEntityId);
         }
         RuntimeWorldSnapshot? world = this.worldContext.Current;
         if (world is null)

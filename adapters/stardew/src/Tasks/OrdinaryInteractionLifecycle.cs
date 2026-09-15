@@ -1,5 +1,9 @@
 namespace GameAgent.Stardew.Tasks;
 
+// Records why an ordinary player interaction stopped owning the NPC, so the
+// adapter can explain a silently dropped dialogue.
+public sealed record EndedInteraction(string Conversation, string NpcEntityId, string Reason);
+
 // Main-thread ownership spans turns; visible dialogue ends through its UI callback.
 public sealed class OrdinaryInteractionLifecycle
 {
@@ -108,19 +112,22 @@ public sealed class OrdinaryInteractionLifecycle
             this.moves.Remove(id);
     }
 
-    public IReadOnlyList<(string Conversation, string Npc)> Expire(Func<string, bool> isPlayerPresent)
+    public IReadOnlyList<EndedInteraction> Expire(Func<string, bool> isPlayerPresent)
     {
-        var ended = new List<(string Conversation, string Npc)>();
+        var ended = new List<EndedInteraction>();
         foreach (var pair in this.entries.ToArray())
         {
             Entry entry = pair.Value;
             if (entry.Suspended) continue;
-            if (!this.driver.Owns(entry.Scope) || !isPlayerPresent(entry.Scope.NpcEntityId) ||
-                (!entry.Visible && this.now() >= entry.Deadline))
-            {
-                ended.Add((pair.Key, entry.Scope.NpcEntityId));
-                this.End(pair.Key);
-            }
+            string reason =
+                !this.driver.Owns(entry.Scope) ? "control_lost"
+                : !isPlayerPresent(entry.Scope.NpcEntityId) ? "player_not_near"
+                : !entry.Visible && this.now() >= entry.Deadline ? "no_dialogue_before_deadline"
+                : string.Empty;
+            if (reason.Length == 0)
+                continue;
+            ended.Add(new EndedInteraction(pair.Key, entry.Scope.NpcEntityId, reason));
+            this.End(pair.Key);
         }
         return ended;
     }

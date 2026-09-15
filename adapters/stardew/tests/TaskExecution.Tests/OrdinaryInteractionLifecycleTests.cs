@@ -98,16 +98,19 @@ public sealed class OrdinaryInteractionLifecycleTests
     }
 
     [Theory]
-    [InlineData("timeout")]
-    [InlineData("player_left")]
-    [InlineData("control_lost")]
-    public void InvalidInteractionEndsOnce(string reason)
+    [InlineData("timeout", "no_dialogue_before_deadline")]
+    [InlineData("player_left", "player_not_near")]
+    [InlineData("control_lost", "control_lost")]
+    public void InvalidInteractionEndsOnceWithItsReason(string reason, string expectedCode)
     {
         var lifecycle = this.Create();
         lifecycle.Begin("conv", "event", Scope);
         if (reason == "timeout") this.now = 300_000;
         if (reason == "control_lost") this.driver.Owned = false;
-        Assert.Single(lifecycle.Expire(_ => reason != "player_left"));
+        EndedInteraction ended = Assert.Single(lifecycle.Expire(_ => reason != "player_left"));
+        Assert.Equal("conv", ended.Conversation);
+        Assert.Equal("npc:Linus", ended.NpcEntityId);
+        Assert.Equal(expectedCode, ended.Reason);
         Assert.Empty(lifecycle.Expire(_ => false));
         Assert.Equal(reason == "control_lost" ? 0 : 1, this.driver.Restores);
         Assert.False(this.leases.HasOwner("npc:Linus"));
