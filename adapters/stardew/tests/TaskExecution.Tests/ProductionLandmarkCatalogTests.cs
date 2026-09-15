@@ -7,10 +7,10 @@ public sealed class ProductionLandmarkCatalogTests
 {
     [Theory]
     [InlineData("beach_meeting_spot", "Beach", 28, 36, 240)]
-    [InlineData("community_center", "Town", 55, 22, 90)]
-    [InlineData("pierre_store", "Town", 46, 59, 150)]
-    [InlineData("trailer", "Town", 79, 67, 180)]
-    [InlineData("mine_entrance", "Mountain", 53, 6, 180)]
+    [InlineData("community_center", "Town", 55, 22, 240)]
+    [InlineData("pierre_store", "Town", 46, 59, 240)]
+    [InlineData("trailer", "Town", 79, 67, 240)]
+    [InlineData("mine_entrance", "Mountain", 53, 6, 240)]
     public void ShipsEachMarkedMeetingPoint(string landmarkId, string location, int x, int y, int departureLeadMinutes)
     {
         LandmarkCatalog catalog = Load();

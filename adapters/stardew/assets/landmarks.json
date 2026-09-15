@@ -29,7 +29,7 @@
       },
       "open_start": 600,
       "open_end": 2200,
-      "departure_lead_minutes": 90,
+      "departure_lead_minutes": 240,
       "supported_routes": [
         {
           "npc_id": "*",
@@ -47,7 +47,7 @@
       },
       "open_start": 600,
       "open_end": 2200,
-      "departure_lead_minutes": 150,
+      "departure_lead_minutes": 240,
       "supported_routes": [
         {
           "npc_id": "*",
@@ -65,7 +65,7 @@
       },
       "open_start": 600,
       "open_end": 2200,
-      "departure_lead_minutes": 180,
+      "departure_lead_minutes": 240,
       "supported_routes": [
         {
           "npc_id": "*",
@@ -83,7 +83,7 @@
       },
       "open_start": 600,
       "open_end": 2200,
-      "departure_lead_minutes": 180,
+      "departure_lead_minutes": 240,
       "supported_routes": [
         {
           "npc_id": "*",
