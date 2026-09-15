@@ -21,6 +21,7 @@ type worldTestStream struct {
 	captureStream
 	incoming     chan *protocol.AdapterMessage
 	ctx          context.Context
+	cancel       context.CancelFunc
 	server       *Server
 	readyGate    <-chan struct{}
 	readySending chan struct{}
@@ -39,6 +40,7 @@ func (s *worldTestStream) Send(message *protocol.RuntimeMessage) error {
 }
 
 func (s *worldTestStream) Context() context.Context { return s.ctx }
+func (s *worldTestStream) shutdown()                { s.cancel() }
 func (s *worldTestStream) Recv() (*protocol.AdapterMessage, error) {
 	select {
 	case m, ok := <-s.incoming:
@@ -54,7 +56,7 @@ func newWorldTestStream(t *testing.T, server *Server, extensions []string) (*wor
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	stream := &worldTestStream{captureStream: captureStream{sent: make(chan *protocol.RuntimeMessage, 32)}, incoming: make(chan *protocol.AdapterMessage, 32), ctx: ctx, server: server}
+	stream := &worldTestStream{captureStream: captureStream{sent: make(chan *protocol.RuntimeMessage, 32)}, incoming: make(chan *protocol.AdapterMessage, 32), ctx: ctx, cancel: cancel, server: server}
 	done := make(chan error, 1)
 	go func() { done <- server.Connect(stream) }()
 	stream.incoming <- &protocol.AdapterMessage{Payload: &protocol.AdapterMessage_Hello{Hello: &protocol.AdapterHello{GameId: "sim", SessionId: "connection", SupportedExtensions: extensions}}}

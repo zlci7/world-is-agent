@@ -346,6 +346,48 @@ func TestCheckpointPreparedBarrierExpiresForLiveRuntime(t *testing.T) {
 	}
 }
 
+func TestReadCheckpointBarrierReportsAndRetiresTheBound(t *testing.T) {
+	fixture := newCreateFixture(t, StoreOptions{})
+	preparedAt := fixture.svc.nowUnixMS()
+	prepared, err := fixture.svc.PrepareCheckpoint(
+		context.Background(), fixture.head.Binding, fixture.clock, "save-barrier-read", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := fixture.svc.ReadCheckpointBarrier(context.Background(), fixture.world)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !held.Held || held.SaveRequestID != prepared.SaveRequestID || held.ExpiresAtUnixMS != preparedAt+checkpointBarrierTimeoutMS {
+		t.Fatalf("barrier while prepared = %+v", held)
+	}
+
+	fixture.svc.nowUnixMS = func() int64 { return preparedAt + checkpointBarrierTimeoutMS }
+	released, err := fixture.svc.ReadCheckpointBarrier(context.Background(), fixture.world)
+	if err != nil {
+		t.Fatalf("barrier read at expiry error = %v", err)
+	}
+	if released.Held {
+		t.Fatalf("barrier survived its bound = %+v", released)
+	}
+	storedHead, err := fixture.store.loadWorldHead(context.Background(), fixture.world)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedHead.SaveRequestID != "" || storedHead.BarrierStatus != "" || storedHead.BarrierPreparedAtUnixMS != 0 {
+		t.Fatalf("expired barrier = %+v", storedHead)
+	}
+	fixture.svc.nowUnixMS = func() int64 { return preparedAt + checkpointBarrierTimeoutMS + 1 }
+	afterFinish, err := fixture.svc.ReadCheckpointBarrier(context.Background(), fixture.world)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterFinish.Held {
+		t.Fatalf("retired barrier reported as held = %+v", afterFinish)
+	}
+}
+
 func TestCheckpointPreparedBarrierExpiryFailsClosedOnCorruptSnapshot(t *testing.T) {
 	fixture := newCreateFixture(t, StoreOptions{})
 	preparedAt := fixture.svc.nowUnixMS()

@@ -48,6 +48,7 @@ type worldSlot struct {
 	entities       map[string]*protocol.EntityRef
 	ready          bool
 	saving         bool
+	saveRequestID  string
 	failed         bool
 	authorityEpoch uint64
 }
@@ -135,11 +136,11 @@ func (s *worldSlot) check(env *streamEnvironment, binding task.Binding) error {
 	if s.owner == nil || s.owner.env != env || s.head.Binding != binding {
 		return task.ErrGenerationStale
 	}
-	if !s.ready {
-		return task.ErrWorldNotReady
-	}
 	if s.saving {
 		return task.ErrSaveInProgress
+	}
+	if !s.ready {
+		return task.ErrWorldNotReady
 	}
 	return nil
 }
@@ -269,8 +270,16 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 		return task.Head{}, task.ErrGenerationStale
 	}
 	if slot.saving {
-		slot.mu.Unlock()
-		return task.Head{}, task.ErrSaveInProgress
+		// A save ended without a Finish (lost reply or a stream that died mid-save). The kernel
+		// barrier, not the stream, owns the world until it is finished or its bound expires, so
+		// the in-memory barrier is retired here while admission stays closed until this bind wins.
+		if err := r.releaseExpiredSaveBarrier(ctx, value.Binding.World); err != nil {
+			slot.mu.Unlock()
+			return task.Head{}, err
+		}
+		slot.saving = false
+		slot.saveRequestID = ""
+		slot.failed = false
 	}
 	oldHead, oldOwner := slot.head, slot.owner
 	slot.authorityEpoch++
@@ -323,6 +332,7 @@ func (r *WorldRegistry) bind(ctx context.Context, conn *worldConnection, request
 	conn.env.taskAuthority = &worldTaskAuthority{registry: r, env: conn.env, world: head.Binding.World}
 	slot.entities = entities
 	slot.saving = false
+	slot.saveRequestID = ""
 	world := value.Binding.World
 	conn.world = &world
 	slot.mu.Unlock()
@@ -445,11 +455,19 @@ func (r *WorldRegistry) disconnect(ctx context.Context, conn *worldConnection, r
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
 	if err != nil {
+		if errors.Is(err, task.ErrSaveInProgress) {
+			// The save barrier outlives the stream. Each completion path clears the barrier on
+			// its own, so this world stays parked instead of latched as a permanent failure.
+			log.Printf("task world save barrier outlived stream game=%q world=%q save_request_id=%q", head.Binding.World.GameID, head.Binding.World.WorldID, slot.saveRequestID)
+			return err
+		}
 		slot.failed = true
 		log.Printf("task world deactivation game=%q world=%q: %s", head.Binding.World.GameID, head.Binding.World.WorldID, logSafeError(err))
 		return err
 	}
 	slot.owner = nil
+	slot.saving = false
+	slot.saveRequestID = ""
 	slot.head.Status = "paused"
 	slot.head.Reason = reason
 	return nil

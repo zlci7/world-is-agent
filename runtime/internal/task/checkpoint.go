@@ -338,6 +338,50 @@ func (s *Service) FinishCheckpoint(ctx context.Context, binding Binding, saveReq
 	})
 }
 
+// CheckpointBarrier reports the save barrier a world currently holds.
+type CheckpointBarrier struct {
+	Held            bool   `json:"held"`
+	SaveRequestID   string `json:"save_request_id,omitempty"`
+	ExpiresAtUnixMS int64  `json:"expires_at_unix_ms,omitempty"`
+}
+
+// ReadCheckpointBarrier retires a prepared barrier that outlived its bound and reports the
+// remaining barrier for the world. A caller that observes no held barrier may resume binding;
+// the held request identity stays authoritative so a stale caller cannot retire a newer save.
+func (s *Service) ReadCheckpointBarrier(ctx context.Context, world WorldKey) (CheckpointBarrier, error) {
+	if err := validateService(s, ctx); err != nil {
+		return CheckpointBarrier{}, err
+	}
+	if err := world.Validate(); err != nil {
+		return CheckpointBarrier{}, err
+	}
+	var result CheckpointBarrier
+	err := s.store.withImmediateTransaction(ctx, func(tx *sql.Tx) error {
+		current, found, err := s.loadWorldHeadForMutationTx(ctx, tx, world)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrWorldNotReady
+		}
+		if current.RuntimeInstanceID != s.claimantID {
+			return ErrTaskChanged
+		}
+		if current.BarrierStatus == "" && current.SaveRequestID == "" {
+			return nil
+		}
+		result = CheckpointBarrier{Held: true, SaveRequestID: current.SaveRequestID}
+		if current.BarrierPreparedAtUnixMS > 0 {
+			result.ExpiresAtUnixMS = current.BarrierPreparedAtUnixMS + checkpointBarrierTimeoutMS
+		}
+		return nil
+	})
+	if err != nil {
+		return CheckpointBarrier{}, err
+	}
+	return result, nil
+}
+
 func prepareCheckpointRequest(binding Binding, clock Clock, saveRequestID string, evidence []Evidence) (checkpointPrepareRequest, error) {
 	if err := binding.Validate(); err != nil {
 		return checkpointPrepareRequest{}, err

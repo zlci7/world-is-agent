@@ -267,9 +267,32 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 					return err
 				}
 			}
-		case *protocolv1alpha2.AdapterMessage_CheckpointPrepare, *protocolv1alpha2.AdapterMessage_CheckpointFinish:
-			if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+		case *protocolv1alpha2.AdapterMessage_CheckpointPrepare:
+			if !tasksNegotiated {
+				if err := connection.transport.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+					return err
+				}
+				continue
+			}
+			reply := &protocolv1alpha2.RuntimeMessage{
+				MessageId:     newMessageID("checkpoint_prepared"),
+				CorrelationId: msg.MessageId,
+				Payload:       &protocolv1alpha2.RuntimeMessage_CheckpointPrepared{CheckpointPrepared: s.checkpointPrepareReply(stream.Context(), env, payload.CheckpointPrepare)},
+			}
+			if err := connection.transport.send(reply); err != nil {
 				return err
+			}
+		case *protocolv1alpha2.AdapterMessage_CheckpointFinish:
+			if !tasksNegotiated {
+				if err := env.send(taskProtocolError(msg.MessageId, task.ErrWorldNotReady)); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := s.finishCheckpoint(stream.Context(), connection, payload.CheckpointFinish); err != nil {
+				if sendErr := env.send(taskProtocolError(msg.MessageId, err)); sendErr != nil {
+					return sendErr
+				}
 			}
 		case *protocolv1alpha2.AdapterMessage_Event:
 			if payload.Event == nil {
