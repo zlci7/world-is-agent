@@ -49,6 +49,8 @@ The script's `-GamePath` argument controls the install target and the project fi
 
 ## Manual Smoke Test
 
+Task storage and scheduling start with Runtime by default. The Stardew configuration provides the 190-second async action and 270-second turn budgets. After loading a save, Task tools become available when world binding completes.
+
 1. Start Runtime from the repository root:
 
    ```powershell

@@ -22,7 +22,7 @@ type TaskConfig struct {
 }
 
 func DefaultTaskConfig() TaskConfig {
-	return TaskConfig{DBPath: "runtime/.local/tasks/tasks.sqlite", ScanInterval: time.Second, DispatchBatch: 32, RetryMin: time.Second, RetryMax: 30 * time.Second}
+	return TaskConfig{Enabled: true, DBPath: "runtime/.local/tasks/tasks.sqlite", ScanInterval: time.Second, DispatchBatch: 32, RetryMin: time.Second, RetryMax: 30 * time.Second}
 }
 
 func (c TaskConfig) WithDefaults() TaskConfig {
@@ -60,7 +60,7 @@ func (c *TaskConfig) UnmarshalJSON(data []byte) error {
 			Snapshot int   `json:"max_snapshot_bytes"`
 			Count    int   `json:"max_tasks_per_world"`
 		} `json:"store_options"`
-	}{DBPath: defaults.DBPath, Scan: 1000, Batch: 32, Min: 1000, Max: 30000}
+	}{Enabled: defaults.Enabled, DBPath: defaults.DBPath, Scan: 1000, Batch: 32, Min: 1000, Max: 30000}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}

@@ -1,6 +1,9 @@
 {
+  "task": {
+    "enabled": true
+  },
   "turn_timeout_ms": 270000,
-  "llm_timeout_ms": 8000,
+  "llm_timeout_ms": 60000,
   "observe_timeout_ms": 3000,
   "action_timeout_ms": 3000,
   "action_start_timeout_ms": 3000,

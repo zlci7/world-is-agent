@@ -41,7 +41,7 @@ func TestTaskConfigDefaultsAndOverrides(t *testing.T) {
 			t.Fatal(err)
 		}
 		task := config.Task
-		if task.Enabled || task.DBPath != "runtime/.local/tasks/tasks.sqlite" || task.ScanInterval != time.Second || task.DispatchBatch != 32 || task.RetryMin != time.Second || task.RetryMax != 30*time.Second {
+		if !task.Enabled || task.DBPath != "runtime/.local/tasks/tasks.sqlite" || task.ScanInterval != time.Second || task.DispatchBatch != 32 || task.RetryMin != time.Second || task.RetryMax != 30*time.Second {
 			t.Fatalf("defaults=%+v", task)
 		}
 		options := task.StoreOptions
@@ -65,5 +65,19 @@ func TestTaskConfigDefaultsAndOverrides(t *testing.T) {
 	task := config.Task
 	if !task.Enabled || task.DBPath != "owned.sqlite" || task.ScanInterval != 23*time.Millisecond || task.DispatchBatch != 4 || task.RetryMin != 5*time.Millisecond || task.RetryMax != 20*time.Millisecond || task.StoreOptions.BusyTimeout != 6*time.Millisecond || task.StoreOptions.MaxTaskBytes != 300 || task.StoreOptions.MaxSnapshotBytes != 900 || task.StoreOptions.MaxTasksPerWorld != 8 {
 		t.Fatalf("overrides=%+v", task)
+	}
+}
+
+func TestTaskConfigExplicitDisable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := os.WriteFile(path, []byte(`{"task":{"enabled":false}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := agent.LoadConfigFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Task.Enabled {
+		t.Fatal("explicit task disable was ignored")
 	}
 }

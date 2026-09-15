@@ -1,6 +1,6 @@
 {
   "task": {
-    "enabled": false,
+    "enabled": true,
     "db_path": "runtime/.local/tasks/tasks.sqlite",
     "scan_interval_ms": 1000,
     "dispatch_batch": 32,
