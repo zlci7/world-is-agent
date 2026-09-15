@@ -291,15 +291,15 @@ Task 投影字段：task_id、目标、权威 state/revision、next_wakeup_at/de
 
 提交边界：Adapter 保存桥接与 Runtime 保存屏障分别形成独立可审查提交。屏障一旦置位，解除路径依赖 9.4-B 的恢复入口，因此 A 的提交必须同时包含屏障可解除的最小路径（复用 10 秒兜底解除内核屏障并完成绑定恢复），不得留下保存后无法重新绑定的中间态。
 
-- [ ] 写 CheckpointMarker 的 confirmed/unconfirmed/非法字段 round-trip 测试。
-- [ ] 写网络回复不经过主线程 dispatcher 也能完成 Saving 等待的测试；设置有限测试截止，死锁必须失败。
-- [ ] 实现 request_id pending 表、有限等待、迟到拒绝、OnSaved/OnSaveAborted/断线幂等收尾。
-- [ ] 明确 OnSaveAborted 的真实触发信号与保存超时上界（1–8 秒，严格小于 Runtime 10 秒兜底），并覆盖越界配置被拒绝。
-- [ ] 覆盖内存保存屏障生命周期：Prepare 置位后，Saved 路径按 Finish → 清屏障 → 等值 Clock → 绑定 ready 执行；屏障未清除时绑定返回 ErrSaveInProgress。
-- [ ] 覆盖保存窗口内断线或重绑：失败标记可恢复，屏障解除后重新绑定成功，不出现进程内永久 ErrWorldNotReady。
-- [ ] 接线 ModEntry.Saving/Saved，与 9.1 PrepareCheckpoint/FinishCheckpoint 对齐。
-- [ ] TestCheckpointPrepareClock 验证保存采样先 UpdateClock 后 Prepare、同请求重试不重复同步旧代次；失败保持 task-not-ready。
-- [ ] TestCheckpointFinishGeneration 验证 Prepare 使用 G、Prepared 返回 G+1、Finish 使用 G+1；旧 G 被拒绝，发送完成或单独 Prepared 均不能开启执行准入。
+- [x] 写 CheckpointMarker 的 confirmed/unconfirmed/非法字段 round-trip 测试。
+- [x] 写网络回复不经过主线程 dispatcher 也能完成 Saving 等待的测试；设置有限测试截止，死锁必须失败。
+- [x] 实现 request_id pending 表、有限等待、迟到拒绝、OnSaved/OnSaveAborted/断线幂等收尾。
+- [x] 明确 OnSaveAborted 的真实触发信号与保存超时上界（1–8 秒，严格小于 Runtime 10 秒兜底），并覆盖越界配置被拒绝。
+- [x] 覆盖内存保存屏障生命周期：Prepare 置位后，Saved 路径按 Finish → 清屏障 → 等值 Clock → 绑定 ready 执行；屏障未清除时绑定返回 ErrSaveInProgress。
+- [x] 覆盖保存窗口内断线或重绑：失败标记可恢复，屏障解除后重新绑定成功，不出现进程内永久 ErrWorldNotReady。
+- [x] 接线 ModEntry.Saving/Saved，与 9.1 PrepareCheckpoint/FinishCheckpoint 对齐。
+- [x] TestCheckpointPrepareClock 验证保存采样先 UpdateClock 后 Prepare、同请求重试不重复同步旧代次；失败保持 task-not-ready。
+- [x] TestCheckpointFinishGeneration 验证 Prepare 使用 G、Prepared 返回 G+1、Finish 使用 G+1；旧 G 被拒绝，发送完成或单独 Prepared 均不能开启执行准入。
 - [ ] 实机核对本次 SaveData 引用确实随游戏保存落盘，不能只看内存对象。
 
 ```powershell
@@ -309,12 +309,12 @@ go test ./runtime/internal/gateway -run 'TestCheckpointPrepare|TestCheckpointFin
 
 ### 9.4-B：恢复和故障窗口
 
-- [ ] 为第 4 节每一行给出断言，按故障族合并为四组集成测试：Prepared 丢失或超时、Finish 丢失或结果不确定、SQLite 与游戏保存失败、断线后重连续传；每组合并覆盖多行，断言不删减。使用实际 SQLite 和 in-process gRPC transport。
-- [ ] 同 run 重连时仅主动重新观察已登记 operation；旧 stream 推送仍拒绝。
-- [ ] 保存窗口内等待中的 Task 保持 waiting，保存后仍可 met 或 expired；证据经观察回执携带原 binding 并由 Runtime 写入 RevalidatedIn；健康等待不产生 control_lost 终态，也不新建第二次 travel。
-- [ ] TestCheckpointBindingRecovery 分别丢弃 Prepared、Finish 和 ready 回复，验证执行准入不提前开启；恢复后使用当前代次且无重复动作，迟到回复不污染下一次保存。Prepared 丢失后，同 run working head 恢复与新 run unconfirmed 暂停分别断言。
-- [ ] 新 run 使用精确引用恢复，覆盖“保存后完成的 Task 回到 waiting”。
-- [ ] 验证快照中的旧交互来源/租约不复活，未确认 world 操作先 Observe，且跨代证据只经观察回执被接纳。
+- [x] 为第 4 节每一行给出断言，按故障族合并为四组集成测试：Prepared 丢失或超时、Finish 丢失或结果不确定、SQLite 与游戏保存失败、断线后重连续传；每组合并覆盖多行，断言不删减。使用实际 SQLite 和 in-process gRPC transport。
+- [x] 同 run 重连时仅主动重新观察已登记 operation；旧 stream 推送仍拒绝。
+- [x] 保存窗口内等待中的 Task 保持 waiting，保存后仍可 met 或 expired；证据经观察回执携带原 binding 并由 Runtime 写入 RevalidatedIn；健康等待不产生 control_lost 终态，也不新建第二次 travel。
+- [x] TestCheckpointBindingRecovery 分别丢弃 Prepared、Finish 和 ready 回复，验证执行准入不提前开启；恢复后使用当前代次且无重复动作，迟到回复不污染下一次保存。Prepared 丢失后，同 run working head 恢复与新 run unconfirmed 暂停分别断言。
+- [x] 新 run 使用精确引用恢复，覆盖“保存后完成的 Task 回到 waiting”。
+- [x] 验证快照中的旧交互来源/租约不复活，未确认 world 操作先 Observe，且跨代证据只经观察回执被接纳。
 - [ ] 在游戏执行跨日保存、退出加载和回退旧保存；未知恢复状态明确暂停。
 
 ```text
@@ -340,11 +340,11 @@ go test ./runtime/internal/task ./runtime/internal/gateway -run 'TestCheckpoint|
 
 提交边界：History 支持与结果发布器分别形成独立可审查提交。
 
-- [ ] 先写 CanonicalHistoryBatch 的新类型接受/旧类型约束不放松测试。
-- [ ] 实现 TaskResult DTO、键、存取、HistoryTextFields；保持原字段序列化顺序和 omitempty 兼容。
-- [ ] 接入 ResultHistorySink，验证没有模型 Turn 时仍可写事实，重复结果没有重复来源。
-- [ ] History 写入失败不回滚 Task，不阻塞 cleanup；检查日志中的独立状态。
-- [ ] 回归 Summary 混合来源、时间过滤、中文检索、原文读取与既有迁移 fixture。
+- [x] 先写 CanonicalHistoryBatch 的新类型接受/旧类型约束不放松测试。
+- [x] 实现 TaskResult DTO、键、存取、HistoryTextFields；保持原字段序列化顺序和 omitempty 兼容。
+- [x] 接入 ResultHistorySink，验证没有模型 Turn 时仍可写事实，重复结果没有重复来源。
+- [x] History 写入失败不回滚 Task，不阻塞 cleanup；检查日志中的独立状态。
+- [x] 回归 Summary 混合来源、时间过滤、中文检索、原文读取与既有迁移 fixture。
 
 ```text
 TestTaskResultHistory
@@ -363,14 +363,14 @@ go test ./runtime/internal/memory -count=1
 
 ### 9.4-D：最终模型请求与交互关联
 
-- [ ] 实现第 6.1 节 ListRecentResults 及 TestListRecentResults：旧 task_id 排在前仍取到最新三条、时间并列、空结果、limit 边界、owner/world 隔离、返回值修改无副作用、损坏记录拒绝；原 List / ListActive 合同保持不变。
-- [ ] ListRecentResults 在只读一致快照内解析 record_json 后排序，不新增表、索引或缓存，不先 List 再过滤；断言扫描上界受 store_options.max_tasks_per_world 约束。
-- [ ] TestListRecentResultsAfterRestore 验证保存后产生的结果在读旧保存后不再出现在当前结果查询；History 发布失败时，仍能从已提交 Task Result 取得事实。模型请求构建期间绑定变化时，不混入回档前结果。
-- [ ] 在 9.2 最小 Task Context 上扩展结果、恢复信息及分项预算报告，覆盖普通对话引用最近结果；保留当前任务取消和观察版本校验测试。
-- [ ] 测试 met 成功后仍可使用到达来源 approach/对话，Task terminal 过滤不吞掉该事件。
-- [ ] 检查最终 model.Request，而不是只判断模型回复听起来合理。
-- [ ] 测试玩家爽约、NPC 路线失败、保存回退三种不同上下文，不让 Memory 覆盖当前任务状态。
-- [ ] Trace 只新增 task_id、result_id、checkpoint_id 与状态码字段并给出断言；没有断言支撑的字段本阶段不引入。
+- [x] 实现第 6.1 节 ListRecentResults 及 TestListRecentResults：旧 task_id 排在前仍取到最新三条、时间并列、空结果、limit 边界、owner/world 隔离、返回值修改无副作用、损坏记录拒绝；原 List / ListActive 合同保持不变。
+- [x] ListRecentResults 在只读一致快照内解析 record_json 后排序，不新增表、索引或缓存，不先 List 再过滤；断言扫描上界受 store_options.max_tasks_per_world 约束。
+- [x] TestListRecentResultsAfterRestore 验证保存后产生的结果在读旧保存后不再出现在当前结果查询；History 发布失败时，仍能从已提交 Task Result 取得事实。模型请求构建期间绑定变化时，不混入回档前结果。
+- [x] 在 9.2 最小 Task Context 上扩展结果、恢复信息及分项预算报告，覆盖普通对话引用最近结果；保留当前任务取消和观察版本校验测试。
+- [x] 测试 met 成功后仍可使用到达来源 approach/对话，Task terminal 过滤不吞掉该事件。
+- [x] 检查最终 model.Request，而不是只判断模型回复听起来合理。
+- [x] 测试玩家爽约、NPC 路线失败、保存回退三种不同上下文，不让 Memory 覆盖当前任务状态。
+- [x] Trace 只新增 task_id、result_id、checkpoint_id 与状态码字段并给出断言；没有断言支撑的字段本阶段不引入。
 
 ```powershell
 go test ./runtime/internal/task -run '^TestListRecentResults' -count=1
@@ -384,7 +384,7 @@ dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.cspro
 - [ ] 跨日保存后任务仍按约定行动；Runtime 重启与读档恢复路径不同且正确。
 - [ ] 保存窗口内等待中的任务保持 waiting，保存后仍可 met 或 expired，不被收口为失败。
 - [ ] 保存屏障解除后断线重连可以完成绑定并恢复调度；屏障未解除时绑定明确失败并可诊断。
-- [ ] 保存、引用、加载和旧回调的故障窗口全部有自动化断言。
-- [ ] 后台 task_result 无需 LLM 即可入 History；后续请求有真实结果来源。
+- [x] 保存、引用、加载和旧回调的故障窗口全部有自动化断言。
+- [x] 后台 task_result 无需 LLM 即可入 History；后续请求有真实结果来源。
 - [ ] Task 终态不提前结束真实 UI，UI 真正结束后恢复原生日程。
-- [ ] 旧 Memory / Context 测试通过；实机限制如实记录，各模块完成本地提交后执行阶段整体自动化回归与内部 review，问题修复并复验后交付 9.4 阶段结果，由用户集中 CR、review 和实机验收；用户确认通过后进入 Phase9.5 最终验收和整分支/系统审查。
+- [x] 旧 Memory / Context 测试通过；实机限制如实记录，各模块完成本地提交后执行阶段整体自动化回归与内部 review，问题修复并复验后交付 9.4 阶段结果，由用户集中 CR、review 和实机验收；用户确认通过后进入 Phase9.5 最终验收和整分支/系统审查。

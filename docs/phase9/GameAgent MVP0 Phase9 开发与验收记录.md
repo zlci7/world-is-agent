@@ -236,3 +236,59 @@ Phase9.3 通过表示 Stardew 侧可完成"约定 → 出发 → 驻留等待 �
 ### 9.5 审查说明
 
 方案要求由两个只读子 agent 完成阶段内部 review。本次执行中子 agent 未按预期接收任务并返回占位结果，内部 review 由执行者逐行自查完成，覆盖状态机、并发、失败路径、测试缺口与兼容性，发现的问题以独立 `fix:` 提交修复。该项如实标注为自查替代，不代表已获得独立上下文审查。
+
+---
+
+## 10. Phase9.4 检查点与结果记忆验收
+
+### 10.1 提交范围
+
+| 模块 | 提交 | 状态 |
+|---|---|---|
+| A 保存屏障（Runtime） | `fdbeec9` | 通过 |
+| A 保存桥接（Adapter） | `b1c8f97` | 通过 |
+| B 存档恢复与故障窗口 | `8b31ee8` | 通过 |
+| B 保存后等待证据经观察回执交付 | `e36c971` | 通过 |
+| C History 结果来源 | `2734ee7` | 通过 |
+| C 终态结果发布器 | `c9c873f` | 通过 |
+| D 最近结果与 Task Context | `c1e0b65` | 通过 |
+
+### 10.2 验证结果
+
+| 检查 | 结果 |
+|---|---|
+| `go test ./... -count=1` | passed |
+| `TaskExecution.Tests` | 159/159 passed |
+| `ProtocolMapper.Tests` | 104/104 passed |
+| `Phase9Feasibility.Tests` | 108/108 passed |
+| `PlayerInteractProbe.Tests` | 15/15 passed |
+| `RuntimeClient.Tests` | 14/14 passed |
+| `ActionCancellationRegistry.Tests` | 5/5 passed |
+| `protocol/tests/check-protocol-static.ps1` | passed |
+| `protocol/tests/check-go-generation.ps1` | passed |
+| `scripts/check-architecture.ps1` | passed |
+| `adapters/stardew/tests/check-context-static.ps1` | passed |
+| Stardew Adapter Debug 构建 | 0 警告 0 错误 |
+| `git diff --check` | passed |
+
+保存、加载与故障窗口的证据来自真实 SQLite、真实 gRPC 与进程内 fake Adapter/model；结果记忆与 Task Context 的证据来自真实 SQLite 与脚本化 model，断言对象是最终 `model.Request`。真实模型行为、真实游戏保存与实机行为不属自动化范围。
+
+### 10.3 阶段边界
+
+Phase9.4 通过表示：游戏保存会把任务工作集写成精确引用并在屏障解除后重新绑定；同一 run 重启恢复最新工作集，读档按精确引用恢复，未确认引用保持 paused；任务终态无需模型 Turn 即可进入 History，并作为事实投影进入后续请求。
+
+以下不在本阶段：真实模型行为评测与最终系统验收（属 Phase9.5）；SaveLoaded 新 run 的读档恢复与回退到更早存档的实机核验；自动重连退避；回档外结果的 History 补发。
+
+### 10.4 待实机验收
+
+代码全部完成后由用户在一次实机过程内执行，改动 Adapter 前需关闭游戏：
+
+1. 保存后继续：完成一次游戏保存，任务仍按约定出发、等待并完成 met 或 expired。
+2. 断线重连：Runtime 与 Adapter 断开后重连同一 run，绑定恢复 ready 并继续调度。
+3. Runtime 重启恢复：重启 Runtime 后同一 run 绑定恢复 ready，任务与最近结果仍在。
+
+验收重点：9.3 记录的"新 run 无检查点即 paused、每次开游戏必须清任务库与记忆"应消失——保存过一次的存档重新加载应凭精确引用恢复为 ready。
+
+### 10.5 审查说明
+
+本阶段按方案在每个模块完成后本地提交并暂停，代码收口后再次尝试启动只读子 agent 独立复核；子 agent 仍未按预期接收任务正文（只做了环境自检便等待指令），因此内部 review 由执行者逐行自查完成，覆盖批次键与指纹兼容、发布路径的幂等与失败隔离、只读快照与排序、预算裁剪顺序与不可裁剪集合。该项如实标注为自查替代，不代表已获得独立上下文审查。
