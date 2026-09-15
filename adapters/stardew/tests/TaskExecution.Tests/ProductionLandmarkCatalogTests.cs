@@ -11,6 +11,7 @@ public sealed class ProductionLandmarkCatalogTests
     [InlineData("pierre_store", "Town", 46, 59, 240)]
     [InlineData("trailer", "Town", 79, 67, 240)]
     [InlineData("mine_entrance", "Mountain", 53, 6, 240)]
+    [InlineData("carpenter_shop", "Mountain", 10, 26, 90)]
     public void ShipsEachMarkedMeetingPoint(string landmarkId, string location, int x, int y, int departureLeadMinutes)
     {
         LandmarkCatalog catalog = Load();
@@ -43,6 +44,7 @@ public sealed class ProductionLandmarkCatalogTests
         Assert.True(catalog.SupportsRoute("npc:Shane", "Forest", "pierre_store"));
         Assert.True(catalog.SupportsRoute("npc:Pam", "Mountain", "trailer"));
         Assert.True(catalog.SupportsRoute("npc:Linus", "Beach", "mine_entrance"));
+        Assert.True(catalog.SupportsRoute("npc:Robin", "Town", "carpenter_shop"));
     }
 
     [Fact]
