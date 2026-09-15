@@ -17,6 +17,24 @@
           "origin_location": "Mountain"
         }
       ]
+    },
+    {
+      "landmark_id": "community_center",
+      "display_name": "community_center",
+      "location": "Town",
+      "tile": {
+        "x": 55,
+        "y": 22
+      },
+      "open_start": 600,
+      "open_end": 2200,
+      "departure_lead_minutes": 90,
+      "supported_routes": [
+        {
+          "npc_id": "*",
+          "origin_location": "*"
+        }
+      ]
     }
   ]
 }
