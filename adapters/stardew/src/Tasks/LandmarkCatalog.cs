@@ -32,6 +32,8 @@ public sealed class LandmarkCatalogException : Exception
 
 public sealed class LandmarkCatalog
 {
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+
     private readonly IReadOnlyDictionary<string, Landmark> landmarks;
 
     private LandmarkCatalog(IReadOnlyDictionary<string, Landmark> landmarks)
@@ -40,6 +42,49 @@ public sealed class LandmarkCatalog
     }
 
     public IEnumerable<Landmark> Landmarks => this.landmarks.Values;
+
+    // Returns a new catalog with the entry added or replaced, revalidated through
+    // the same path used for the on-disk file so a written catalog always parses.
+    public LandmarkCatalog WithLandmark(Landmark landmark)
+    {
+        ArgumentNullException.ThrowIfNull(landmark);
+        List<Landmark> updated = this.landmarks.Values
+            .Where(existing => !string.Equals(existing.LandmarkId, landmark.LandmarkId, StringComparison.Ordinal))
+            .Append(landmark)
+            .ToList();
+        return Parse(Serialize(updated));
+    }
+
+    public string ToJson() => Serialize(this.landmarks.Values);
+
+    public static string Serialize(IEnumerable<Landmark> landmarks)
+    {
+        ArgumentNullException.ThrowIfNull(landmarks);
+        CatalogDocument document = new()
+        {
+            Landmarks = landmarks
+                .OrderBy(landmark => landmark.LandmarkId, StringComparer.Ordinal)
+                .Select(ToDocument)
+                .ToList(),
+        };
+        return JsonSerializer.Serialize(document, WriteOptions);
+    }
+
+    private static LandmarkDocument ToDocument(Landmark landmark) => new()
+    {
+        LandmarkId = landmark.LandmarkId,
+        DisplayName = landmark.DisplayName,
+        Location = landmark.Position.Location,
+        Tile = new TileDocument { X = landmark.Position.X, Y = landmark.Position.Y },
+        OpenStart = landmark.OpenStart,
+        OpenEnd = landmark.OpenEnd,
+        DepartureLeadMinutes = landmark.DepartureLeadMinutes,
+        SupportedRoutes = landmark.SupportedRoutes
+            .OrderBy(route => route.NpcId, StringComparer.Ordinal)
+            .ThenBy(route => route.OriginLocation, StringComparer.Ordinal)
+            .Select(route => new RouteDocument { NpcId = route.NpcId, OriginLocation = route.OriginLocation })
+            .ToList(),
+    };
 
     public static LandmarkCatalog Parse(string json)
     {

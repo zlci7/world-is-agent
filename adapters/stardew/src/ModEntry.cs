@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using GameAgent.Stardew.Authoring;
 using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Dialogue;
 using GameAgent.Stardew.Diagnostics;
@@ -54,9 +55,9 @@ public sealed class ModEntry : Mod
         this.facePlayerCapability = new FacePlayerCapability();
         this.moveToCapability = new MoveToCapability();
         this.approachPlayerCapability = new ApproachPlayerCapability(this.moveToCapability);
-        string landmarkJson = File.ReadAllText(Path.Combine(helper.DirectoryPath, "assets", "landmarks.json"));
-        LandmarkCatalog landmarkCatalog = LandmarkCatalog.Parse(landmarkJson);
-        this.resolveMeetingCapability = new ResolveMeetingCapability(landmarkCatalog);
+        string landmarkAssetPath = Path.Combine(helper.DirectoryPath, "assets", "landmarks.json");
+        LandmarkCatalogStore landmarkCatalogStore = new(LandmarkCatalog.Parse(File.ReadAllText(landmarkAssetPath)));
+        this.resolveMeetingCapability = new ResolveMeetingCapability(landmarkCatalogStore);
         NpcControlLease npcControlLease = new();
         this.taskExecutionDriver = new TaskExecutionDriver(
             new TaskSourceContextStore(),
@@ -76,7 +77,7 @@ public sealed class ModEntry : Mod
             this.moveToCapability,
             this.approachPlayerCapability,
             this.resolveMeetingCapability,
-            landmarkCatalog,
+            landmarkCatalogStore,
             this.taskExecutionDriver,
             npcControlLease,
             meetingWaitMonitor,
@@ -106,6 +107,13 @@ public sealed class ModEntry : Mod
             "gameagent_runtime_reconnect",
             "Reconnect the GameAgent Runtime stream and repeat capability/world binding.",
             (_, _) => this.ReconnectRuntimeClient()
+        );
+        LandmarkMarker.RegisterCommand(
+            helper,
+            this.config,
+            landmarkAssetPath,
+            landmarkCatalogStore,
+            this.Monitor
         );
 
         this.Monitor.Log("GameAgent Stardew Adapter Probe loaded.", LogLevel.Info);

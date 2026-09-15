@@ -5,11 +5,11 @@ namespace GameAgent.Stardew.Capabilities;
 
 public sealed class ResolveMeetingCapability
 {
-    private readonly LandmarkCatalog catalog;
+    private readonly LandmarkCatalogStore catalogStore;
 
-    public ResolveMeetingCapability(LandmarkCatalog catalog)
+    public ResolveMeetingCapability(LandmarkCatalogStore catalogStore)
     {
-        this.catalog = catalog;
+        this.catalogStore = catalogStore;
     }
 
     public MeetingResolution Resolve(
@@ -20,6 +20,6 @@ public sealed class ResolveMeetingCapability
         MeetingRequest request,
         FestivalKnowledge festival)
     {
-        return MeetingContract.Resolve(world, npcEntityId, playerEntityId, originLocation, request, festival, this.catalog);
+        return MeetingContract.Resolve(world, npcEntityId, playerEntityId, originLocation, request, festival, this.catalogStore.Current);
     }
 }

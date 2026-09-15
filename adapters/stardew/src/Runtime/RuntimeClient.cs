@@ -30,7 +30,7 @@ public sealed class RuntimeClient : IDisposable
     private readonly MoveToCapability moveToCapability;
     private readonly ApproachPlayerCapability approachPlayerCapability;
     private readonly ResolveMeetingCapability resolveMeetingCapability;
-    private readonly LandmarkCatalog landmarkCatalog;
+    private readonly LandmarkCatalogStore landmarkCatalogStore;
     private readonly TaskExecutionDriver taskExecutionDriver;
     private readonly NpcControlLease npcControlLease;
     private readonly OrdinaryInteractionLifecycle ordinaryInteractions;
@@ -71,7 +71,7 @@ public sealed class RuntimeClient : IDisposable
         MoveToCapability moveToCapability,
         ApproachPlayerCapability approachPlayerCapability,
         ResolveMeetingCapability resolveMeetingCapability,
-        LandmarkCatalog landmarkCatalog,
+        LandmarkCatalogStore landmarkCatalogStore,
         TaskExecutionDriver taskExecutionDriver,
         NpcControlLease npcControlLease,
         MeetingWaitMonitor meetingWaitMonitor,
@@ -89,7 +89,7 @@ public sealed class RuntimeClient : IDisposable
         this.moveToCapability = moveToCapability;
         this.approachPlayerCapability = approachPlayerCapability;
         this.resolveMeetingCapability = resolveMeetingCapability;
-        this.landmarkCatalog = landmarkCatalog;
+        this.landmarkCatalogStore = landmarkCatalogStore;
         this.taskExecutionDriver = taskExecutionDriver;
         this.npcControlLease = npcControlLease;
         GameNpcDriver interactionDriver = new();
@@ -497,7 +497,7 @@ public sealed class RuntimeClient : IDisposable
     private async Task SendCapabilitiesAsync(string correlationId, CancellationToken cancellationToken)
     {
         CapabilityList capabilities = CapabilityCatalog.BuildEnvironmentCapabilities(
-            this.landmarkCatalog.Landmarks,
+            this.landmarkCatalogStore.Current.Landmarks,
             includeTaskCapabilities: this.sessionState.TaskExtensionAccepted);
 
         await this.SendAsync(
@@ -1242,7 +1242,7 @@ public sealed class RuntimeClient : IDisposable
             RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
             TaskOperationSource source = ProtocolMapper.RequireTaskOperationSource(request, world);
             string landmarkId = ProtocolMapper.RequireMoveToLandmarkArgument(request);
-            TaskExecutionOutcome outcome = this.taskExecutionDriver.BeginTravel(source, world, landmarkId, this.landmarkCatalog);
+            TaskExecutionOutcome outcome = this.taskExecutionDriver.BeginTravel(source, world, landmarkId, this.landmarkCatalogStore.Current);
             if (outcome.Result.IsTerminal)
             {
                 this.SendActionResult(ProtocolMapper.BuildTaskDriverActionResult(request, source, outcome.Result, world), request.Capability);
@@ -1278,10 +1278,10 @@ public sealed class RuntimeClient : IDisposable
             RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
             TaskOperationSource source = ProtocolMapper.RequireTaskOperationSource(request, world);
             ProtocolMapper.RequireWaitForPlayerArgument(request);
-            TaskExecutionOutcome outcome = this.taskExecutionDriver.BeginWait(source, world, this.landmarkCatalog);
+            TaskExecutionOutcome outcome = this.taskExecutionDriver.BeginWait(source, world, this.landmarkCatalogStore.Current);
             if (string.Equals(outcome.Result.Status, "succeeded", StringComparison.Ordinal) && !outcome.Replayed)
             {
-                Landmark landmark = this.landmarkCatalog.Find(source.Contract.LandmarkId)
+                Landmark landmark = this.landmarkCatalogStore.Current.Find(source.Contract.LandmarkId)
                     ?? throw new InvalidOperationException("task landmark disappeared after wait admission");
                 if (!this.meetingWaitMonitor.Register(source, landmark.Position, world.NowTick))
                     throw new InvalidOperationException("wait monitor rejected an admitted operation");
