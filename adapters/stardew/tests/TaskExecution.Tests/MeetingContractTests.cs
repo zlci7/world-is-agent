@@ -14,7 +14,7 @@ public sealed class MeetingContractTests
     public void CreatesAStableCrossDayContractForAVerifiedRoute()
     {
         LandmarkCatalog catalog = LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson);
-        MeetingRequest request = new("beach_meeting_spot", new MeetingDate(1, "spring", 2), 1000, 1100);
+        MeetingRequest request = new("beach_meeting_spot", new MeetingDate(1, "spring", 2), 1000, 1500);
 
         MeetingResolution first = MeetingContract.Resolve(World, "npc:Linus", "player:local", "Mountain", request, FestivalKnowledge.NotFestival, catalog);
         MeetingResolution second = MeetingContract.Resolve(World, "npc:Linus", "player:local", "Mountain", request, FestivalKnowledge.NotFestival, catalog);
@@ -22,9 +22,9 @@ public sealed class MeetingContractTests
         Assert.True(first.Accepted);
         Assert.Equal(string.Empty, first.Code);
         MeetingAgreement agreement = Assert.IsType<MeetingAgreement>(first.Agreement);
-        Assert.Equal(GameClock.ToTick(1, 0, 2, 600), agreement.DepartureAt);
         Assert.Equal(GameClock.ToTick(1, 0, 2, 1000), agreement.StartAt);
-        Assert.Equal(GameClock.ToTick(1, 0, 2, 1100), agreement.EndAt);
+        Assert.Equal(agreement.StartAt, agreement.DepartureAt);
+        Assert.Equal(GameClock.ToTick(1, 0, 2, 1500), agreement.EndAt);
         Assert.Equal(first.EquivalenceKey, second.EquivalenceKey);
     }
 
@@ -76,13 +76,13 @@ public sealed class MeetingContractTests
     [Fact]
     public void RejectsWhenDepartureIsNoLongerInTheFuture()
     {
-        RuntimeWorldSnapshot late = World with { NowTick = GameClock.ToTick(1, 0, 2, 600) };
+        RuntimeWorldSnapshot late = World with { NowTick = GameClock.ToTick(1, 0, 2, 1200) };
         MeetingResolution result = MeetingContract.Resolve(
             late,
             "npc:Linus",
             "player:local",
             "Mountain",
-            new MeetingRequest("beach_meeting_spot", new MeetingDate(1, "spring", 2), 1000, 1100),
+            new MeetingRequest("beach_meeting_spot", new MeetingDate(1, "spring", 2), 1000, 1500),
             FestivalKnowledge.NotFestival,
             LandmarkCatalog.Parse(LandmarkCatalogTests.ValidCatalogJson));
 
@@ -91,45 +91,24 @@ public sealed class MeetingContractTests
     }
 
     [Theory]
-    [InlineData(240, 220, true)]
-    [InlineData(220, 220, true)]
+    [InlineData(90, 90, true)]
     [InlineData(90, 220, false)]
-    public void RejectsWhenTheDepartureLeadDoesNotCoverTheMeasuredTravel(int lead, int measuredTravel, bool accepted)
+    [InlineData(240, 240, false)]
+    public void RejectsWhenTheAgreedWindowDoesNotCoverTheTravelTime(int travelMinutes, int measuredTravel, bool accepted)
     {
         string json = LandmarkCatalogTests.ValidCatalogJson
-            .Replace("\"departure_lead_minutes\":240,", $"\"departure_lead_minutes\":{lead},")
+            .Replace("\"departure_lead_minutes\":240,", $"\"departure_lead_minutes\":{travelMinutes},")
             .Replace("\"supported_routes\"", $"\"measured_travel_minutes\":{measuredTravel},\"supported_routes\"");
 
         MeetingResolution result = MeetingContract.Resolve(World, "npc:Linus", "player:local", "Mountain",
-            new MeetingRequest("beach_meeting_spot", new MeetingDate(1, "spring", 2), 1000, 1100),
+            new MeetingRequest("beach_meeting_spot", new MeetingDate(1, "spring", 2), 1000, 1300),
             FestivalKnowledge.NotFestival, LandmarkCatalog.Parse(json));
 
-        Assert.Equal(accepted, result.Accepted);
-        if (!accepted)
-            Assert.Equal("departure_lead_below_measured_travel", result.Code);
-    }
-
-    [Theory]
-    [InlineData(1, "spring", 2, 240, 800, false)]
-    [InlineData(1, "spring", 2, 240, 1000, true)]
-    [InlineData(1, "spring", 2, 60, 700, true)]
-    [InlineData(1, "summer", 1, 240, 800, false)]
-    [InlineData(2, "spring", 1, 480, 600, false)]
-    public void DepartureMustFitTheTargetDaysExecutionWindow(int year, string season, int day, int lead, int start, bool accepted)
-    {
-        string json = LandmarkCatalogTests.ValidCatalogJson.Replace("\"departure_lead_minutes\":240", $"\"departure_lead_minutes\":{lead}");
-        MeetingResolution result = MeetingContract.Resolve(World, "npc:Linus", "player:local", "Mountain",
-            new MeetingRequest("beach_meeting_spot", new MeetingDate(year, season, day), start, start + 100),
-            FestivalKnowledge.NotFestival, LandmarkCatalog.Parse(json));
-
-        Assert.Equal(accepted, result.Accepted);
+        Assert.True(accepted == result.Accepted, result.Code);
         if (accepted)
-            Assert.Equal(GameClock.ToTick(year, GameClock.SeasonIndex(season), day, 600), result.Agreement!.DepartureAt);
+            Assert.Equal(result.Agreement!.StartAt, result.Agreement!.DepartureAt);
         else
-        {
-            Assert.Equal("departure_outside_execution_window", result.Code);
-            Assert.Null(result.Agreement);
-        }
+            Assert.Equal("meeting_window_below_travel_time", result.Code);
     }
 
     private static MeetingResolution Resolve(

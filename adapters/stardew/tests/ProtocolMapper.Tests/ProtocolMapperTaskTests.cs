@@ -65,14 +65,14 @@ public sealed class ProtocolMapperTaskTests
     [Fact]
     public void BuildsSuccessfulProposalFromResolvedAgreement()
     {
-        MeetingAgreement agreement = new(1, "beach_meeting_spot", "npc:Linus", new MeetingDate(2, "summer", 3), Snapshot.ClockId, 1800, 2040, 2100);
+        MeetingAgreement agreement = new(1, "beach_meeting_spot", "npc:Linus", new MeetingDate(2, "summer", 3), Snapshot.ClockId, 2040, 2040, 2100);
         MeetingResolution resolution = new(true, string.Empty, string.Empty, agreement, "meeting-key");
         ActionRequest request = ResolveRequest();
 
         ActionResult result = ProtocolMapper.BuildMeetingResolutionResult(request, Snapshot, resolution, "player:local");
 
         Assert.Equal(ActionStatus.Succeeded, result.Status);
-        Assert.Equal(1800, result.TaskProposal.WakeAt);
+        Assert.Equal(2040, result.TaskProposal.WakeAt);
         Assert.Equal(2100, result.TaskProposal.DeadlineAt);
         Assert.Equal(new[] { "npc:Linus", "player:local" }, result.TaskProposal.ParticipantEntityIds);
         Assert.Equal("beach_meeting_spot", result.TaskProposal.Payload.Fields["landmark_id"].StringValue);
@@ -103,7 +103,7 @@ public sealed class ProtocolMapperTaskTests
         Assert.Equal("operation-a", source.Operation.OperationId);
         Assert.Equal((ulong)4, source.StartRevision);
         Assert.Equal("wake-a", source.WakeId);
-        Assert.Equal(1800, source.Contract.DepartureAt);
+        Assert.Equal(2040, source.Contract.DepartureAt);
     }
 
     [Fact]
@@ -232,7 +232,7 @@ public sealed class ProtocolMapperTaskTests
 
     private static ActionRequest TaskActionRequest()
     {
-        MeetingAgreement agreement = new(1, "beach_meeting_spot", "npc:Linus", new MeetingDate(2, "summer", 3), Snapshot.ClockId, 1800, 2040, 2100);
+        MeetingAgreement agreement = new(1, "beach_meeting_spot", "npc:Linus", new MeetingDate(2, "summer", 3), Snapshot.ClockId, 2040, 2040, 2100);
         ActionRequest resolve = ResolveRequest();
         TaskProposal proposal = ProtocolMapper.BuildMeetingResolutionResult(
             resolve,

@@ -307,7 +307,7 @@ public static partial class ProtocolMapper
             !string.Equals(clockId, proposal.Clock.ClockId, StringComparison.Ordinal) ||
             proposal.WakeAt != departureAt ||
             proposal.DeadlineAt != endAt ||
-            departureAt >= startAt ||
+            departureAt != startAt ||
             startAt >= endAt ||
             !proposal.ParticipantEntityIds.Contains(participant))
         {

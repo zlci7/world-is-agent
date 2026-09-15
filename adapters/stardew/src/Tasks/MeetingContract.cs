@@ -65,8 +65,6 @@ public static class MeetingContract
             return Reject("invalid_meeting_window", "meeting end must be after start on the target date");
         if (request.StartTime < landmark.OpenStart || request.EndTime > landmark.OpenEnd)
             return Reject("landmark_closed", "meeting window is outside landmark opening hours");
-        if (landmark.MeasuredTravelMinutes is int measuredTravel && landmark.DepartureLeadMinutes < measuredTravel)
-            return Reject("departure_lead_below_measured_travel", "the configured departure lead does not cover the measured travel time");
 
         int seasonIndex;
         long startAt;
@@ -82,12 +80,14 @@ public static class MeetingContract
             return Reject("invalid_meeting_date", "meeting target date is invalid");
         }
 
-        long departureAt = checked(startAt - landmark.DepartureLeadMinutes);
-        long executionStartsAt = GameClock.ToTick(request.TargetDate.Year, seasonIndex, request.TargetDate.DayOfMonth, 600);
-        if (departureAt < executionStartsAt)
-            return Reject("departure_outside_execution_window", "meeting departure must be at or after 0600 on the target date");
+        // The agreed time is the moment the NPC acts: it departs then, and the window
+        // stays open long enough to cover the trip.
+        long departureAt = startAt;
         if (departureAt <= world.NowTick)
-            return Reject("departure_too_late", "meeting departure time must remain in the future");
+            return Reject("departure_too_late", "the agreed meeting time must remain in the future");
+        int travelMinutes = Math.Max(landmark.MeasuredTravelMinutes ?? 0, landmark.DepartureLeadMinutes);
+        if (endAt - startAt < travelMinutes)
+            return Reject("meeting_window_below_travel_time", "the agreed window is shorter than the NPC travel time");
 
         MeetingAgreement agreement = new(
             SchemaVersion,
