@@ -5,28 +5,39 @@ namespace GameAgent.Stardew.Tests;
 
 public sealed class ProductionLandmarkCatalogTests
 {
+    [Theory]
+    [InlineData("beach_meeting_spot", "Beach", 28, 36, 240)]
+    [InlineData("community_center", "Town", 55, 22, 90)]
+    [InlineData("pierre_store", "Town", 46, 59, 150)]
+    public void ShipsEachMarkedMeetingPoint(string landmarkId, string location, int x, int y, int departureLeadMinutes)
+    {
+        LandmarkCatalog catalog = Load();
+
+        Landmark landmark = Assert.IsType<Landmark>(catalog.Find(landmarkId));
+        Assert.Equal(new WorldPosition(location, x, y), landmark.Position);
+        Assert.Equal(departureLeadMinutes, landmark.DepartureLeadMinutes);
+        Assert.NotEmpty(landmark.SupportedRoutes);
+    }
+
     [Fact]
     public void KeepsTheLiveEvidenceRouteForTheBeachMeeting()
     {
         LandmarkCatalog catalog = Load();
 
         Landmark beach = Assert.IsType<Landmark>(catalog.Find("beach_meeting_spot"));
-        Assert.Equal(new WorldPosition("Beach", 28, 36), beach.Position);
-        Assert.Equal(240, beach.DepartureLeadMinutes);
         Assert.Equal(new SupportedRoute("npc:Linus", "Mountain"), Assert.Single(beach.SupportedRoutes));
         Assert.False(catalog.SupportsRoute("npc:Abigail", "Mountain", "beach_meeting_spot"));
     }
 
     [Fact]
-    public void ContainsTheMarkedCommunityCenterPointForAnyNpc()
+    public void AuthoringMarkedPointsAcceptAnyNpcFromAnyLocation()
     {
         LandmarkCatalog catalog = Load();
 
         Landmark point = Assert.IsType<Landmark>(catalog.Find("community_center"));
-        Assert.Equal(new WorldPosition("Town", 55, 22), point.Position);
-        Assert.Equal(90, point.DepartureLeadMinutes);
         Assert.Equal(new SupportedRoute("*", "*"), Assert.Single(point.SupportedRoutes));
         Assert.True(catalog.SupportsRoute("npc:Abigail", "Beach", "community_center"));
+        Assert.True(catalog.SupportsRoute("npc:Shane", "Forest", "pierre_store"));
     }
 
     [Fact]

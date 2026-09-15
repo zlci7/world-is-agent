@@ -35,6 +35,24 @@
           "origin_location": "*"
         }
       ]
+    },
+    {
+      "landmark_id": "pierre_store",
+      "display_name": "pierre_store",
+      "location": "Town",
+      "tile": {
+        "x": 46,
+        "y": 59
+      },
+      "open_start": 600,
+      "open_end": 2200,
+      "departure_lead_minutes": 150,
+      "supported_routes": [
+        {
+          "npc_id": "*",
+          "origin_location": "*"
+        }
+      ]
     }
   ]
 }
