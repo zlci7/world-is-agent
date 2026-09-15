@@ -71,6 +71,24 @@
           "origin_location": "*"
         }
       ]
+    },
+    {
+      "landmark_id": "mine_entrance",
+      "display_name": "mine_entrance",
+      "location": "Mountain",
+      "tile": {
+        "x": 53,
+        "y": 6
+      },
+      "open_start": 600,
+      "open_end": 2200,
+      "departure_lead_minutes": 180,
+      "supported_routes": [
+        {
+          "npc_id": "*",
+          "origin_location": "*"
+        }
+      ]
     }
   ]
 }
