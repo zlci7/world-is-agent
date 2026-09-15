@@ -6,10 +6,36 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 
 	"gameagent/runtime/internal/session"
 )
+
+func TestTaskSpecBoundsThePublishedContract(t *testing.T) {
+	base := TaskSpec{
+		Instruction: "inspect", ClockID: "clock", WakeAt: 1, DeadlineAt: 2,
+		ResultContract: ResultContractAuthoritativeEvidence,
+		Source:         SourceRef{Kind: SourceKindInternal},
+	}
+	bounded := base
+	bounded.Contract = json.RawMessage(`{"pad":"` + strings.Repeat("x", MaxTaskContractBytes-16) + `"}`)
+	if len(bounded.Contract) > MaxTaskContractBytes {
+		t.Fatalf("fixture contract is %d bytes", len(bounded.Contract))
+	}
+	if err := bounded.Validate(); err != nil {
+		t.Fatalf("bounded contract rejected: %v", err)
+	}
+
+	oversized := base
+	oversized.Contract = json.RawMessage(`{"pad":"` + strings.Repeat("x", MaxTaskContractBytes) + `"}`)
+	if len(oversized.Contract) <= MaxTaskContractBytes {
+		t.Fatalf("oversized fixture contract is %d bytes", len(oversized.Contract))
+	}
+	if err := oversized.Validate(); !errors.Is(err, ErrInvalidTaskSpec) {
+		t.Fatalf("oversized contract accepted: %v", err)
+	}
+}
 
 func TestStateValidationAcceptsEverySupportedState(t *testing.T) {
 	for _, state := range []State{

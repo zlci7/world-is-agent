@@ -117,7 +117,8 @@ func (p *taskE2EModel) Generate(ctx context.Context, req model.Request) (model.R
 		}
 		d.Control.Kind = model.ControlSettle
 	case 4:
-		if !strings.Contains(req.Messages[0].Content, "task_wake") {
+		content := req.Messages[0].Content
+		if !strings.Contains(content, `"wake_reason"`) || !strings.Contains(content, `"wake_due_at"`) || !strings.Contains(content, `"contract"`) {
 			return model.Response{}, errors.New("missing task wake trigger")
 		}
 		d.ToolCalls = []model.ToolCall{{ID: "travel", Name: "follow_route", Arguments: map[string]any{}}}

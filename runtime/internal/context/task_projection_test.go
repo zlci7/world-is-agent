@@ -1,6 +1,7 @@
 package context_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -13,8 +14,9 @@ import (
 func TestTaskContextRequiredSnapshotAndBudget(t *testing.T) {
 	input := validEngineInput(t)
 	tick := int64(120)
-	record := task.Record{ID: "current-task", Owner: input.SessionKey, State: task.StatePaused, Revision: 4, NextWakeAt: &tick, PauseReason: "awaiting_world", Spec: task.TaskSpec{Instruction: "Inspect later", DeadlineAt: 200}}
-	rc := tool.RuntimeCallContext{ObservedTask: &record, Execution: task.ExecutionContext{Owner: input.SessionKey, Source: task.SourceRef{Kind: task.SourceKindTaskWake}}, WakeReason: "scheduled"}
+	contract := json.RawMessage(`{"landmark_id":"far_shore","start_at":150,"end_at":180}`)
+	record := task.Record{ID: "current-task", Owner: input.SessionKey, State: task.StatePaused, Revision: 4, NextWakeAt: &tick, PauseReason: "awaiting_world", Spec: task.TaskSpec{Instruction: "Inspect later", DeadlineAt: 200, Contract: contract}}
+	rc := tool.RuntimeCallContext{ObservedTask: &record, Execution: task.ExecutionContext{Owner: input.SessionKey, Source: task.SourceRef{Kind: task.SourceKindTaskWake}, WakeID: "wake-1", WakeReason: "scheduled", WakeDueAt: 111}}
 	registry, err := tool.NewRegistry(nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +34,7 @@ func TestTaskContextRequiredSnapshotAndBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := req.Messages[0].Content
-	for _, want := range []string{"[Task Context]", `"task_id": "current-task"`, `"revision": 4`, `"next_wakeup_at": 120`, `"deadline_at": 200`, `"state": "paused"`, `"reason": "awaiting_world"`, `"wake_reason": "scheduled"`, "Inspect later"} {
+	for _, want := range []string{"[Task Context]", `"task_id": "current-task"`, `"revision": 4`, `"next_wakeup_at": 120`, `"deadline_at": 200`, `"state": "paused"`, `"reason": "awaiting_world"`, `"wake_reason": "scheduled"`, `"wake_due_at": 111`, `"wake_id": "wake-1"`, `"landmark_id": "far_shore"`, `"start_at": 150`, "Inspect later", "task wake means the task's scheduled moment has arrived"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in %s", want, text)
 		}
@@ -56,6 +58,62 @@ func TestTaskContextOwnerMismatch(t *testing.T) {
 	input.TurnToolView = registry.BuildTurnToolView(tool.ToolAdmissionConfig{}, &rc).View
 	if _, err := agentcontext.NewEngine(agentcontext.EngineConfig{}).Build(input); !errors.Is(err, agentcontext.ErrInvalidInput) {
 		t.Fatalf("foreign task context accepted: %v", err)
+	}
+}
+
+func TestTaskContextOmitsWakeFieldsForInteractionTurns(t *testing.T) {
+	input := validEngineInput(t)
+	record := task.Record{ID: "current-task", Owner: input.SessionKey, State: task.StateRunning, Revision: 2, Spec: task.TaskSpec{Instruction: "Inspect later", DeadlineAt: 200}}
+	rc := tool.RuntimeCallContext{ObservedTask: &record, Execution: task.ExecutionContext{Owner: input.SessionKey, Source: task.SourceRef{Kind: task.SourceKindInteraction}}}
+	registry, err := tool.NewRegistry(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.TurnToolView = registry.BuildTurnToolView(tool.ToolAdmissionConfig{}, &rc).View
+	result, err := agentcontext.NewEngine(agentcontext.EngineConfig{}).Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := agentcontext.NewRenderer().Render(result.Projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := req.Messages[0].Content
+	for _, unwanted := range []string{"wake_reason", "wake_due_at", "wake_id", "task wake means"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("interaction turn published %q in %s", unwanted, text)
+		}
+	}
+}
+
+func TestTaskContextPublishesContractVerbatim(t *testing.T) {
+	input := validEngineInput(t)
+	contract := json.RawMessage(`{"nested":{"opaque":[1,2,{"deep":true}]},"unknown_key":"unchanged"}`)
+	record := task.Record{ID: "current-task", Owner: input.SessionKey, State: task.StateRunning, Revision: 2, Spec: task.TaskSpec{Instruction: "Inspect later", DeadlineAt: 200, Contract: contract}}
+	rc := tool.RuntimeCallContext{ObservedTask: &record, Execution: task.ExecutionContext{Owner: input.SessionKey, Source: task.SourceRef{Kind: task.SourceKindInteraction}}}
+	registry, err := tool.NewRegistry(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.TurnToolView = registry.BuildTurnToolView(tool.ToolAdmissionConfig{}, &rc).View
+	result, err := agentcontext.NewEngine(agentcontext.EngineConfig{}).Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The record is mutated after the projection is captured.
+	record.Spec.Contract = json.RawMessage(`{"replaced":true}`)
+	req, err := agentcontext.NewRenderer().Render(result.Projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := req.Messages[0].Content
+	for _, want := range []string{`"unknown_key": "unchanged"`, `"deep": true`, `"opaque": [`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("contract key %q missing from %s", want, text)
+		}
+	}
+	if strings.Contains(text, `"replaced":true`) {
+		t.Fatalf("contract aliased the live record: %s", text)
 	}
 }
 

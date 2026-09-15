@@ -487,7 +487,9 @@ func TestWakeBeginAdmissionAndExecutionContext(t *testing.T) {
 	wantExec := ExecutionContext{
 		Owner: got.Owner, Binding: fixture.head.Binding, Clock: clock,
 		Source: SourceRef{Kind: SourceKindTaskWake, CallID: wake.ID},
-		TaskID: got.ID, WakeID: wake.ID, ExpectedRevision: got.Revision,
+		TaskID: got.ID, WakeID: wake.ID,
+		WakeReason: wake.Reason, WakeDueAt: wake.DueTick,
+		ExpectedRevision: got.Revision,
 	}
 	if !reflectDeepEqual(gotExec, wantExec) {
 		t.Fatalf("execution context = %+v, want %+v", gotExec, wantExec)
@@ -714,6 +716,24 @@ func TestWakeAdmissionEndToEnd(t *testing.T) {
 	setWorldClockForIntentTest(t, fixture.store, fixture.head, at300)
 	if got, err := fixture.svc.ClaimDue(context.Background(), fixture.head.Binding, at300, 1); err != nil || len(got) != 1 || got[0].ID != replacement.ID || got[0].Attempt != 1 {
 		t.Fatalf("300 ClaimDue = (%+v, %v)", got, err)
+	}
+}
+
+func TestBeginWakeCarriesWakeIdentity(t *testing.T) {
+	fixture, created, wake, _ := readyEnqueuedWake(t, 200, 300, 200)
+
+	exec, record, err := fixture.svc.BeginWake(context.Background(), fixture.head.Binding, wake.ID, wake.ClaimID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exec.WakeID != wake.ID || exec.TaskID != created.Task.ID || record.ID != created.Task.ID {
+		t.Fatalf("begin identity = %+v record = %+v", exec, record)
+	}
+	if exec.WakeReason != wake.Reason || exec.WakeDueAt != wake.DueTick {
+		t.Fatalf("begin identity = %+v, want reason %q due %d", exec, wake.Reason, wake.DueTick)
+	}
+	if exec.WakeReason == "" || exec.WakeDueAt != 200 {
+		t.Fatalf("wake identity missing: %+v", exec)
 	}
 }
 

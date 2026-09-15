@@ -288,7 +288,9 @@ func (s *Service) BeginWake(ctx context.Context, binding Binding, wakeID, claimI
 		resultExec = ExecutionContext{
 			Owner: prepared.record.Owner, Binding: head.Head.Binding, Clock: head.Head.Clock,
 			Source: SourceRef{Kind: SourceKindTaskWake, CallID: current.wake.ID},
-			TaskID: prepared.record.ID, WakeID: current.wake.ID, ExpectedRevision: prepared.record.Revision,
+			TaskID: prepared.record.ID, WakeID: current.wake.ID,
+			WakeReason: current.wake.Reason, WakeDueAt: current.wake.DueTick,
+			ExpectedRevision: prepared.record.Revision,
 		}
 		return nil
 	})

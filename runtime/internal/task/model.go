@@ -96,8 +96,15 @@ type ExecutionContext struct {
 	Source           SourceRef               `json:"source"`
 	TaskID           string                  `json:"task_id,omitempty"`
 	WakeID           string                  `json:"wake_id,omitempty"`
+	WakeReason       string                  `json:"wake_reason,omitempty"`
+	WakeDueAt        int64                   `json:"wake_due_at,omitempty"`
 	ExpectedRevision uint64                  `json:"expected_revision,omitempty"`
 }
+
+// MaxTaskContractBytes bounds the adapter-authored contract that Task Context
+// publishes. The contract sits in an authority section that is never cropped, so
+// its size must be bounded before it reaches the model.
+const MaxTaskContractBytes = 4096
 
 type TaskSpec struct {
 	Instruction    string          `json:"instruction"`
@@ -320,7 +327,8 @@ func (s TaskSpec) Validate() error {
 	if !requiredIdentity(s.Instruction) || !requiredIdentity(s.ClockID) ||
 		s.WakeAt < 0 || s.DeadlineAt < 0 || s.WakeAt > s.DeadlineAt ||
 		s.ResultContract != ResultContractAuthoritativeEvidence ||
-		!optionalIdentity(s.EquivalenceKey) || !validRawJSON(s.Contract) {
+		!optionalIdentity(s.EquivalenceKey) || !validRawJSON(s.Contract) ||
+		len(s.Contract) > MaxTaskContractBytes {
 		return ErrInvalidTaskSpec
 	}
 	return s.Source.Validate()

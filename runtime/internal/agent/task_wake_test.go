@@ -98,7 +98,7 @@ func TestTaskWakeUsesBoundedLoopAndStopsAfterCommittedWait(t *testing.T) {
 		if n != 1 {
 			t.Fatal("committed wait started another model Step")
 		}
-		if !strings.Contains(req.Messages[0].Content, "task_wake") || !strings.Contains(req.Messages[0].Content, wake.ID) {
+		if !strings.Contains(req.Messages[0].Content, `"wake_reason": "`+wake.Reason+`"`) || !strings.Contains(req.Messages[0].Content, wake.ID) {
 			t.Fatalf("missing internal trigger: %s", req.Messages[0].Content)
 		}
 		for _, def := range req.Tools {

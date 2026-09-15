@@ -141,6 +141,9 @@ func renderAuthorityInstruction(projection ContextProjection) string {
 	instruction := projection.Instruction
 	if projection.Task != nil {
 		instruction += "\n\nTask Context is the current task snapshot. Use only tools in the current View. Confirm task creation only after create_task succeeds. If a task changes, decide again using the next Step's snapshot."
+		if projection.Task.WakeID != "" {
+			instruction += " A task wake means the task's scheduled moment has arrived; decide the next environment action from the Task Context."
+		}
 	}
 	if len(projection.RetrievedHistory.Snippets) > 0 {
 		instruction += "\n\n" + retrievedHistoryAuthorityInstruction

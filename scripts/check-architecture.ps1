@@ -65,6 +65,13 @@ foreach ($match in $runtimeAdapterRefs) {
     Add-Violation "runtime references adapters: $($match.Path):$($match.LineNumber)"
 }
 
+# The Runtime passes the adapter-authored contract through as opaque JSON and must
+# never name or interpret the keys inside it.
+$runtimeContractKeys = Search-Files -Path $runtimePath -Include $sourceIncludes -Pattern 'landmark|target_date|departure_lead|meeting_spot'
+foreach ($match in $runtimeContractKeys) {
+    Add-Violation "runtime names an adapter contract key: $($match.Path):$($match.LineNumber)"
+}
+
 $stardewRuntimeInternalRefs = Search-Files -Path $stardewPath -Include $sourceIncludes -Pattern 'runtime[/\\]internal|runtime\.internal'
 foreach ($match in $stardewRuntimeInternalRefs) {
     Add-Violation "stardew adapter references runtime/internal: $($match.Path):$($match.LineNumber)"
