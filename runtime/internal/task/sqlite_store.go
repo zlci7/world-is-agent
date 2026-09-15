@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -863,6 +865,63 @@ const taskSelectSQL = `SELECT game_id, world_id, entity_id, task_id, state, revi
 	clock_id, next_wake_at, create_event_id, create_turn_id, create_call_id,
 	create_fingerprint, equivalence_key, record_json, create_response_json,
 	create_response_hash, intent_history_json, intent_history_hash FROM tasks`
+
+// listRecentResults reads this owner's committed results inside one read snapshot and
+// keeps the newest by occurrence. Ordering happens on the parsed records, after reading
+// the owner's terminal tasks, which the store already bounds per world.
+func (s *SQLiteStore) listRecentResults(ctx context.Context, owner session.AgentSessionKey, limit int) ([]Result, error) {
+	if limit <= 0 {
+		return []Result{}, nil
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, classifyStoreError(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
+		return nil, classifyStoreError(err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK") }()
+	rows, err := conn.QueryContext(ctx, taskSelectSQL+` WHERE game_id = ? AND world_id = ? AND entity_id = ? AND state IN ('succeeded', 'failed', 'cancelled')`, owner.GameID, owner.WorldID, owner.EntityID)
+	if err != nil {
+		return nil, classifyStoreError(err)
+	}
+	defer rows.Close()
+	results := []Result{}
+	for rows.Next() {
+		record, err := scanTaskRow(rows)
+		if err != nil {
+			return nil, classifyStoreError(err)
+		}
+		if record.Result == nil {
+			continue
+		}
+		results = append(results, cloneResult(*record.Result))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classifyStoreError(err)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].OccurredAt != results[j].OccurredAt {
+			return results[i].OccurredAt > results[j].OccurredAt
+		}
+		return results[i].ID < results[j].ID
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+// cloneResult detaches a stored result from the caller, including the opaque source
+// payloads a projection may edit.
+func cloneResult(result Result) Result {
+	cloned := result
+	cloned.EvidenceRefs = slices.Clone(result.EvidenceRefs)
+	cloned.Source.GameTime = slices.Clone(result.Source.GameTime)
+	cloned.Source.Facts = slices.Clone(result.Source.Facts)
+	return cloned
+}
 
 func scanTaskRow(row rowScanner) (Record, error) {
 	record, _, _, err := scanTaskRowWithCreate(row)

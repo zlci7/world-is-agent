@@ -389,6 +389,29 @@ func (s *Service) ListActive(ctx context.Context, owner session.AgentSessionKey,
 	return records, nil
 }
 
+// maxRecentTaskResults is the fixed return bound of ListRecentResults. Projection
+// asks for three; a caller cannot raise the bound.
+const maxRecentTaskResults = 3
+
+// ListRecentResults returns this owner's newest committed results. The read runs in
+// one snapshot of the current tasks working set, so a concurrent commit or a restore
+// cannot mix two timelines into one projection.
+func (s *Service) ListRecentResults(ctx context.Context, owner session.AgentSessionKey, limit int) ([]Result, error) {
+	if err := validateService(s, ctx); err != nil {
+		return nil, err
+	}
+	if err := validateOwner(owner); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return []Result{}, nil
+	}
+	if err := s.store.validateWorldTaskIdentityGraph(ctx, WorldKey{GameID: owner.GameID, WorldID: owner.WorldID}); err != nil {
+		return nil, err
+	}
+	return s.store.listRecentResults(ctx, owner, min(limit, maxRecentTaskResults))
+}
+
 func (s *Service) ApplyIntent(ctx context.Context, exec ExecutionContext, intent Intent) (Record, error) {
 	if err := validateService(s, ctx); err != nil {
 		return Record{}, err

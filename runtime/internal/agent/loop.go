@@ -156,6 +156,7 @@ func NewLoop(modelProvider model.Provider, recorder trace.Recorder, config Confi
 			MaxObservationTokens:          config.MaxObservationTokens,
 			MaxEventTokens:                config.MaxEventTokens,
 			MaxContextFactsTokens:         config.MaxContextFactsTokens,
+			MaxTaskContextTokens:          config.MaxTaskContextTokens,
 			MaxRecentMemoryTokens:         config.MaxRecentMemoryTokens,
 			MaxRecentMemoryRecords:        config.RecentMemoryLimit,
 			MaxTranscriptTokens:           config.MaxTranscriptTokens,
@@ -401,6 +402,7 @@ func (l *Loop) runBoundedSteps(
 				return err
 			}
 			toolView, toolAdmissionReport = admission.View, admission.Report
+			taskContext.emitTrace(turnTracer, toolView, stepIndex)
 		}
 		req, buildReport, err := l.buildModelRequestWithRetrieval(key, target, descriptor, event, obs, recentMemories, toolView, toolAdmissionReport, transcript, history, retrieval)
 		if err != nil {
@@ -1061,6 +1063,9 @@ func contextBuildTraceFields(stepIndex int, report agentcontext.ContextBuildRepo
 		"retrieved_history_diagnostics":         append([]string(nil), report.RetrievedHistory.Diagnostics...),
 		"transcript_retained":                   report.Transcript.RetainedCount,
 		"transcript_dropped":                    report.Transcript.DroppedCount,
+		"task_context_estimated_tokens":         report.Task.EstimatedTokens,
+		"task_context_cropped":                  report.Task.Cropped,
+		"task_context_dropped_results":          report.Task.DroppedResults,
 		"accepted_tool_count":                   report.ToolAdmission.AcceptedToolCount,
 		"accepted_tool_names":                   append([]string(nil), report.ToolAdmission.AcceptedToolNames...),
 		"accepted_tool_names_truncated_count":   report.ToolAdmission.AcceptedToolNamesTruncatedCount,

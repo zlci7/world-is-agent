@@ -44,7 +44,10 @@ type RuntimeCallContext struct {
 	Execution           task.ExecutionContext
 	InteractionSourceID string
 	ObservedTask        *task.Record
-	AuthorityEpoch      uint64
+	// RecentResults carries this owner's newest committed results. They are facts
+	// the model may reason about; they never carry execution rights.
+	RecentResults  []task.Result
+	AuthorityEpoch uint64
 }
 
 type RuntimeExecutor interface {

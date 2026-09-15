@@ -26,6 +26,7 @@ const (
 	ReasonEventBudgetExceeded            = "current_event_budget_exceeded"
 	ReasonObservationBudgetExceeded      = "current_observation_budget_exceeded"
 	ReasonContextFactsBudgetExceeded     = "context_facts_budget_exceeded"
+	ReasonTaskContextBudgetExceeded      = "task_context_budget_exceeded"
 	ReasonRequiredContextOverBudget      = "required_context_over_budget"
 	ReasonRequiredSectionOverBudget      = "required_section_over_budget"
 	ReasonDefinitionBudgetExceeded       = "definition_budget_exceeded"
@@ -50,6 +51,7 @@ type BudgetConfig struct {
 	MaxObservationTokens          int
 	MaxEventTokens                int
 	MaxContextFactsTokens         int
+	MaxTaskContextTokens          int
 	MaxRecentMemoryTokens         int
 	MaxRecentMemoryRecords        int
 	MaxTranscriptTokens           int
@@ -79,6 +81,7 @@ type ContextBuildReport struct {
 	History                 HistoryReport
 	RetrievedHistory        RetrievedHistoryReport
 	Transcript              RetentionReport
+	Task                    TaskContextReport
 	ToolAdmission           ToolAdmissionSummary
 	FinalRequestSize        RequestTokenSummary
 	ReasonCodes             []string
@@ -139,6 +142,7 @@ func DefaultBudgetConfig() BudgetConfig {
 		MaxObservationTokens:          8192,
 		MaxEventTokens:                4096,
 		MaxContextFactsTokens:         4096,
+		MaxTaskContextTokens:          2048,
 		MaxRecentMemoryTokens:         4096,
 		MaxRecentMemoryRecords:        5,
 		MaxTranscriptTokens:           16384,
@@ -162,6 +166,7 @@ func (c BudgetConfig) WithDefaults() BudgetConfig {
 	c.MaxObservationTokens = positiveOrDefault(c.MaxObservationTokens, defaults.MaxObservationTokens)
 	c.MaxEventTokens = positiveOrDefault(c.MaxEventTokens, defaults.MaxEventTokens)
 	c.MaxContextFactsTokens = positiveOrDefault(c.MaxContextFactsTokens, defaults.MaxContextFactsTokens)
+	c.MaxTaskContextTokens = positiveOrDefault(c.MaxTaskContextTokens, defaults.MaxTaskContextTokens)
 	c.MaxRecentMemoryTokens = positiveOrDefault(c.MaxRecentMemoryTokens, defaults.MaxRecentMemoryTokens)
 	c.MaxRecentMemoryRecords = positiveOrDefault(c.MaxRecentMemoryRecords, defaults.MaxRecentMemoryRecords)
 	c.MaxTranscriptTokens = positiveOrDefault(c.MaxTranscriptTokens, defaults.MaxTranscriptTokens)
@@ -389,6 +394,7 @@ func sectionReportsForProjection(projection ContextProjection) SectionReports {
 		{Name: "current_event", Included: projection.CurrentEvent.EventID != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.CurrentEvent)},
 		{Name: "current_event_context_facts", Included: len(projection.CurrentEventContextFacts) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.CurrentEventContextFacts)},
 		{Name: "current_observation", Included: projection.CurrentObservation.EntityID != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.CurrentObservation)},
+		{Name: "task_context", Included: projection.Task != nil, ProjectionEstimatedTokens: estimateTaskProjection(projection.Task)},
 		{Name: "recent_memory", Included: len(projection.RecentMemory) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.RecentMemory)},
 		{Name: "tools", Included: len(projection.Tools) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.Tools)},
 		{Name: "current_turn_transcript", Included: len(projection.CurrentTurnTranscript) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.CurrentTurnTranscript)},
@@ -449,6 +455,22 @@ func applyProjectionBudgets(projection ContextProjection, budget BudgetConfig, r
 		dropContextFactOptionalFields(&projection)
 		report.addReason(ReasonContextFactsBudgetExceeded)
 		sectionCropped["current_event_context_facts"] = ReasonContextFactsBudgetExceeded
+	}
+	if projection.Task != nil {
+		taskCrop, taskErr := boundTaskContext(projection.Task, budget.MaxTaskContextTokens)
+		projection.Task = taskCrop.projection
+		report.Task = taskCrop.report
+		if taskCrop.report.Cropped {
+			report.addReason(ReasonTaskContextBudgetExceeded)
+			sectionCropped["task_context"] = ReasonTaskContextBudgetExceeded
+		}
+		if taskErr != nil {
+			report.addReason(ReasonTaskContextBudgetExceeded)
+			report.addReason(ReasonRequiredContextOverBudget)
+			report.addReason(ReasonRequiredSectionOverBudget)
+			sectionCropped["task_context"] = ReasonTaskContextBudgetExceeded
+			err = firstError(err, taskErr)
+		}
 	}
 	projection, sectionErr := enforceRequiredSectionBudgets(projection, budget, &report, sectionCropped)
 	if sectionErr != nil {

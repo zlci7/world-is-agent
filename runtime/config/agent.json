@@ -20,6 +20,7 @@
   "max_parallel_tool_calls": 4,
   "max_request_tokens": 25600,
   "max_user_message_tokens": 22000,
+  "max_task_context_tokens": 2048,
   "max_transcript_tokens": 4096,
   "keep_recent_tokens": 8000,
   "max_summary_tokens": 2048,

@@ -18,6 +18,7 @@ const (
 	EventContextLoadFailed          EventName = "context_load_failed"
 	EventContextRequestBuilt        EventName = "context_request_built"
 	EventContextRequestBuildFailed  EventName = "context_request_build_failed"
+	EventTaskContextPrepared        EventName = "task_context_prepared"
 	EventModelRequestStarted        EventName = "model_request_started"
 	EventModelResponseReceived      EventName = "model_response_received"
 	EventToolCallSelected           EventName = "tool_call_selected"

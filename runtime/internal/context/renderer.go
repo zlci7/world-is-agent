@@ -105,8 +105,7 @@ func (r Renderer) renderUserMessage(projection ContextProjection) string {
 		history = RenderHistoryProjection(projection.History)
 	}
 	history += RenderRetrievedHistoryProjection(projection.RetrievedHistory)
-	history += renderTask(projection.Task)
-	return history + fmt.Sprintf(`[Game Definition]
+	return history + renderTask(projection.Task) + fmt.Sprintf(`[Game Definition]
 %s
 
 [Agent Definition]

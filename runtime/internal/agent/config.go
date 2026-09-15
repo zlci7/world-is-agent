@@ -68,6 +68,7 @@ type Config struct {
 	MaxObservationTokens          int
 	MaxEventTokens                int
 	MaxContextFactsTokens         int
+	MaxTaskContextTokens          int
 	MaxRecentMemoryTokens         int
 	MaxTranscriptTokens           int
 	MaxToolCount                  int
@@ -106,6 +107,7 @@ type fileConfig struct {
 	MaxObservationTokens          int                   `json:"max_observation_tokens"`
 	MaxEventTokens                int                   `json:"max_event_tokens"`
 	MaxContextFactsTokens         int                   `json:"max_context_facts_tokens"`
+	MaxTaskContextTokens          int                   `json:"max_task_context_tokens"`
 	MaxRecentMemoryTokens         int                   `json:"max_recent_memory_tokens"`
 	MaxTranscriptTokens           int                   `json:"max_transcript_tokens"`
 	MaxToolCount                  int                   `json:"max_tool_count"`
@@ -188,6 +190,7 @@ func DefaultConfig() Config {
 		MaxObservationTokens:          budget.MaxObservationTokens,
 		MaxEventTokens:                budget.MaxEventTokens,
 		MaxContextFactsTokens:         budget.MaxContextFactsTokens,
+		MaxTaskContextTokens:          budget.MaxTaskContextTokens,
 		MaxRecentMemoryTokens:         budget.MaxRecentMemoryTokens,
 		MaxTranscriptTokens:           budget.MaxTranscriptTokens,
 		MaxToolCount:                  budget.MaxToolCount,
@@ -266,6 +269,7 @@ func LoadConfigFile(path string) (Config, error) {
 		MaxObservationTokens:          raw.MaxObservationTokens,
 		MaxEventTokens:                raw.MaxEventTokens,
 		MaxContextFactsTokens:         raw.MaxContextFactsTokens,
+		MaxTaskContextTokens:          raw.MaxTaskContextTokens,
 		MaxRecentMemoryTokens:         raw.MaxRecentMemoryTokens,
 		MaxTranscriptTokens:           raw.MaxTranscriptTokens,
 		MaxToolCount:                  raw.MaxToolCount,
@@ -454,6 +458,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.MaxContextFactsTokens <= 0 {
 		c.MaxContextFactsTokens = defaults.MaxContextFactsTokens
+	}
+	if c.MaxTaskContextTokens <= 0 {
+		c.MaxTaskContextTokens = defaults.MaxTaskContextTokens
 	}
 	if c.MaxRecentMemoryTokens <= 0 {
 		c.MaxRecentMemoryTokens = defaults.MaxRecentMemoryTokens
