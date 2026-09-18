@@ -26,6 +26,10 @@ scripts/     Local validation and helper scripts
 
 WIA is organized as Runtime + Protocol + Adapter. Adapters are logically independent of this repository's directory layout: they depend on a versioned protocol instead of on `adapters/stardew` sitting at a known path. See [logical-separation.md](logical-separation.md) for the work that removes the remaining layout coupling.
 
+## Adapter Capabilities From Third-Party Mods
+
+Adapters may wrap another mod's API and expose it as a Capability, so the agent can select it like any other tool. Third-party mods stay optional dependencies: when one is absent, the adapter still loads and the capability is rejected with an explicit code. See [mail-capability.md](mail-capability.md) for the current work.
+
 ## Documentation Expectations
 
 Update docs in the same change when behavior changes:

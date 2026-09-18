@@ -9,7 +9,18 @@
 - 本版本不做完全自主 agent。自主目标生成、长时程自主规划、多 Agent 协作、自我改进、无人监督的长时间自主运行均不在范围内，也不为它们预留未验证的框架。
 - 新工作必须能对应到“对外可运行、可复现、可验证”或“公开事实源更准确”的收益。只有内部技术分层价值、且不影响对外结论的重构不做。
 - 稳定性优先：破坏已发布协议字段、配置格式或使用方式，必须有明确理由和用户授权，不随普通改动顺带进行。
-- 已授权的唯一例外是 **Phase A 逻辑分离**：解除 Adapter 对 monorepo 目录布局的依赖。该工作按 [docs/development/logical-separation.md](docs/development/logical-separation.md) 执行，不改变协议内容、仓库结构和 Mod 运行时标识。
+- 已授权的例外是 **Phase A 逻辑分离**（解除 Adapter 对 monorepo 目录布局的依赖，按 [docs/development/logical-separation.md](docs/development/logical-separation.md) 执行，不改变协议内容、仓库结构和 Mod 运行时标识）与 **Mod 邮件能力接入**（按 [docs/development/mail-capability.md](docs/development/mail-capability.md) 执行，仅文本、无附件、禁止游戏命令）。
+
+## 跨 Mod 集成边界
+
+Adapter 可以包装第三方 mod 能力并暴露为 Capability，但必须遵守：
+
+- 第三方 mod 是**可选依赖**。未安装时 adapter 必须正常加载，能力以明确 code 返回 `REJECTED`，不崩溃、不产生硬依赖。
+- 通过 SMAPI `GetApi` 或运行时反射调用，不直接引用第三方 mod 的程序集，避免未安装时加载失败。
+- 所有 mod 调用都在游戏主线程执行；异常转为带明确 code 的 `failed` ActionResult，不静默吞掉。
+- 第三方 mod 的返回值会进入模型上下文，不得把路径、存档内容等不应暴露的信息直接回灌。
+- **外部文本必须先校验再交给游戏**：游戏侧可能把它当命令或 token 解析（例如 MFM 的信件正文）。校验失败返回 `REJECTED`，不写入未经校验的文本。
+- 能力暴露什么，模型就会尝试什么。高风险副作用（发物品、改世界状态、执行命令）不得作为默认能力，需要单独授权。
 
 ## 仓库模型
 
