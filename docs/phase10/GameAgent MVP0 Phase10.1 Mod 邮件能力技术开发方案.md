@@ -258,6 +258,8 @@ switch 返回值    由外层统一 SendActionResult（emote / face_player）
 - 模型可见的工具清单包含 `send_mail`，schema 正确。
 - MFM 不可用时 `send_mail` 不在工具清单中。
 
+**已实现**：`CapabilityCatalog.BuildEnvironmentCapabilities` 新增 `includeMailCapability` 参数，`send_mail` 条目为 `Sync` + `Sequential`，schema 的 `maxLength` 直接取 `MailTextValidator` 的常量，避免描述与实际接受范围漂移。条件发布在 `RuntimeClient.SendCapabilitiesAsync` 读取 `MailIntegration is not null`。`check-context-static.ps1` 已加断言，确保工具名、条件发布与分派路径都不会被绕过。
+
 **可用性检查的时点（正式实现必须遵守）**：
 
 `GetApi<T>` 只能在所有 mod 初始化完成之后调用，所以在 `Entry()` 里解析并永久缓存 unavailable 是错的——那一刻 MFM 的 API 还没注册完。正确顺序是把它挂到 `GameLaunched`：
@@ -492,6 +494,8 @@ failed   mail_delivery_failed        投递抛异常
 ```
 
 **顺序约束**：校验必须在**任何 MFM 调用之前**完成。文本未通过校验时，不得构造 `Letter`、不得注册、不得投递——校验失败必须是纯本地拒绝，不留下部分生效的状态。校验内部则先做换行规范化（§3），再做白名单判定。
+
+**已实现**：`SendMailCapability.Send` 按 `不可用 → title → body → 注册 → 投递` 的顺序执行。形状错误（缺 `body`、类型不对）由 `ProtocolMapper.RequireSendMailArgument` 抛出 `ArgumentException`，沿既有路径变成 `invalid_action_arguments`；内容错误才返回 `mail_body_invalid` / `mail_title_invalid`。两者分开，模型才能从 code 判断该改形状还是改内容。
 
 ---
 

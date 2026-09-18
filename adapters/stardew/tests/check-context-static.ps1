@@ -290,6 +290,18 @@ Reject-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'con
 Reject-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'MailFrameworkMod\.dll|Assembly\.LoadFrom' 'The mail integration must not load the MFM assembly by path; MFM is an optional dependency.'
 Require-Content 'src/Integrations/MailFramework/MailLetter.cs' 'ITranslationHelper\? I18N => null' 'Mail letters must keep I18N null so model text is used literally, not looked up as a translation key.'
 Reject-Content 'src/Integrations/MailFramework/MailLetter.cs' 'ITranslationHelper I18N =>' 'A non-null I18N makes MFM render SMAPI''s "(no translation:...)" placeholder instead of the model text.'
+Require-Content 'src/Runtime/CapabilityCatalog.cs' 'Name = "send_mail"' 'CapabilityCatalog must register send_mail.'
+Require-Content 'src/Runtime/CapabilityCatalog.cs' 'includeMailCapability' 'send_mail must be conditionally publishable.'
+Require-Content 'src/Runtime/RuntimeClient.cs' '"send_mail" => this\.HandleSendMailAction\(request\)' 'send_mail must dispatch through the shared ActionResult path, not send its own.'
+Require-Content 'src/Runtime/RuntimeClient.cs' 'includeMailCapability: this\.MailIntegration is not null' 'send_mail must be published only when Mail Framework Mod resolved.'
+Require-Content 'src/Runtime/RuntimeClient.cs' 'wia\.' 'The mail id must derive from the Action so an Action retry reuses it.'
+Require-Content 'src/Runtime/ProtocolMapper.Core.cs' 'RequireSendMailArgument' 'ProtocolMapper must parse send_mail arguments.'
+Require-Content 'src/Capabilities/SendMailCapability.cs' 'delivery\.IsRegistered' 'send_mail must consult registration bookkeeping before registering again.'
+Require-Content 'src/Capabilities/SendMailCapability.cs' 'delivery\.RequestDelivery' 'send_mail must attempt delivery even when the letter is already registered.'
+$mailEntrySource = Get-Content -LiteralPath (Join-Path $Root 'src/ModEntry.cs') -Raw
+if ($mailEntrySource -notmatch 'this\.ResolveMailIntegration\(\);\s*this\.StartRuntimeClient\(\);') {
+    $failures.Add('MFM must resolve before the runtime starts, because the capability list is built when the stream connects.') | Out-Null
+}
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'pathfindToNextScheduleLocation' 'Task NPC travel must use the native cross-location schedule pathfinder.'
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'ControllerOwnership.Release' 'Task NPC cleanup must use the shared controller ownership policy.'
 Require-Content 'src/Tasks/NpcNativeBehaviorRestorer.cs' 'checkSchedule\(Game1.timeOfDay\)' 'Task NPC cleanup must rejoin the current native schedule.'

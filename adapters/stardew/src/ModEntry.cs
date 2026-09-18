@@ -5,6 +5,7 @@ using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Dialogue;
 using GameAgent.Stardew.Diagnostics;
 using GameAgent.Stardew.Events;
+using GameAgent.Stardew.Integrations.MailFramework;
 using GameAgent.Stardew.Runtime;
 using GameAgent.Stardew.State;
 using GameAgent.Stardew.Tasks;
@@ -135,7 +136,34 @@ public sealed class ModEntry : Mod
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
     {
+        // Resolve MFM before starting: SMAPI cannot map another mod's API until every mod has
+        // finished initialising, and the capability list is built when the stream connects.
+        this.ResolveMailIntegration();
         this.StartRuntimeClient();
+    }
+
+    private void ResolveMailIntegration()
+    {
+        if (this.runtimeClient is null)
+            return;
+
+        try
+        {
+            if (MailFrameworkIntegration.TryResolve(this.Helper, this.Monitor, out MailFrameworkIntegration? integration, out string code))
+            {
+                this.runtimeClient.MailIntegration = integration;
+                this.Monitor.Log("GameAgent send_mail enabled: Mail Framework Mod resolved.", LogLevel.Info);
+            }
+            else
+            {
+                // Not an error: MFM is an optional dependency and send_mail is simply not published.
+                this.Monitor.Log($"GameAgent send_mail disabled: {code}.", LogLevel.Info);
+            }
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"GameAgent mail integration failed to resolve: {ex}", LogLevel.Error);
+        }
     }
 
     private void StartRuntimeClient()

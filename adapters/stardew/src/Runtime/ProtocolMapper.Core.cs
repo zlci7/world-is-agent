@@ -416,6 +416,29 @@ public static partial class ProtocolMapper
         return new PresentDialogueInput(text, replyOptions, allowFreeText);
     }
 
+    public static SendMailInput RequireSendMailArgument(ActionRequest request)
+    {
+        if (request.Arguments is null)
+            throw new ArgumentException("missing required send_mail arguments");
+
+        if (!request.Arguments.Fields.TryGetValue("body", out Value? bodyValue))
+            throw new ArgumentException("missing required send_mail argument: body");
+        if (bodyValue.KindCase != Value.KindOneofCase.StringValue)
+            throw new ArgumentException("send_mail body must be a string");
+
+        string? title = null;
+        if (request.Arguments.Fields.TryGetValue("title", out Value? titleValue))
+        {
+            if (titleValue.KindCase != Value.KindOneofCase.StringValue)
+                throw new ArgumentException("send_mail title must be a string");
+            title = titleValue.StringValue;
+        }
+
+        // Shape only. Length, characters and newline normalisation belong to the capability, so
+        // a malformed call reports invalid_action_arguments while bad text reports mail_*_invalid.
+        return new SendMailInput(title, bodyValue.StringValue);
+    }
+
     public static MoveToInput RequireMoveToArgument(ActionRequest request)
     {
         if (request.Arguments is null)
@@ -497,7 +520,10 @@ public static partial class ProtocolMapper
         return BuildMoveToLocationOutput(progress);
     }
 
-    public static ActionResult BuildFailedActionResult(ActionRequest request, string code, Exception ex)
+    public static ActionResult BuildFailedActionResult(ActionRequest request, string code, Exception ex) =>
+        BuildFailedActionResult(request, code, ex.Message);
+
+    public static ActionResult BuildFailedActionResult(ActionRequest request, string code, string message)
     {
         return new ActionResult
         {
@@ -506,7 +532,7 @@ public static partial class ProtocolMapper
             Error = new Error
             {
                 Code = code,
-                Message = ex.Message,
+                Message = message,
             },
         };
     }

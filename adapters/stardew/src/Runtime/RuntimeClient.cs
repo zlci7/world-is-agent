@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using GameAgent.Protocol.V1Alpha2;
 using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Dialogue;
+using GameAgent.Stardew.Integrations.MailFramework;
 using GameAgent.Stardew.State;
 using GameAgent.Stardew.Tasks;
 using Google.Protobuf.WellKnownTypes;
@@ -72,8 +73,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
     private bool disposed;
 
     public RuntimeClient(
-        AdapterConfig config,
-        MainThreadDispatcher dispatcher,
+        AdapterConfig config,        MainThreadDispatcher dispatcher,
         ObservationBuilder observationBuilder,
         ConversationStateStore conversationStore,
         EmoteCapability emoteCapability,
@@ -117,6 +117,14 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
     public bool IsReady => this.sessionState.CanUseRuntime && this.stream is not null;
 
     public bool IsTaskReady => this.sessionState.CanUseTasks && this.stream is not null;
+
+    /// <summary>
+    /// Mail Framework Mod, resolved at GameLaunched. It cannot be resolved any earlier: SMAPI
+    /// refuses to map another mod's API until every mod has finished initialising, so resolving
+    /// in Entry and caching the failure would permanently hide the capability. Null means MFM is
+    /// absent, and send_mail is simply not published.
+    /// </summary>
+    internal MailFrameworkIntegration? MailIntegration { get; set; }
 
     public void Start()
     {
@@ -519,7 +527,8 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
     {
         CapabilityList capabilities = CapabilityCatalog.BuildEnvironmentCapabilities(
             this.landmarkCatalogStore.Current.Landmarks,
-            includeTaskCapabilities: this.sessionState.TaskExtensionAccepted);
+            includeTaskCapabilities: this.sessionState.TaskExtensionAccepted,
+            includeMailCapability: this.MailIntegration is not null);
 
         await this.SendAsync(
             new AdapterMessage
@@ -1027,6 +1036,7 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
                 {
                     "emote" => this.HandleEmoteAction(request),
                     "face_player" => this.HandleFacePlayerAction(request),
+                    "send_mail" => this.HandleSendMailAction(request),
                     _ => throw new InvalidOperationException($"unsupported capability: {request.Capability}"),
                 };
             }
@@ -1401,9 +1411,33 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
         this.monitor.Log($"[GameAgent][recv] {detail}", LogLevel.Info);
     }
 
-    private ActionResult HandleEmoteAction(ActionRequest request)
+    /// <summary>
+    /// send_mail: validate the model text, register the letter once per action, then deliver.
+    /// The mail id is derived from the action id alone. It deliberately carries no NPC name:
+    /// MFM strips spaces from letter ids, so an id built from a name like "Mr. Qi" would be
+    /// stored in a form this Adapter could never look up again.
+    /// </summary>
+    private ActionResult HandleSendMailAction(ActionRequest request)
     {
-        NPC npc = this.RequireNpc(request.EntityId);
+        if (string.IsNullOrWhiteSpace(request.ActionId))
+            throw new ArgumentException("send_mail requires a non-empty action id");
+
+        SendMailInput input = ProtocolMapper.RequireSendMailArgument(request);
+        string mailId = "wia." + request.ActionId;
+        SendMailOutcome outcome = SendMailCapability.Send(mailId, input.Title, input.Body, this.MailIntegration);
+
+        return outcome.Disposition switch
+        {
+            SendMailDisposition.Succeeded =>
+                ProtocolMapper.BuildSucceededActionResult(request, "mail_id", mailId),
+            SendMailDisposition.Rejected =>
+                ProtocolMapper.BuildRejectedActionResult(request, outcome.Code, outcome.Message),
+            _ => ProtocolMapper.BuildFailedActionResult(request, outcome.Code, outcome.Message),
+        };
+    }
+
+    private ActionResult HandleEmoteAction(ActionRequest request)
+    {        NPC npc = this.RequireNpc(request.EntityId);
         string emote = ProtocolMapper.RequireEmoteArgument(request);
 
         string appliedEmote = this.emoteCapability.Emote(npc, emote);

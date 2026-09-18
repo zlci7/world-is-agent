@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using GameAgent.Protocol.V1Alpha2;
+using GameAgent.Stardew.Integrations.MailFramework;
 using GameAgent.Stardew.Tasks;
 using Google.Protobuf.WellKnownTypes;
 
@@ -21,12 +22,27 @@ public static class CapabilityCatalog
     private const string MoveToInputSchemaJson =
         "{\"type\":\"object\",\"properties\":{\"location\":{\"type\":\"string\"},\"tile\":{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"integer\"},\"y\":{\"type\":\"integer\"}},\"required\":[\"x\",\"y\"],\"additionalProperties\":false}},\"required\":[\"location\",\"tile\"],\"additionalProperties\":false}";
 
+    // Length limits come from the validator so the advertised schema cannot drift from what the
+    // Adapter actually accepts.
+    private static readonly string SendMailInputSchemaJson =
+        "{\"type\":\"object\",\"properties\":{" +
+        "\"body\":{\"type\":\"string\",\"maxLength\":" + MailTextValidator.MaxBodyLength + "}," +
+        "\"title\":{\"type\":\"string\",\"maxLength\":" + MailTextValidator.MaxTitleLength + "}}," +
+        "\"required\":[\"body\"],\"additionalProperties\":false}";
+
+    private const string SendMailDescription =
+        "Writes a letter from this NPC to the player and puts it in the farm mailbox right away. " +
+        "Use it when the NPC has something to tell the player that cannot be said face to face in " +
+        "this conversation, such as a farewell, or a reply the player asked to receive later. " +
+        "Do not use it while the player is standing here and the answer can simply be spoken.";
+
     public static bool RequiresTaskReady(string capability) =>
         capability is "resolve_meeting" or "move_to_landmark" or "wait_for_player";
 
     public static CapabilityList BuildEnvironmentCapabilities(
         IEnumerable<Landmark>? landmarks = null,
-        bool includeTaskCapabilities = true)
+        bool includeTaskCapabilities = true,
+        bool includeMailCapability = false)
     {
         CapabilityList result = new()
         {
@@ -81,6 +97,22 @@ public static class CapabilityCatalog
                 },
             },
         };
+
+        // Published only when Mail Framework Mod actually resolved at GameLaunched. The model
+        // should not see a tool this environment cannot execute; a rejection path still exists in
+        // the handler as a defensive branch.
+        if (includeMailCapability)
+        {
+            result.Capabilities.Add(new Capability
+            {
+                Name = "send_mail",
+                Version = "0.1.0",
+                Description = SendMailDescription,
+                InputSchemaJson = SendMailInputSchemaJson,
+                ExecutionMode = ExecutionMode.Sync,
+                ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
+            });
+        }
 
         if (includeTaskCapabilities && landmarks is not null)
         {

@@ -98,18 +98,11 @@ internal static class StardewMailProbe
         }
 
         // Step 2: bridging. Our letter object and our delegates crossing the mapped boundary.
-        string registerCode = integration!.RegisterLetter(
+        string registerCode = integration!.Register(
             ProbeMailId,
             ProbeTitle,
             ProbeBody,
-            letter =>
-            {
-                // The Adapter owns this write: MFM removes its temporary "id + suffix" marker on
-                // close and does not record the final id itself (Phase10.1 §4.2.1).
-                if (!Game1.player.mailReceived.Contains(letter.Id))
-                    Game1.player.mailReceived.Add(letter.Id);
-                Emit(monitor, "callback_fired", "ok", detail: letter.Id);
-            });
+            onRead: id => Emit(monitor, "callback_fired", "ok", detail: id));
 
         // Log the exact payload so the letter's on-screen text can be compared against it
         // without relying on any other record.

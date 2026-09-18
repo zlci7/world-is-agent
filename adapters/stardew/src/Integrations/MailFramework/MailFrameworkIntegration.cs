@@ -18,7 +18,7 @@ namespace GameAgent.Stardew.Integrations.MailFramework;
 /// ActionResult rather than a crashed main thread.
 /// </para>
 /// </summary>
-internal sealed class MailFrameworkIntegration
+internal sealed class MailFrameworkIntegration : IMailDelivery
 {
     public const string UniqueId = "DIGUS.MailFrameworkMod";
 
@@ -28,6 +28,10 @@ internal sealed class MailFrameworkIntegration
 
     private readonly IModHelper helper;
     private readonly IMailFrameworkModApi api;
+
+    // Registration and delivery are tracked separately because they fail independently: a retry
+    // after a failed delivery must not be short-circuited by an earlier successful registration.
+    private readonly HashSet<string> registeredIds = new(StringComparer.Ordinal);
 
     private MethodInfo? updateMailBox;
     private MethodInfo? hasCustomMail;
@@ -47,8 +51,8 @@ internal sealed class MailFrameworkIntegration
 
     /// <summary>
     /// Resolve MFM through SMAPI's interface mapping. This deliberately checks the API only:
-    /// whether the API maps is the separate question the bridge probe answers first, and a
-    /// failure to locate MailController must not mask it.
+    /// whether the API maps is what the bridge probe answers first, and a failure to locate
+    /// MailController must not mask it.
     /// </summary>
     public static bool TryResolve(
         IModHelper helper,
@@ -65,14 +69,14 @@ internal sealed class MailFrameworkIntegration
         }
         catch (Exception ex)
         {
-            code = "mail_framework_api_failed";
+            code = MailDeliveryCodes.ApiFailed;
             monitor.Log($"GameAgent MFM API mapping failed: {ex}", LogLevel.Warn);
             return false;
         }
 
         if (api is null)
         {
-            code = "mail_framework_unavailable";
+            code = MailDeliveryCodes.Unavailable;
             return false;
         }
 
@@ -81,10 +85,19 @@ internal sealed class MailFrameworkIntegration
         return true;
     }
 
+    /// <inheritdoc />
+    public bool IsRegistered(string mailId) => this.registeredIds.Contains(mailId);
+
+    /// <inheritdoc />
+    public string Register(string mailId, string? title, string body) =>
+        this.Register(mailId, title, body, onRead: null);
+
     /// <summary>
-    /// Register a letter. <paramref name="onRead"/> runs when the player closes the letter.
+    /// Register a letter, recording the id only when registration succeeds.
+    /// <paramref name="onRead"/> is an observation hook for diagnostics; the state write below
+    /// always happens.
     /// </summary>
-    public string RegisterLetter(string id, string? title, string text, Action<ILetter> onRead)
+    public string Register(string mailId, string? title, string body, Action<string>? onRead)
     {
         this.LastError = string.Empty;
         try
@@ -92,9 +105,9 @@ internal sealed class MailFrameworkIntegration
             this.api.RegisterLetter(
                 new MailLetter
                 {
-                    Id = id,
+                    Id = mailId,
                     Title = title,
-                    Text = text,
+                    Text = body,
                     // No attachments, no recipe, no auto-open: the letter must travel the normal
                     // UI path for the delivery evidence to mean anything.
                     Items = null,
@@ -109,18 +122,27 @@ internal sealed class MailFrameworkIntegration
                 // UpdateMailBox hands the player the same letter again. The callback below writes
                 // the final id, and that is what turns this condition false.
                 condition: letter => !Game1.player.mailReceived.Contains(letter.Id),
-                callback: letter => onRead(letter),
+                callback: letter =>
+                {
+                    // The Adapter owns this write: MFM removes its temporary "id + suffix" marker
+                    // on close and does not record the final id itself (Phase10.1 §4.2.1).
+                    if (!Game1.player.mailReceived.Contains(letter.Id))
+                        Game1.player.mailReceived.Add(letter.Id);
+                    onRead?.Invoke(letter.Id);
+                },
                 dynamicItems: _ => new List<Item>());
-            return "ok";
+
+            this.registeredIds.Add(mailId);
+            return MailDeliveryCodes.Ok;
         }
         catch (Exception ex)
         {
             this.LastError = Describe(ex);
-            return "mail_register_failed";
+            return MailDeliveryCodes.RegisterFailed;
         }
     }
 
-    /// <summary>Push registered letters into the player's mailbox immediately.</summary>
+    /// <inheritdoc />
     public bool RequestDelivery(out string code)
     {
         this.LastError = string.Empty;
@@ -129,13 +151,13 @@ internal sealed class MailFrameworkIntegration
         try
         {
             this.updateMailBox!.Invoke(null, null);
-            code = "ok";
+            code = MailDeliveryCodes.Ok;
             return true;
         }
         catch (Exception ex)
         {
             this.LastError = Describe(ex);
-            code = "mail_delivery_failed";
+            code = MailDeliveryCodes.DeliveryFailed;
             return false;
         }
     }
@@ -151,7 +173,7 @@ internal sealed class MailFrameworkIntegration
         {
             object? value = this.hasCustomMail!.Invoke(null, null);
             hasCustomMail = value is true;
-            code = "ok";
+            code = MailDeliveryCodes.Ok;
             return true;
         }
         catch (Exception ex)
@@ -175,9 +197,9 @@ internal sealed class MailFrameworkIntegration
         if (this.controllerProbed)
         {
             code = this.updateMailBox is null || this.hasCustomMail is null
-                ? "mail_framework_layout_unexpected"
-                : "ok";
-            return code == "ok";
+                ? MailDeliveryCodes.LayoutUnexpected
+                : MailDeliveryCodes.Ok;
+            return code == MailDeliveryCodes.Ok;
         }
 
         this.controllerProbed = true;
@@ -188,11 +210,11 @@ internal sealed class MailFrameworkIntegration
 
         if (this.updateMailBox is null || this.hasCustomMail is null)
         {
-            code = "mail_framework_layout_unexpected";
+            code = MailDeliveryCodes.LayoutUnexpected;
             return false;
         }
 
-        code = "ok";
+        code = MailDeliveryCodes.Ok;
         return true;
     }
 

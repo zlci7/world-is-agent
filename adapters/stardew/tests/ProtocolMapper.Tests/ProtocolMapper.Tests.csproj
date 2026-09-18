@@ -42,6 +42,10 @@
     <Compile Include="..\..\src\Tasks\ApproachPlayerContracts.cs" Link="ApproachPlayerContracts.cs" />
     <Compile Include="..\..\src\Capabilities\FacePlayerDirection.cs" Link="FacePlayerDirection.cs" />
     <Compile Include="..\..\src\Capabilities\MoveToInput.cs" Link="MoveToInput.cs" />
+    <Compile Include="..\..\src\Capabilities\SendMailInput.cs" Link="SendMailInput.cs" />
+    <Compile Include="..\..\src\Capabilities\SendMailCapability.cs" Link="SendMailCapability.cs" />
+    <Compile Include="..\..\src\Integrations\MailFramework\IMailDelivery.cs" Link="IMailDelivery.cs" />
+    <Compile Include="..\..\src\Integrations\MailFramework\MailDeliveryCodes.cs" Link="MailDeliveryCodes.cs" />
     <Compile Include="..\..\src\Integrations\MailFramework\MailTextValidator.cs" Link="MailTextValidator.cs" />
     <Compile Include="..\..\src\Dialogue\DialoguePresentationFlow.cs" Link="DialoguePresentationFlow.cs" />
     <Compile Include="..\..\src\Dialogue\DialogueResponseMenuLayout.cs" Link="DialogueResponseMenuLayout.cs" />

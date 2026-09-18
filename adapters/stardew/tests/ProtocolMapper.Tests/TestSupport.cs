@@ -106,6 +106,23 @@ internal static class TestSupport
             },
         },
     };
+    public static ActionRequest CreateSendMailRequest() => new()
+    {
+        ActionId = "act_mail",
+        EntityId = "npc:Abigail",
+        WorldId = "Farm_123456",
+        Capability = "send_mail",
+        SourceEventId = "event_guard_1",
+        SourceTurnId = "turn_guard",
+        Arguments = new Struct
+        {
+            Fields =
+            {
+                ["title"] = Value.ForString("A short note"),
+                ["body"] = Value.ForString("I will be away for a few days."),
+            },
+        },
+    };
 }
 
 public sealed class FixedConversationIdGenerator : IConversationIdGenerator
