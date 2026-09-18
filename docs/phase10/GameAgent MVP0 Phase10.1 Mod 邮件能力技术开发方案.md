@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10.1 Mod 邮件能力技术开发方案
 
-> **Status:** Implementation Plan Draft — 等待用户确认后开工
+> **Status:** 代码侧已实现（闭环校验、条件发布、Action 级幂等、能力分派、静态断言）；剩余为实机与模型验收，步骤见 §5.4
 > **Date:** 2026-09-18
 > **Phase:** Phase10.1 Mod 能力接入与自治调用验证
 > **目标:** 让模型在一个已触发的 AgentTurn 内自主从 Tool View 选中并执行由第三方 mod 提供的 `send_mail`，完成"注册信件 → 立即投递 → 玩家读信 → 状态变化"闭环
@@ -573,6 +573,10 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 
 ### 5.4 实机步骤
 
+实机分三段，顺序不能倒：**机制验证（已完成）→ 冒烟（不需要模型）→ 模型验收**。前一段没有结论就不要进入下一段，否则失败无法归因。
+
+#### 阶段一：机制验证（已完成）
+
 **探针已跑通（§4.2.3），本节记录复现方式。** 在 `Mods/GameAgentStardew/config.json` 里把 `EnableMailBridgeProbe` 设为 `true`，启动游戏并加载存档，然后执行控制台命令：
 
 ```text
@@ -615,16 +619,28 @@ gameagent_mail_probe reset    先清掉探针自己那个 id 的标记，再跑�
 
 探针用固定文本、不经过 §3 校验，它验证的是机制而不是安全规则，不能当成能力调用。
 
-**然后才是能力链路：**
+#### 阶段二：冒烟（不需要模型）
+
+先只确认"条件发布"在实机成立，不涉及模型行为：
 
 1. 确认 `Mods/MailFrameworkMod` 与 `Mods/GameAgentStardew` 均加载，SMAPI 日志无报错。
 2. 确认 SMAPI 日志中的 CapabilityList **包含 `send_mail`**（条件发布生效）。
-3. 加载存档，按 §5.5 的动机场景与 NPC 对话——不要随口闲聊，否则模型没有理由选择 `send_mail`。
-4. 观察 SMAPI 日志：`send_mail` 是否被模型自主选择（不是被 prompt 点名）。
-5. 确认信件已投递（`HasCustomMail()` / 日志），且信件 id 符合 §4.1 的生成规则。
-6. 走近信箱读信，确认文本与模型输出一致、无 token 被解析。
-7. 确认 `mailReceived` 含 letter.Id。
-8. 临时移出 `Mods/MailFrameworkMod` 重进游戏，确认 adapter 正常加载、`send_mail` 不在 CapabilityList 中、不报错（负向验证）。
+3. 临时移出 `Mods/MailFrameworkMod` 重进游戏，确认 adapter 正常加载、`send_mail` 不在 CapabilityList 中、不报错。
+4. 把 MFM 放回，正常对话一次，确认能力重新发布且 Runtime 侧无报错。
+
+这一步不产生写信动机，也不构成验收结论；它只排除"能力根本没发布"这类失败。
+
+#### 阶段三：模型验收
+
+以下每一步都需要真实模型，且必须按 §5.5 的动机场景制造写信理由：
+
+1. 加载存档，按 §5.5 的动机场景与 NPC 对话——不要随口闲聊，否则模型没有理由选择 `send_mail`。
+2. 观察 SMAPI 日志：`send_mail` 是否被模型自主选择（不是被 prompt 点名）。
+3. 确认信件已投递（`HasCustomMail()` / 日志），且信件 id 符合 §4.1 的生成规则。
+4. 走近信箱读信，确认文本与模型输出一致、无 token 被解析。
+5. 确认 `mailReceived` 含 letter.Id。
+6. 按 §5.6 跑负向用例，确认能力可用但语义不适用时模型未调用 `send_mail`。
+7. 按 §5.2 完成人设采样与合格线判定。
 
 ---
 

@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** Implementation Plan Draft — 等待用户确认后开工
+> **Status:** 已确认开工；10.1 代码侧已实现（剩余实机与模型验收），当前进行 10.2-1 Runtime Bootstrap & Data Root
 > **Date:** 2026-09-18
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
@@ -126,7 +126,9 @@ StoreOptions.MaxTasksPerWorld   单世界任务上限
 
 唤醒回合的 tool view 由 environment catalog 构建（`runtime/internal/agent/task_wake.go`），`send_mail` 在唤醒回合本来就可用，因此不需要为它改 Runtime 核心。
 
-**该阶段开工前必须先查清一件事**：新建一个能产出 `TaskProposal` 的能力，是纯 Adapter 改动，还是也要动 Runtime 的 proposal 注册路径。`create_task` 要求 `Source.Kind == SourceKindInteraction` 且本回合已有成功 proposal（`runtime/internal/tool/task_tools.go`），而今天唯一产出 proposal 的是 `resolve_meeting`；`proposals` map 由谁填充尚未查清。
+**proposal 注册路径已查清，结论是纯 Adapter 改动。** `runtime/internal/tool/proposal.go` 的 `CaptureProposal` 不按 capability 名称分支，只读 `ActionResult.TaskProposal`；它由 `runtime/internal/agent/loop.go` 在每一个存在 taskContext 的回合调用，而普通玩家交互回合同样会建立 taskContext。因此 Adapter 只要在自己的 ActionResult 里带上 `TaskProposal`，同一回合 `proposals` 即非空，`create_task` 随之进入 Tool View（`runtime/internal/tool/task_tools.go`）——与今天 `resolve_meeting` 走同一条路径，没有特权分支。
+
+这条路径有几个静默失败点，实机时必须先确认：`task` 必须 enabled；事件必须带 interaction source 且 `kind=player`、scope 与世界 binding 一致；`proposal.clock.id` 必须等于世界时钟 id，且 `clock.tick ≤ 当前 tick < wake_at ≤ deadline_at`。其中**构造失败只跳过 capture 而不报错**，表现为"能力调用成功、但 `create_task` 始终不出现"，是该阶段最难排查的失败形态。
 
 **频控判定必须放 Adapter 的确定性闸门，不能交给模型。** 模型没有可靠的"我这周已发过几封"的时间感；正确分层是 Adapter 决定"该不该发"，模型只决定"写什么"。
 
@@ -177,6 +179,41 @@ model.json / agent.json / trace / memory SQLite / task SQLite / definition root 
 **下载一个二进制、在任意目录启动，当前会写错位置或直接失败。** 这两条是 10.2 的入场券，不是可选项。
 
 > 本子阶段的第一项工作从"Runtime 脱离 cwd"改名为 **Runtime Bootstrap & Data Root**——它同时覆盖启动顺序与路径解析，原名只说了后一半。
+
+#### 3.2.1 Data Root 决策记录（已冻结）
+
+```text
+解析优先级    --data-root   >   WIA_DATA_ROOT   >   平台默认目录
+
+平台默认
+Windows      %LOCALAPPDATA%\WorldIsAgent
+macOS        ~/Library/Application Support/WorldIsAgent
+Linux        $XDG_DATA_HOME/wia，未设置则 ~/.local/share/wia
+
+统一一个 root，不拆 config/data 双 root
+<root>/config/       model.json、agent.json
+<root>/data/         traces.jsonl、memory/、tasks/tasks.sqlite
+<root>/secrets/      预留（10.2-3）
+```
+
+路径解析规则——这条决定了"已有显式配置仍然生效"的边界：
+
+```text
+绝对路径     原样使用
+相对路径     相对 Data Root 解析
+未配置       使用 Data Root 下的默认值
+```
+
+即 Data Root 是**默认值与相对路径的基准**，不是"把已有绝对路径也强制搬过去"，也不是删掉既有的路径配置能力。
+
+明确不做：exe 同级作为默认 root；`wia.portable` 标记文件；config/data 双 root；把 secret 的 OS 密钥库实现纳入本轮。
+
+两个选择依据：
+
+1. **用 `%LOCALAPPDATA%` 而不是 `%APPDATA%`。** SQLite 与 trace 放进漫游配置文件是反模式。
+2. **exe 同级不是好默认值。** `go run`、开发脚本、自动化验收三个场景都会因此依赖 override——一个需要被处处绕开的默认值没有价值。Portable Release 的含义是"不需要 Installer"，不是"状态必须和 exe 放在一起"。
+
+代价（明确接受）：用户不容易自己找到这个目录。这项代价由 Web UI 承担——配置入口本来就是 UI，后续补一个 `Open Data Directory` 即可。
 
 ### 3.3 技术选型与优先级（已确认）
 
@@ -527,16 +564,17 @@ Adapter 是事实来源                   能力、schema、description、执行
 | 5 | 平台范围 | 只服务同一台电脑上的本地浏览器；不做 Mobile、LAN、远程访问；手机形态留给未来的独立项目，不在 WIA 预埋 LAN/server 模式 |
 | 6 | 访问凭证 | 不让用户手工复制 token；启动后自动打开浏览器并自动完成凭证交接（§3.4.1） |
 | 7 | API Key | 允许在 Web UI 填写；只由 Go 后端持久化与读取，任何接口不回传明文，不落浏览器存储（§3.4.2） |
+| 8 | Data Root | 方案 2：`--data-root` > `WIA_DATA_ROOT` > 平台默认目录；统一一个 root，相对路径相对 root 解析；不做 exe 同级默认、不做 portable marker、不做双 root（§3.2.1） |
 
 仍待确认：
 
 | # | 决策 | 影响 |
 | --- | --- | --- |
-| 8 | 10.3 的游戏与接入方式 | 决定成本与可行性；选择标准见 §4.3 |
-| 9 | 静态加密是否用 OS 密钥库（DPAPI 等） | 纵深防御增强项，不改变 §3.4.2 的硬约束；由 10.2 子方案决定 |
-| 10 | 10.1 读类 follow-up 是否本轮做 | 非硬验收；若 MFM 有低成本可读状态可顺带验证 |
-| 11 | `tool_policy` 是否提升为 `Capability.tool_policy` 一等字段 | 由第二个 Adapter 的实际 policy 需求判定，判据见 §4.5；这是 10.3 的退出条件之一，不是可选项 |
-| 12 | 自主触发的实现路线 | 已选定：复用 Phase 9 durable task + wake，作为 10.1 之后的独立小阶段。10.1 不含 Background Trigger，前置待查项见 §2.6 |
+| 9 | 10.3 的游戏与接入方式 | 决定成本与可行性；选择标准见 §4.3 |
+| 10 | 静态加密是否用 OS 密钥库（DPAPI 等） | 纵深防御增强项，不改变 §3.4.2 的硬约束；由 10.2 子方案决定 |
+| 11 | 10.1 读类 follow-up 是否本轮做 | 非硬验收；若 MFM 有低成本可读状态可顺带验证 |
+| 12 | `tool_policy` 是否提升为 `Capability.tool_policy` 一等字段 | 由第二个 Adapter 的实际 policy 需求判定，判据见 §4.5；这是 10.3 的退出条件之一，不是可选项 |
+| 13 | 自主触发的实现路线 | 已选定：复用 Phase 9 durable task + wake，作为 10.1 之后的独立小阶段。10.1 不含 Background Trigger；proposal 注册路径已查清为纯 Adapter 改动，见 §2.6 |
 
 ---
 
