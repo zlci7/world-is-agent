@@ -104,7 +104,13 @@ internal sealed class MailFrameworkIntegration
                     AutoOpen = false,
                     WhichBG = 0,
                 },
-                condition: _ => true,
+                // The condition is the only re-delivery guard on this path. Letter has no
+                // Repeatable property, so MFM never checks "already delivered" itself; the
+                // content-pack path gets that check from MailItem, the API path does not. With a
+                // constant true the letter stays in the repository and every DayStarted ->
+                // UpdateMailBox hands the player the same letter again. The callback below writes
+                // the final id, and that is what turns this condition false.
+                condition: letter => !Game1.player.mailReceived.Contains(letter.Id),
                 callback: letter => onRead(letter),
                 dynamicItems: _ => new List<Item>());
             return "ok";

@@ -285,6 +285,8 @@ Reject-Content 'src/Runtime/CapabilityCatalog.cs' 'phase9|route_probe|load_test_
 Reject-Content 'src/Runtime/RuntimeClient.cs' 'Diagnostics|phase9_route|load_test_save|MailBridgeProbe' 'Runtime must not dispatch the feasibility probe.'
 Require-Content 'src/Diagnostics/StardewMailProbe.cs' 'if \(!config\.EnableMailBridgeProbe\)' 'The mail bridge probe must stay opt-in.'
 Require-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'RegisterLetter' 'The mail integration must register through the MFM API contract.'
+Require-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'condition: letter => !Game1\.player\.mailReceived\.Contains\(letter\.Id\)' 'The mail condition must guard against re-delivery; MFM has no Repeatable check on the API path.'
+Reject-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'condition: _ => true' 'A constant-true mail condition re-delivers the same letter on every DayStarted.'
 Reject-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'MailFrameworkMod\.dll|Assembly\.LoadFrom' 'The mail integration must not load the MFM assembly by path; MFM is an optional dependency.'
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'pathfindToNextScheduleLocation' 'Task NPC travel must use the native cross-location schedule pathfinder.'
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'ControllerOwnership.Release' 'Task NPC cleanup must use the shared controller ownership policy.'

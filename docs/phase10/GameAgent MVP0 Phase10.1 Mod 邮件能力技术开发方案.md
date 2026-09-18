@@ -115,8 +115,10 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 | `condition` **必需**，不能为 null | `MailRepository.GetValidatedLetters()` 直接调用 `l.Condition(l)`，无 null 检查；异常被 catch 并静默忽略该信 | 必须提供一个返回 true 的条件 |
 | `Id` 不能为 null 且会移除空格 | `Letter.Id` 的 setter 执行 `value.Replace(" ","")` | 必须给非空、去空格的稳定 id |
 | 同 id 注册是**替换**而非累积 | `MailRepository.SaveLetter` 对已存在 id 执行 `Letters[index] = letter` | 同 id 会覆盖旧信，因此 id 必须唯一，规则见 §4.1 |
-| `Text` 进入游戏 token 解析器 | `Letter.TranslatedText => TokenParser.ParseText(...)` | **注入面，见 §3** |
+| `condition` 是 API 路径**唯一**的重复投递守卫 | `Letter` **没有** `Repeatable` 属性；`Repeatable` 只存在于 content pack 的 `MailItem` | 内容包路径由 MFM 做"已投递"检查，API 路径没有；恒返回 true 会导致每天重复投递，见 §4.2.2 |
+| `Text` 与 `Title` 都进入游戏 token 解析器 | `Letter.TranslatedText` 与 `Letter.TranslatedTitle` 都调用 `TokenParser.ParseText(...)` | **注入面，两个字段都要校验，见 §3** |
 | 信件必须被玩家打开才产生终止状态 | 终止状态只在信件关闭路径上产生 | 不读信就没有 `mailReceived` 记录 |
+| API 注册的 id 会被去空格改写 | `Letter.Id` setter 执行 `value.Replace(" ", "")`（MFM 内含 `Replace`） | id 里不能含空格，否则查不回自己，见 §4.1 |
 
 ### 2.4 可观察状态（决定怎么验收）
 
@@ -144,17 +146,27 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 
 **`title` 与 `body` 是同一个注入面，两者都必须校验。** MFM 的 `TranslatedTitle` 与 `TranslatedText` **都**调用 `TokenParser.ParseText`（本机 1.20.0 符号表中 `get_TranslatedTitle` 与 `TokenParser` 同时存在）。只校验正文，会留下一个完全等价的未校验命令通道。
 
-白名单把"我们是否搞清了 TokenParser 语法"从安全前提里移除。两个字段共用同一套字符规则，只有长度与换行不同：
+白名单必须是**封闭集合**，不能写成"允许可打印字符、再拒绝几个特殊字符"——后者仍然是黑名单，因为 `$ # { } < > \ | ~ `` 等会全部放行，而这恰恰是本方案开头说不能依赖的做法。
+
+判定规则（两个字段共用，只有 `^` 与长度不同）：
 
 ```text
-                          title            body
-允许  可打印字符（含中文）   ✓                ✓
-允许  ^                    ✗ 标题按单行处理    ✓ 限制出现次数
-允许  @                    限次              限次
-拒绝  [ ] %                一律拒绝           一律拒绝
-拒绝  控制字符              ✓                ✓
-限制  长度上限              较短              与信件 UI 容量对齐
+允许    Unicode 字母、数字、文字（含汉字）
+允许    普通空格
+允许    明确列出的标点：，。！？、；：…—（）《》""'' 与 , . ! ? ; : ( ) - ——
+允许    @                    两个字段都限次
+允许    ^                    仅 body，限次；title 按单行处理，拒绝
+拒绝    其余一切字符          默认拒绝，含 [ ] % $ # { } < > \ | ~ ` 等
+限制    长度上限              title 较短，body 与信件 UI 容量对齐
 ```
+
+实现必须写成"**在 safe set 里才放行**"，而不是"不在 deny set 里就放行"。ASCII 标点要逐个参数化测试：
+
+```text
+! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ ` { | } ~
+```
+
+只有明确列进安全集的才通过，其余一律返回 `REJECTED`。**只要一个字符没有被显式允许，它就不该通过**——这就是白名单与黑名单的区别。
 
 **为什么 `^` 和 `@` 是允许而不是拒绝**：两者都是排版能力，不是副作用通道（一个换行、一个替换玩家名）。全部拒绝会让每封信挤成一行，直接损害 §5.2 的人设一致性验收。允许并限次，而不是拒绝。
 
@@ -182,11 +194,13 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 
 更要紧的是：**Repository 的同 id 替换，不等于投递队列去重。** `MailController` 自己还持有一份待投递信件对象。`RegisterLetter(A)` 之后重试 `RegisterLetter(A')`，Repository 里 A 被 A' 替换，但 A 与 A' 已经是两个对象，**队列里可能已经排了两封**。
 
-因此 id 绑定到 `ActionRequest.action_id`：
+因此 id 绑定到 `ActionRequest.action_id`，**只用它，不拼 NPC 名**：
 
 ```text
-wia.{npc_entity_id}.{action_id}
+wia.{action_id}
 ```
+
+`action_id` 本身已是形如 `act_<UnixNano>_<counter>` 的 ASCII 稳定字符串，天然适合做 MFM 的 Id。**不要再拼 `npc_entity_id`**：它是 `"npc:" + npcName`，而 NPC 名可以含空格（例如 `Mr. Qi`），MFM 的 `Letter.Id` setter 会执行 `value.Replace(" ", "")`，于是存进去的 id 与我们用来查的 id 不一致，Action 级幂等就被 MFM 自己的 Id 规范化绕过去了。NPC 归属关系本来就在 `ActionRequest.entity_id`、trace 和 turn 里，不需要塞进信件 id。
 
 同一个 Action 重放必须复用同一个 mail id；**且注册前先判断该 id 是否已注册或已投递，已存在则不再注册**。不使用随机数，也不使用会在重试时漂移的序号。
 
@@ -243,9 +257,13 @@ api.RegisterLetter(
     dynamicItems: _ => new List<Item>());
 ```
 
-SMAPI 的 `GetApi<T>` 会把 MFM 的 API 映射到本接口（"mapped to a given interface which specifies the expected properties and methods"，不兼容时返回 `null`）。本机 SMAPI 4.3.2.0 内含 Castle DynamicProxy（`ProxyManager` / `ObtainProxy` / `DynamicProxyGenAssembly2`），这正是社区里"不引用别人 DLL 也能调用别人 API"的标准做法。
+SMAPI 的 `GetApi<T>` 会把 MFM 的 API 映射到本接口（"mapped to a given interface which specifies the expected properties and methods"，不兼容时返回 `null`）。映射由 **Nanoray.Pintail** 实现（本机 SMAPI 4.3.2.0 内含 `Nanoray.Pintail` 与 `IProxyManager` / `ObtainProxy`；注意不是 Castle DynamicProxy，早期版本的本方案把这一点写错了）。
+
+这条路线不是本方案的新发明，有两重现成依据：SMAPI 自 3.14.0 起就支持把**自定义 interface 作为入参**；MFM 作者自己的 CustomCaskMod 正是用"本地声明 `IMailFrameworkModApi` / `ILetter` + 自建 `ApiLetter` + `GetApi<T>`"的同一模式调用 MFM。探针因此只用来确认当前 **SMAPI 4.3.2 + MFM 1.20.0 + WIA** 这个具体组合，而不是验证一个未经验证的设想。
 
 `condition` 必须恒返回 `true`：`MailRepository.GetValidatedLetters()` 直接调用它且没有 null 检查（§2.3）。
+
+`condition` 的写法见 §4.2.2，它不是可选项。
 
 **仍然需要反射的只有立即投递与投递证据**——它们是静态方法，无接口可映射：
 
@@ -253,6 +271,8 @@ SMAPI 的 `GetApi<T>` 会把 MFM 的 API 映射到本接口（"mapped to a given
 MailFrameworkMod.MailController.UpdateMailBox()     立即投递
 MailFrameworkMod.MailController.HasCustomMail()     投递证据
 ```
+
+定位这两个方法**不能**用 `api.GetType().Assembly`：`api` 是 Pintail 生成的映射代理，它的程序集里没有 MFM 的类型。要用非泛型的 `helper.ModRegistry.GetApi(uniqueId)` 拿到未代理的对象，再取其程序集；找不到时回退为扫描已加载程序集。
 
 #### 4.2.1 callback 必须显式写入 letter.Id
 
@@ -276,22 +296,64 @@ callback: letter =>
 
 这与"用调试命令直接写 `mailReceived`"不是一回事：callback 是 MFM 自己的信件完成钩子，只在玩家真正关掉那封信之后才被调用（边界说明见 §5.1）。
 
-#### 4.2.2 开工第一个提交必须是接口桥接探针
+#### 4.2.2 condition 必须防重复投递（P0）
 
-`GetApi<T>` 的接口映射有 SMAPI 文档与 Castle DynamicProxy 佐证，但**"把本地声明的 `ILetter` 实例作为实参传给 MFM"这一步没有实证**——它需要 Castle 生成反向代理，把我们的 DTO 桥接到 MFM 的 `ILetter`。
+**`condition: _ => true` 会让玩家每天重新收到同一封信。**
 
-因此 10.1 的**第一个提交必须是最小探针**：注册一封固定文本的信并投递，只验证接口映射与参数桥接成立，不掺其它改动。
-
-**探针不通过就退回反射方案**：
+`MailRepository` 里的 Letter **不会被删除**，而 `UpdateMailBox` 在每次 `DayStarted` 都会重新跑一遍 `condition`。所以读完信之后：
 
 ```text
-反射解析 MailFrameworkMod.Letter 与 ApiLetter，
-用 System.Linq.Expressions 构造 Func<Letter,bool> / Action<Letter> 委托
+Repository 里仍有这封信
+condition 仍然返回 true
+→ 再次投递
 ```
 
-退路的每一步都已在 §2.1 核实可行，只是复杂。先试契约方案，是因为它能一次消掉整块运行时委托构造。
+关键证据：`Letter` **没有** `Repeatable` 属性（只有 Id / Text / Items / Recipe / Condition / Callback 等），`Repeatable` 是 content pack `MailItem` 的字段。也就是说**内容包路径由 MFM 自己做"已投递"检查，而 API 注册路径没有——`condition` 是唯一的守卫**。MFM 作者的 CustomCaskMod 用的正是：
 
-**已实现**：契约声明在 `src/Integrations/MailFramework/`（`IMailFrameworkModApi` / `ILetter` / `MailLetter` / `MailFrameworkIntegration`，前两者必须是 `public`，否则 SMAPI 生成的映射代理无法实现内部接口），探针在 `src/Diagnostics/StardewMailProbe.cs`。启用方式与判读见 §5.4。
+```csharp
+condition: letter => !Game1.player.mailReceived.Contains(letter.Id)
+```
+
+因此本方案固定为：
+
+```csharp
+condition: letter => !Game1.player.mailReceived.Contains(letter.Id),
+callback:  letter => { if (!Game1.player.mailReceived.Contains(letter.Id))
+                           Game1.player.mailReceived.Add(letter.Id); }
+```
+
+语义才闭合：
+
+```text
+未读  → condition = true  → 可投递
+读完  → callback 写入最终 id
+之后  → condition = false → 永不重复投递
+```
+
+`check-context-static.ps1` 已加断言禁止 `condition: _ => true` 回归。
+
+#### 4.2.3 开工第一个提交必须是接口桥接探针
+
+已经有 SMAPI 自 3.14.0 起的自定义 interface 入参支持、以及 MFM 作者 CustomCaskMod 的同类实践作依据（§4.2），但**"当前这套 SMAPI 4.3.2 + MFM 1.20.0 + WIA 组合"仍需要一个实证**。因此 10.1 的第一个提交是最小探针：注册一封固定文本的信并投递，只验证接口映射与参数桥接成立，不掺其它改动。
+
+**探针不通过再设计退路**，不提前细化：
+
+```text
+若 GetApi<T> 与参数桥接不成立：
+改为全反射调用 MFM API，按 RegisterLetter 的运行时参数类型
+构造 ILetter 与 Func<ILetter,bool> / Action<ILetter> / dynamicItems。
+具体实现由探针的失败结果决定——提前设计容易把 Letter 与 ILetter 又混一次。
+```
+
+**已实现并已跑过第一轮**（`src/Integrations/MailFramework/` + `src/Diagnostics/StardewMailProbe.cs`）：
+
+```text
+接口映射成立   GetApi<IMailFrameworkModApi> 返回了非 null，没有报 mail_framework_unavailable
+契约已核对     本地两个接口与 MFM 1.20.0 逐成员一致（ILetter 12 项、API 4 项）
+首轮暴露的问题 api.GetType() 是 Pintail 代理，不是 MFM 的程序集 → 已改用非泛型 GetApi 定位
+```
+
+前两者说明契约方案的技术前提成立，退路大概率用不上。契约接口必须是 `public`，否则映射代理无法实现它。启用方式与判读见 §5.4。
 
 **必须满足**：
 
@@ -408,7 +470,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 
 ### 5.4 实机步骤
 
-**探针先跑（§4.2.2）。** 在 `Mods/GameAgentStardew/config.json` 里把 `EnableMailBridgeProbe` 设为 `true`，启动游戏并加载存档，然后执行控制台命令：
+**探针先跑（§4.2.3）。** 在 `Mods/GameAgentStardew/config.json` 里把 `EnableMailBridgeProbe` 设为 `true`，启动游戏并加载存档，然后执行控制台命令：
 
 ```text
 gameagent_mail_probe
@@ -425,7 +487,7 @@ callback_fired   玩家关掉那封信之后出现，证明 callback 也跨过�
 verdict          bridge_ok / bridge_incomplete / bridge_failed
 ```
 
-`verdict=bridge_ok` 且玩家读信后出现 `callback_fired` = 契约方案成立，可以继续。**只有 `resolve` 成功而 `register` 失败，才说明桥接不成立**，按 §4.2.2 退回反射方案。
+`verdict=bridge_ok` 且玩家读信后出现 `callback_fired` = 契约方案成立，可以继续。**只有 `resolve` 成功而 `register` 失败，才说明桥接不成立**，按 §4.2.3 设计退路。
 
 探针用固定文本、不经过 §3 校验，它验证的是机制而不是安全规则，不能当成能力调用。
 
@@ -459,13 +521,34 @@ verdict          bridge_ok / bridge_incomplete / bridge_failed
 
 **若仍不选中**：记录实际对话、模型输出与工具选择，作为失败证据分析，**不放宽"不点名"条件来凑通过**。若确认问题出在能力描述或工具清单，先修 `description` / schema 再重采。
 
+### 5.6 负向用例：不该发信时不调用（总纲硬验收）
+
+总纲 §2.2 把"能力不适用时模型不调用"列为判定类硬验收，§2.5 第 5 条是它的退出条件。它是这一轮的**另一半结论**：
+
+```text
+模型会选 send_mail  ≠  模型看见新工具就乱用
+```
+
+只验正向，等于只证明了一半。因此 §5.5 的采样必须包含 2～3 个**明显不需要邮件**的场景：
+
+```text
+场景类型        玩家台词示例
+当下事实询问    今天天气怎么样？ / 现在几点了？
+面对面即时话题  你手上拿的是什么？
+简单确认        好的，那明天见。
+```
+
+这三类都满足：NPC 就在玩家面前，对话可以当场结束，没有任何需要异步转达的内容。
+
+**预期**：模型可以 `present_dialogue` 或直接结束，**不得调用 `send_mail`**。判定标准与正向一致——逐场景记录实际工具选择，出现 `send_mail` 即判不通过，并保留完整对话与模型输出。
+
 ---
 
 ## 6. 未确认项与已解决项
 
 | # | 未知 | 影响 | 计划 |
 | --- | --- | --- | --- |
-| 1 | `GetApi<T>` 能否把本地声明的 `ILetter` 实参桥接到 MFM 的 `ILetter` | 决定用契约方案还是退回反射方案 | 开工第一个提交做最小探针；不通过则走 §4.2.2 的退路 |
+| 1 | `GetApi<T>` 能否把本地声明的 `ILetter` 实参桥接到 MFM 的 `ILetter` | 决定用契约方案还是退回全反射 | 接口映射已实证成立；参数桥接由第一个提交的探针确认，不通过则按 §4.2.3 设计退路 |
 | 2 | 运行时 `RegisterLetter` 在存档加载后是否立即可投递 | 决定立即投递是否成立 | 第 1 个模块就用日志验证 |
 | 3 | 原版 mail 的 `%` 前缀命令是否也在 `Text` 解析链上 | 只影响"为什么拒绝 `%`"的解释，不影响校验本身 | 白名单已一律拒绝 `%`，不必先验证 |
 | 4 | `TokenParser` 的确切语法 | 无——白名单不依赖它 | 不验证。只有黑名单才需要先摸清语法，本轮已弃用黑名单 |
@@ -483,5 +566,6 @@ verdict          bridge_ok / bridge_incomplete / bridge_failed
 3. 信件成功投递，玩家可读，`mailReceived` 记录 letter.Id。
 4. §3 的 title / body 白名单校验、§4.1 的 Action 级幂等（同一 Action 重放不产生第二封待投递信）均有自动化测试覆盖，超范围字符与注入样本被拒。
 5. 人设一致性按 §5.2 完成一轮采样与判定。
-6. §5.3 全部通过；`check-architecture.ps1` 的 game-agnostic 断言未被削弱。
-7. 协议与 Mod 运行时标识未改动。
+6. 负向用例按 §5.6 通过：能力可用但语义不适用时，模型未调用 `send_mail`。
+7. §5.3 全部通过；`check-architecture.ps1` 的 game-agnostic 断言未被削弱。
+8. 协议与 Mod 运行时标识未改动。
