@@ -26,29 +26,31 @@ internal sealed class MailFrameworkIntegration
     private const string UpdateMailBoxMethodName = "UpdateMailBox";
     private const string HasCustomMailMethodName = "HasCustomMail";
 
+    private readonly IModHelper helper;
     private readonly IMailFrameworkModApi api;
     private readonly ITranslationHelper translation;
-    private readonly MethodInfo updateMailBox;
-    private readonly MethodInfo hasCustomMail;
 
-    private MailFrameworkIntegration(
-        IMailFrameworkModApi api,
-        ITranslationHelper translation,
-        MethodInfo updateMailBox,
-        MethodInfo hasCustomMail)
+    private MethodInfo? updateMailBox;
+    private MethodInfo? hasCustomMail;
+    private bool controllerProbed;
+
+    private MailFrameworkIntegration(IModHelper helper, IMailFrameworkModApi api, ITranslationHelper translation)
     {
+        this.helper = helper;
         this.api = api;
         this.translation = translation;
-        this.updateMailBox = updateMailBox;
-        this.hasCustomMail = hasCustomMail;
     }
 
     /// <summary>Last failure detail, for logging only. Never surfaced to the model.</summary>
     public string LastError { get; private set; } = string.Empty;
 
+    /// <summary>Which assembly the MailController lookup settled on, for diagnostics.</summary>
+    public string ControllerSource { get; private set; } = string.Empty;
+
     /// <summary>
-    /// Resolve MFM through SMAPI's interface mapping. Returns false with a specific code rather
-    /// than throwing, so the Adapter loads normally when MFM is absent.
+    /// Resolve MFM through SMAPI's interface mapping. This deliberately checks the API only:
+    /// whether the API maps is the separate question the bridge probe answers first, and a
+    /// failure to locate MailController must not mask it.
     /// </summary>
     public static bool TryResolve(
         IModHelper helper,
@@ -76,25 +78,7 @@ internal sealed class MailFrameworkIntegration
             return false;
         }
 
-        // The API instance is MFM's own object, so its assembly is MFM's assembly. This is more
-        // reliable than probing the Mods directory for a file path.
-        Type? controller = api.GetType().Assembly.GetType(MailControllerTypeName, throwOnError: false);
-        MethodInfo? update = controller?.GetMethod(
-            UpdateMailBoxMethodName, BindingFlags.Public | BindingFlags.Static);
-        MethodInfo? has = controller?.GetMethod(
-            HasCustomMailMethodName, BindingFlags.Public | BindingFlags.Static);
-
-        if (controller is null || update is null || has is null)
-        {
-            code = "mail_framework_layout_unexpected";
-            monitor.Log(
-                $"GameAgent MFM layout unexpected: controller={controller is not null} " +
-                $"update={update is not null} hasCustomMail={has is not null}",
-                LogLevel.Warn);
-            return false;
-        }
-
-        integration = new MailFrameworkIntegration(api, helper.Translation, update, has);
+        integration = new MailFrameworkIntegration(helper, api, helper.Translation);
         code = "ok";
         return true;
     }
@@ -136,9 +120,11 @@ internal sealed class MailFrameworkIntegration
     public bool RequestDelivery(out string code)
     {
         this.LastError = string.Empty;
+        if (!this.TryResolveController(out code))
+            return false;
         try
         {
-            this.updateMailBox.Invoke(null, null);
+            this.updateMailBox!.Invoke(null, null);
             code = "ok";
             return true;
         }
@@ -155,9 +141,11 @@ internal sealed class MailFrameworkIntegration
     {
         this.LastError = string.Empty;
         hasCustomMail = false;
+        if (!this.TryResolveController(out code))
+            return false;
         try
         {
-            object? value = this.hasCustomMail.Invoke(null, null);
+            object? value = this.hasCustomMail!.Invoke(null, null);
             hasCustomMail = value is true;
             code = "ok";
             return true;
@@ -168,6 +156,72 @@ internal sealed class MailFrameworkIntegration
             code = "mail_probe_failed";
             return false;
         }
+    }
+
+    /// <summary>
+    /// Locate MFM's assembly and pull out the two static entry points.
+    /// <para>
+    /// The mapped API instance cannot be used for this: <c>api.GetType()</c> is SMAPI's generated
+    /// proxy, which lives in a dynamic assembly rather than MFM's. The non-generic registry call
+    /// returns MFM's own object, and scanning loaded assemblies covers the case where it does not.
+    /// </para>
+    /// </summary>
+    private bool TryResolveController(out string code)
+    {
+        if (this.controllerProbed)
+        {
+            code = this.updateMailBox is null || this.hasCustomMail is null
+                ? "mail_framework_layout_unexpected"
+                : "ok";
+            return code == "ok";
+        }
+
+        this.controllerProbed = true;
+
+        Type? controller = FindMailController();
+        this.updateMailBox = controller?.GetMethod(UpdateMailBoxMethodName, BindingFlags.Public | BindingFlags.Static);
+        this.hasCustomMail = controller?.GetMethod(HasCustomMailMethodName, BindingFlags.Public | BindingFlags.Static);
+
+        if (this.updateMailBox is null || this.hasCustomMail is null)
+        {
+            code = "mail_framework_layout_unexpected";
+            return false;
+        }
+
+        code = "ok";
+        return true;
+    }
+
+    private Type? FindMailController()
+    {
+        // Preferred: the unproxied API object, whose assembly is MFM's.
+        try
+        {
+            object? raw = this.helper.ModRegistry.GetApi(UniqueId);
+            Type? direct = raw?.GetType().Assembly.GetType(MailControllerTypeName, throwOnError: false);
+            if (direct is not null)
+            {
+                this.ControllerSource = raw!.GetType().Assembly.GetName().Name ?? "unknown";
+                return direct;
+            }
+        }
+        catch (Exception ex)
+        {
+            this.LastError = Describe(ex);
+        }
+
+        // Fallback: MFM's assembly is loaded (its API resolved), so scan for the type.
+        foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type? found = assembly.GetType(MailControllerTypeName, throwOnError: false);
+            if (found is not null)
+            {
+                this.ControllerSource = assembly.GetName().Name ?? "unknown";
+                return found;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Unwrap TargetInvocationException so the log shows MFM's real failure.</summary>

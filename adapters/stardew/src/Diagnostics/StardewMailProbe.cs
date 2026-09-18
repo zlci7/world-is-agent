@@ -9,9 +9,11 @@ namespace GameAgent.Stardew.Diagnostics;
 /// <summary>
 /// Opt-in probe for the Mail Framework Mod integration boundary (Phase10.1 §4.2.2).
 /// <para>
-/// It answers one question and nothing else: can SMAPI map MFM's API onto the Adapter's locally
-/// declared contract, and can the Adapter's own letter object and delegates cross that boundary?
-/// Until this passes, every other 10.1 decision rests on an assumption.
+/// It answers two questions separately. First, can SMAPI map MFM's API onto the Adapter's
+/// locally declared contract, and can the Adapter's own letter object and delegates cross that
+/// boundary? Second, can the two static MailController entry points be found reflectively?
+/// They fail for unrelated reasons, so the probe reports them apart rather than stopping at the
+/// first one.
 /// </para>
 /// <para>
 /// The probe deliberately uses fixed text and no model input: it exercises the mechanism, not
@@ -70,15 +72,17 @@ internal static class StardewMailProbe
             return;
         }
 
+        // Step 1: interface mapping. Reaching this point at all means the contract matched.
         if (!MailFrameworkIntegration.TryResolve(helper, monitor, out MailFrameworkIntegration? integration, out string resolveCode))
         {
             Emit(monitor, "resolve", resolveCode);
-            Emit(monitor, "verdict", "bridge_failed", detail: "contract did not map");
+            Emit(monitor, "verdict", "bridge_failed", detail: "API contract did not map");
             return;
         }
 
         Emit(monitor, "resolve", resolveCode, detail: "mapped");
 
+        // Step 2: bridging. Our letter object and our delegates crossing the mapped boundary.
         string registerCode = integration!.RegisterLetter(
             ProbeMailId,
             ProbeTitle,
@@ -93,29 +97,32 @@ internal static class StardewMailProbe
             });
 
         Emit(monitor, "register", registerCode, detail: integration.LastError);
-        if (registerCode != "ok")
-        {
-            Emit(monitor, "verdict", "bridge_failed", detail: "RegisterLetter rejected the bridged letter");
-            return;
-        }
 
+        // Step 3: delivery. Reflection over static methods, a separate concern from bridging.
         bool delivered = integration.RequestDelivery(out string deliveryCode);
-        Emit(monitor, "deliver", deliveryCode, detail: integration.LastError);
+        Emit(monitor, "deliver", deliveryCode, detail: $"{integration.LastError} controller={integration.ControllerSource}");
 
         bool read = integration.TryHasCustomMail(out bool hasCustomMail, out string hasCode);
         Emit(monitor, "has_custom_mail", hasCode, detail: read ? hasCustomMail.ToString() : integration.LastError);
 
+        string verdict = registerCode != "ok"
+            ? "bridge_failed"
+            : delivered && read && hasCustomMail
+                ? "bridge_ok"
+                : "bridge_ok_delivery_incomplete";
+
         Emit(
             monitor,
             "verdict",
-            delivered && read && hasCustomMail ? "bridge_ok" : "bridge_incomplete",
-            detail: $"mail_id={ProbeMailId} callback_pending=true read_letter_to_confirm_callback");
+            verdict,
+            detail: $"mail_id={ProbeMailId} register={registerCode} deliver={deliveryCode} controller={integration.ControllerSource}");
     }
 
     private static void Emit(IMonitor monitor, string step, string code, string detail = "")
     {
+        bool good = code is "ok" or "mapped" or "bridge_ok" or "bridge_ok_delivery_incomplete";
         monitor.Log(
             "wia_mail_bridge_probe " + JsonSerializer.Serialize(new { step, code, detail }, Json),
-            code == "ok" || code == "bridge_ok" || code == "mapped" ? LogLevel.Info : LogLevel.Warn);
+            good ? LogLevel.Info : LogLevel.Warn);
     }
 }
