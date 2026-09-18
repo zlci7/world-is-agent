@@ -346,7 +346,41 @@ Adapter 接入是否有可复用的检查表与最小脚手架？
 Phase A 的协议依赖方式在独立仓库里是否成立？
 ```
 
-### 4.5 明确不做
+### 4.5 协议字段提升判定：tool_policy
+
+Runtime-facing 执行策略当前承载在 `Capability.extensions.gameagent.tool_policy`，是一个未类型化的 `google.protobuf.Struct`，Runtime 侧解析见 `runtime/internal/tool/types.go` 的 `toolPolicyFromCapability`。这是 Phase6 的显式决策，不是遗留做法：
+
+> Phase6 不新增 `CapabilityPolicy` 正式 proto 字段，Runtime 可读的 tool policy 使用现有 `Capability.extensions.gameagent.tool_policy` 承载。
+
+依据是 [AGENTS.md](../../AGENTS.md) 的协议变更原则：尚未稳定为协议核心的 capability policy 优先使用 `Capability.extensions` 验证；详情见 [Mod 能力接入规范](../development/mod-capability-integration.md) §4.4。
+
+**这个选择有真实代价，必须如实记录，不能当成零成本：**
+
+```text
+无编译期类型检查       Adapter 侧是 toolPolicy.Fields.Add("exclusive_per_step", Value.ForBool(true))，字符串 key
+拼写错误静默失败       错误 key 不报错，Runtime 按零值处理，能力调度行为静默改变
+分层解析复杂           三层可空拆解，且"字段缺失"与"类型非法"语义不同，后者跳过该 capability 并记 diagnostic
+测试覆盖有限           现有断言只覆盖 Stardew present_dialogue 这一个使用点，不能替未来的 Adapter 挡住拼写错误
+```
+
+**判定时机就是本子阶段。** 第二个 Adapter 是第一个非 Stardew 的 policy 消费者，只有它能回答"key 集合是否已经稳定"：
+
+```text
+第二个 Adapter 需要 Stardew 没有的 policy key   → key 集合仍在演化，继续留在 extensions
+第二个 Adapter 需要的正好是现有那两个 key       → 集合已稳定，提升为 Capability.tool_policy 一等字段
+```
+
+判据依据的是可观察事实，不是"感觉稳定了"。若判定为提升，必须满足：
+
+```text
+additive 变更       新增 Capability.tool_policy，不移除、不重命名现有字段
+双读过渡            Runtime 同时读一等字段与 extensions；Adapter 独立发布，老 Adapter 不得因此失效
+不引入双来源        过渡期内同一语义只有一处权威来源，不得两处并行生效
+```
+
+提升与否及其依据必须在 10.3 结束时给出明确结论并记录，不接受无结论收尾。
+
+### 4.6 明确不做
 
 ```text
 与 Stardew 功能对等             第二个 Adapter 是泛化验证，不是功能追赶
@@ -355,7 +389,7 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 完整游戏覆盖                    只覆盖证明泛化所需的最小能力集
 ```
 
-### 4.6 内部拆分与提交粒度
+### 4.7 内部拆分与提交粒度
 
 10.3 包含三件性质不同的事，**不得揉成一个巨大提交**：
 
@@ -367,13 +401,14 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 
 各自独立方案、独立验收、独立提交。A 与 B 的顺序可依实际情况调整，但 C 必须在 A、B 之后——检查表应由真实经历沉淀，而不是先写规范再套用。
 
-### 4.7 退出条件
+### 4.8 退出条件
 
 1. 第二个 Adapter 能在独立仓库中构建、运行并与 Runtime 建立连接。
 2. Runtime Core 未新增该游戏的任何专属分支（`check-architecture.ps1` 断言不被削弱，需覆盖新 Adapter）。
 3. 该游戏至少完成一条"游戏事件 → AgentTurn → 能力执行 → 结果回灌"的真实闭环。
 4. Stardew Adapter 完成物理拆仓，两个仓库都能独立构建与测试。
 5. 沉淀出可复用的 Adapter 接入检查表，且第二个 Adapter 是按该检查表接入的。
+6. §4.5 的 tool_policy 提升判定已给出结论，并记录支持该结论的第二个 Adapter 实际 policy 需求。
 
 ---
 
@@ -447,6 +482,7 @@ Adapter 是事实来源                   能力、schema、description、执行
 | 8 | 10.3 的游戏与接入方式 | 决定成本与可行性；选择标准见 §4.3 |
 | 9 | 静态加密是否用 OS 密钥库（DPAPI 等） | 纵深防御增强项，不改变 §3.4.2 的硬约束；由 10.2 子方案决定 |
 | 10 | 10.1 读类 follow-up 是否本轮做 | 非硬验收；若 MFM 有低成本可读状态可顺带验证 |
+| 11 | `tool_policy` 是否提升为 `Capability.tool_policy` 一等字段 | 由第二个 Adapter 的实际 policy 需求判定，判据见 §4.5；这是 10.3 的退出条件之一，不是可选项 |
 
 ---
 
