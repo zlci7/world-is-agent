@@ -77,7 +77,10 @@ func Default(env Env) (string, error) {
 		}
 		return filepath.Join(home, "Library", "Application Support", darwinAppDir), nil
 	default:
-		if dir := strings.TrimSpace(env.Getenv("XDG_DATA_HOME")); dir != "" {
+		// XDG_DATA_HOME must be an absolute path. A relative value is ignored rather
+		// than joined, because joining it would silently make the data root depend on
+		// the working directory again.
+		if dir := strings.TrimSpace(env.Getenv("XDG_DATA_HOME")); filepath.IsAbs(dir) {
 			return filepath.Join(dir, linuxAppDir), nil
 		}
 		home, err := env.HomeDir()

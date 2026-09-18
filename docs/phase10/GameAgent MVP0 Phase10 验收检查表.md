@@ -145,16 +145,18 @@ Pop-Location
 | A5 不依赖 cwd | 通过 | 以空目录为 cwd 启动，该目录事后仍为 0 项；数据全部落在 `--data-root` |
 | A6 正常关闭 | **未验证** | 见上；信号路径本轮未改动 |
 
-观察到的数据根布局（开发配置 + `--data-root <root>`）：
+观察到的数据根布局（Stardew profile + `--data-root <root>`）：
 
 ```text
 <root>/config/                     ← 显式配置所在（GAMEAGENT_AGENT_CONFIG 指向其中）
 <root>/config/games/               ← definition_catalog_root="config/games" 相对 root 解析
 <root>/data/traces.jsonl           ← trace 默认
 <root>/data/tasks/tasks.sqlite     ← task 默认
+<root>/data/memory/                ← memory 默认（Stardew profile 未配置 memory_store.root）
 <root>/secrets/                    ← 预留
-<root>/.local/memory/              ← 开发配置显式写的 memory_store.root
 ```
+
+> Stardew profile（`runtime/config/games/stardew-valley/agent.json`）**没有**配置 `memory_store.root`，因此走默认 `data/memory`；实测该次运行也没有生成 `.local/`。基础配置 `runtime/config/agent.json` 里遗留的 `.local/memory`、`.local/tasks/tasks.sqlite` 只在使用基础配置时才生效，与 Stardew profile 无关。
 
 > 记录一次未复现的异常：某次 A3 复跑出现"进程存活但零日志、且 `data/`/`secrets/` 未创建"。随后同一命令连续 3 次、以及此前 4 次均正常。零日志意味着进程没有走到 `main` 的第一条日志，**不像本次改动引入的行为**，但未找到解释；若再次出现需优先查清。
 

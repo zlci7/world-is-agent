@@ -351,8 +351,8 @@ DeepSeek API Key      Configured ✓      [ Replace ]
 
 | 步骤 | 内容 | 为什么在这个位置 |
 | --- | --- | --- |
-| 10.2-1 | Runtime Bootstrap & Data Root：控制面先于模型就绪（未配置也能启动 HTTP）；统一 App/Data Root，数据目录、端口、配置路径、trace、SQLite、definition root 全部从它解析 | 当前未配置模型会在任何 server 之前 `log.Fatalf`，且 trace 路径硬编码依赖从仓库根启动；不做这个后面都不成立 |
-| 10.2-2 | 极简本地 HTTP 面 + 资产内嵌：health / status / turn 列表；`//go:embed` 前端产物 | 客户端要有东西可连；同时它就是 10.1 与 10.3 的调试面。**它同时是 10.2-1 控制面的载体，不是两套 HTTP 面** |
+| 10.2-1 | Runtime Bootstrap & Data Root：Bootstrap 与 Agent Core 分离（未配置模型时进程继续提供 gRPC，状态为 `needs_configuration`）；统一 App/Data Root，配置路径、trace、SQLite、memory root、definition root 全部从它解析 | 当前未配置模型会在任何 server 之前 `log.Fatalf`，且 trace 路径硬编码依赖从仓库根启动；不做这个后面都不成立 |
+| 10.2-2 | 极简本地 HTTP 面 + 资产内嵌：health / status / turn 列表；`//go:embed` 前端产物；**HTTP 的 bind、端口与本地访问保护** | 客户端要有东西可连；同时它就是 10.1 与 10.3 的调试面。**它是 10.2-1 控制面的载体，不是第二套 HTTP 面** |
 | 10.2-3 | 首次运行向导与依赖体检：写配置与 key、检查 .NET / SMAPI / 游戏路径 / key 有效性 | 这一步做完，"外人能跑起来"才成立 |
 | 10.2-4 | 可视化：AgentTurn 时间线（复用现有 JSONL trace）、对话记录、任务与记忆查看 | 这是"好看"，前三步才是"能用" |
 
@@ -537,7 +537,7 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 
 以下工作**可以**与前一子阶段并行，因为它们不依赖前者的结论：
 
-- 10.2-1（Runtime Bootstrap & Data Root）不依赖任何 UI 决策，建议在 10.1 期间顺手完成——10.1 会反复重启 Runtime，受益直接。注意 10.2-1 的"未配置也能启动 HTTP"与 10.2-2 是同一套 HTTP 面，先做 10.2-1 时可以只做最小 control plane，界面留到 10.2-2。
+- 10.2-1（Runtime Bootstrap & Data Root）不依赖任何 UI 决策，建议在 10.1 期间顺手完成——10.1 会反复重启 Runtime，受益直接。10.2-1 只做 Bootstrap 与 Data Root，不含 HTTP：HTTP 面、bind、端口与本地访问保护都属于 10.2-2。
 - 10.3 的游戏选型调研可以提前开展，但**接入实现**必须等 10.1 的 Adapter 接入边界稳定。
 - 10.1 的实机验证与 10.2-3 的环境体检共用"检查依赖是否就绪"的逻辑，避免重复实现。
 

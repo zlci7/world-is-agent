@@ -69,6 +69,9 @@ func TestResolveReturnsAbsolutePaths(t *testing.T) {
 }
 
 func TestDefaultPerPlatform(t *testing.T) {
+	// The absolute XDG case must be absolute for the host OS, because the resolver
+	// asks filepath.IsAbs.
+	xdgHome := t.TempDir()
 	cases := []struct {
 		name string
 		env  Env
@@ -91,12 +94,19 @@ func TestDefaultPerPlatform(t *testing.T) {
 		},
 		{
 			name: "linux uses xdg data home",
-			env:  fakeEnv("linux", map[string]string{"XDG_DATA_HOME": "/xdg/data"}, "/home/player", nil),
-			want: filepath.Join("/xdg/data", linuxAppDir),
+			env:  fakeEnv("linux", map[string]string{"XDG_DATA_HOME": xdgHome}, "/home/player", nil),
+			want: filepath.Join(xdgHome, linuxAppDir),
 		},
 		{
 			name: "linux falls back to local share",
 			env:  fakeEnv("linux", nil, "/home/player", nil),
+			want: filepath.Join("/home/player", ".local", "share", linuxAppDir),
+		},
+		{
+			// XDG_DATA_HOME must be absolute; joining a relative value would make the
+			// data root depend on the working directory again.
+			name: "linux ignores a relative xdg data home",
+			env:  fakeEnv("linux", map[string]string{"XDG_DATA_HOME": "foo"}, "/home/player", nil),
 			want: filepath.Join("/home/player", ".local", "share", linuxAppDir),
 		},
 		{
