@@ -82,6 +82,13 @@ internal static class StardewMailProbe
 
         Emit(monitor, "resolve", resolveCode, detail: "mapped");
 
+        // The probe owns this id, so it may clear its own delivered marker. Without this the
+        // guarded condition makes it single-shot per save: once the letter has been read,
+        // mailReceived holds the id and UpdateMailBox will never queue it again. Only the probe's
+        // own namespaced id is touched; no player progress is involved.
+        if (Game1.player.mailReceived.Remove(ProbeMailId))
+            Emit(monitor, "reset", "ok", detail: "cleared the probe's own mailReceived marker");
+
         // Step 2: bridging. Our letter object and our delegates crossing the mapped boundary.
         string registerCode = integration!.RegisterLetter(
             ProbeMailId,
@@ -96,7 +103,15 @@ internal static class StardewMailProbe
                 Emit(monitor, "callback_fired", "ok", detail: letter.Id);
             });
 
-        Emit(monitor, "register", registerCode, detail: integration.LastError);
+        // Log the exact payload so the letter's on-screen text can be compared against it
+        // without relying on any other record.
+        Emit(
+            monitor,
+            "register",
+            registerCode,
+            detail: registerCode == "ok"
+                ? $"title=\"{ProbeTitle}\" body=\"{ProbeBody}\""
+                : integration.LastError);
 
         // Step 3: delivery. Reflection over static methods, a separate concern from bridging.
         bool delivered = integration.RequestDelivery(out string deliveryCode);

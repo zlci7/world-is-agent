@@ -557,11 +557,11 @@ verdict          bridge_ok / bridge_ok_already_read / bridge_ok_delivery_incompl
 3. 确认日志出现 callback_fired，然后重新执行 gameagent_mail_probe
 ```
 
-第 2 步不能用"机制通了"代替——注册成功、投递成功、回调触发都不蕴含"玩家看到的是我们传的文本"。第一轮探针正是在这一点上给了假阴性。
+第 2 步不能用"机制通了"代替——注册成功、投递成功、回调触发都不蕴含"玩家看到的是我们传的文本"。第一轮探针正是在这一点上给了假阴性。探针会把 `title` 与 `body` 原文打进 `register` 那一行，直接对照即可。
 
 预期第三步 `has_custom_mail` 变为 **false**、verdict 为 **`bridge_ok_already_read`**、`mail_received=true`。这同时证明 callback 的反向桥接与 §4.2.2 的 `condition` 都生效了。
 
-注意探针的 id 是固定的 `wia.probe.bridge`，所以第三步必须在读完信之后做，否则测的还是上一封未读的信。
+探针 id 固定为 `wia.probe.bridge`，而固定 id 加防重复投递的 `condition` 会让它变成"每个存档一次"。因此每次运行前，探针会先清掉**自己这个 id** 在 `mailReceived` 里的标记，并记一行 `reset`。它只动探针自己的命名空间，不涉及任何玩家进度，这样探针可以反复运行。
 
 探针用固定文本、不经过 §3 校验，它验证的是机制而不是安全规则，不能当成能力调用。
 
