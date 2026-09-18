@@ -17,17 +17,6 @@
 * **Agent 隔离**：基于 `game_id + world_id + entity_id` 管理独立 Agent
 * **同步 / 异步执行**：支持游戏动作及长生命周期任务
 
-## 架构
-
-```mermaid
-flowchart LR
-    Game["Game World"] <--> Adapter["Game Adapter"]
-    Adapter <-->|gRPC / Protobuf| Runtime["WIA Runtime"]
-    Runtime <-->|Model API| LLM["LLM"]
-```
-
-Runtime 负责 Agent 的认知与调度，Adapter 负责将不同游戏的状态与能力映射到统一协议。
-
 ## 技术栈
 
 `Golang` · `gRPC` · `Protobuf` · `SQLite` · `C#` · `SMAPI` · `LLM Tool Calling` · `JSON Schema`
