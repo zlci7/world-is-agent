@@ -34,7 +34,7 @@ docs/         架构、状态与开发文档
 
 * [架构设计](ARCHITECTURE.md)
 * [当前状态](docs/STATUS.md)
-* [贡献指南](CONTRIBUTING.md)
+* [开发指南](docs/development/guide.md)
 * [测试与验证](docs/development/testing.md)
 * [Stardew Valley Adapter](adapters/stardew/README.md)
 

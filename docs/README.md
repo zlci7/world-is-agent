@@ -9,7 +9,7 @@ Start here when you want the current repository state:
 - [Project README](../README.md)
 - [Architecture](../ARCHITECTURE.md)
 - [Status](STATUS.md)
-- [Contributing](../CONTRIBUTING.md)
+- [Development Guide](development/guide.md)
 - [Testing Guide](development/testing.md)
 
 ## Architecture And Decisions

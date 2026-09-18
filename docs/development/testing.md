@@ -4,6 +4,8 @@ This guide lists the checks used during local development.
 
 Run commands from the repository root unless noted otherwise.
 
+For development principles, documentation expectations, and protocol or adapter change rules, see [guide.md](guide.md).
+
 ## Go Runtime
 
 ```powershell

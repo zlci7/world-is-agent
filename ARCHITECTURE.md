@@ -168,7 +168,7 @@ Current architecture limits:
 ## Further Reading
 
 - [Current status](docs/STATUS.md)
-- [Contributing](CONTRIBUTING.md)
+- [Development guide](docs/development/guide.md)
 - [Runtime Architecture Baseline](<docs/summary/GameAgent Runtime 整体架构设计规范.md>)
 - [Multi-game Compatibility and Agent Binding](<docs/summary/GameAgent 多游戏兼容性与 Agent Binding 决策.md>)
 - [Stardew Adapter README](adapters/stardew/README.md)
