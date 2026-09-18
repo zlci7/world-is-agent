@@ -21,6 +21,7 @@ Adapter 可以包装第三方 mod 能力并暴露为 Capability，但必须遵�
 - 第三方 mod 的返回值会进入模型上下文，不得把路径、存档内容等不应暴露的信息直接回灌。
 - **外部文本必须先校验再交给游戏**：游戏侧可能把它当命令或 token 解析（例如 MFM 的信件正文）。校验失败返回 `REJECTED`，不写入未经校验的文本。
 - 能力暴露什么，模型就会尝试什么。高风险副作用（发物品、改世界状态、执行命令）不得作为默认能力，需要单独授权。
+- **默认直接执行，不做玩家确认**。当前没有向玩家请求确认的交互机制，因此不引入"需确认"类字段：它没有执行点，加了也只是无人消费的元数据。需要限制副作用时，用 Adapter 侧输入校验、收窄能力参数或干脆不暴露该能力，而不是加一个不生效的标志。
 
 ## 仓库模型
 
@@ -174,7 +175,7 @@ game-specific Observation.state
 
 ```text
 公开事实源
-    README.md、ARCHITECTURE.md、docs/README.md、docs/STATUS.md、protocol/README.md、docs/development/guide.md、docs/development/testing.md
+    README.md、ARCHITECTURE.md、docs/README.md、docs/STATUS.md、protocol/README.md、docs/development/guide.md、docs/development/mod-capability-integration.md、docs/development/testing.md
     必须与当前实现一致，是对外读者的准确入口。
 
 详细基线与规范

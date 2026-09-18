@@ -3,8 +3,8 @@
 > **Status:** Proposed — 等待用户确认后开工
 > **Date:** 2026-09-18
 > **Scope:** 让 agent 自主调用 MailFrameworkMod 的邮件能力，完成"注册信件 → 立即投递 → 玩家读信 → 状态变化"闭环
-> **Decision Record:** 立即投递（触发 MFM 命令）；仅文本（无附件、禁止游戏命令）；验收包含人设一致性
-> **Related:** [guide.md](guide.md)、[logical-separation.md](logical-separation.md)
+> **Decision Record:** 立即投递（触发 MFM 命令）；仅文本（无附件、禁止游戏命令）；验收包含人设一致性；**能力默认直接执行，不引入"需确认"字段**（当前没有向玩家请求确认的交互机制，该字段没有执行点）。安全边界由 §3 输入校验承担。
+> **Related:** [guide.md](guide.md)、[mod-capability-integration.md](mod-capability-integration.md)、[logical-separation.md](logical-separation.md)
 
 ---
 
@@ -125,6 +125,8 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 
 这条不是"安全加分项"，而是本轮能否算"仅文本"的前提。
 
+**注意：不引入 `requires_player_confirmation` 这类字段。** 当前没有向玩家请求确认的交互机制，字段没有执行点，加了也只是无人消费的元数据。本轮的安全边界完全由上面的输入校验承担，并遵守 [mod-capability-integration.md](mod-capability-integration.md) §3.4 与 §3.7。
+
 ---
 
 ## 4. 工作模块
@@ -221,8 +223,20 @@ failed   mail_register_failed / mail_delivery_failed  并带原因
 
 ### 5.3 验证命令
 
+本机存在两个 Stardew 安装，用途不同，不要混用：
+
+```text
+仓库概览路径  是仓库的上级目录，不是游戏安装
+E:\SteamLibrary\steamapps\common\Stardew Valley   干净安装：提供游戏 DLL，供构建与自动化测试
+D:\data\project\game-agent\Stardew Valley         已 mod 化的测试安装：装有 MFM 与 GameAgentStardew，
+                                                  实机验收必须用这一个
+```
+
+构建与自动化测试只需要游戏 DLL，两者皆可；**实机验收必须用已装 MFM 的测试安装**。
+
 ```powershell
-$game = "D:\data\project\game-agent\Stardew Valley"
+# 构建与自动化测试（提供游戏 DLL）
+$game = "E:\SteamLibrary\steamapps\common\Stardew Valley"
 
 go test ./... -count=1
 dotnet build adapters/stardew/GameAgent.Stardew.csproj --configuration Debug -p:GamePath="$game"
@@ -231,6 +245,14 @@ dotnet test adapters/stardew/tests/TaskExecution.Tests/TaskExecution.Tests.cspro
 powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-context-static.ps1
 powershell -ExecutionPolicy Bypass -File scripts/check-architecture.ps1
 git diff --check
+```
+
+实机安装到测试环境（`install-stardew-adapter.ps1` 的 `-GamePath` 同时决定构建引用与安装目标）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
+  -GamePath "D:\data\project\game-agent\Stardew Valley" `
+  -ProjectPath adapters/stardew/GameAgent.Stardew.csproj
 ```
 
 ### 5.4 实机步骤
