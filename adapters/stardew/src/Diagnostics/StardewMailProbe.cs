@@ -105,22 +105,33 @@ internal static class StardewMailProbe
         bool read = integration.TryHasCustomMail(out bool hasCustomMail, out string hasCode);
         Emit(monitor, "has_custom_mail", hasCode, detail: read ? hasCustomMail.ToString() : integration.LastError);
 
+        // Nothing pending is the correct resting state once the letter has been read: the
+        // condition tests mailReceived, which only the callback writes. So an already-read id
+        // proves both the callback and the re-delivery guard, and must not be reported as a
+        // delivery failure.
+        bool alreadyRead = Game1.player.mailReceived.Contains(ProbeMailId);
+
         string verdict = registerCode != "ok"
             ? "bridge_failed"
-            : delivered && read && hasCustomMail
-                ? "bridge_ok"
-                : "bridge_ok_delivery_incomplete";
+            : !delivered || !read
+                ? "bridge_ok_delivery_incomplete"
+                : hasCustomMail
+                    ? "bridge_ok"
+                    : alreadyRead
+                        ? "bridge_ok_already_read"
+                        : "bridge_ok_delivery_incomplete";
 
         Emit(
             monitor,
             "verdict",
             verdict,
-            detail: $"mail_id={ProbeMailId} register={registerCode} deliver={deliveryCode} controller={integration.ControllerSource}");
+            detail: $"mail_id={ProbeMailId} register={registerCode} deliver={deliveryCode} " +
+                $"mail_received={alreadyRead} controller={integration.ControllerSource}");
     }
 
     private static void Emit(IMonitor monitor, string step, string code, string detail = "")
     {
-        bool good = code is "ok" or "mapped" or "bridge_ok" or "bridge_ok_delivery_incomplete";
+        bool good = code is "ok" or "mapped" or "bridge_ok" or "bridge_ok_already_read" or "bridge_ok_delivery_incomplete";
         monitor.Log(
             "wia_mail_bridge_probe " + JsonSerializer.Serialize(new { step, code, detail }, Json),
             good ? LogLevel.Info : LogLevel.Warn);

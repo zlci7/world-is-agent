@@ -345,17 +345,28 @@ callback:  letter => { if (!Game1.player.mailReceived.Contains(letter.Id))
 具体实现由探针的失败结果决定——提前设计容易把 Letter 与 ILetter 又混一次。
 ```
 
-**已实现并通过实机验证**（`src/Integrations/MailFramework/` + `src/Diagnostics/StardewMailProbe.cs`）。实机日志：
+**已实现并通过实机验证**（`src/Integrations/MailFramework/` + `src/Diagnostics/StardewMailProbe.cs`）。两次运行 + 一次读信构成完整证据：
 
 ```text
-resolve          ok    mapped
-register         ok                              ← 我方 DTO 与委托成功跨过接口边界
-deliver          ok    controller=MailFrameworkMod
-has_custom_mail  ok    True
-verdict          bridge_ok
+第一次运行   resolve ok / register ok / deliver ok / has_custom_mail True / verdict bridge_ok
+读信之后     callback_fired  detail=wia.probe.bridge
+第二次运行   resolve ok / register ok / deliver ok / has_custom_mail False
+             verdict bridge_ok_already_read  mail_received=true
+```
+
+结论：
+
+```text
+接口映射成立      GetApi<IMailFrameworkModApi> 由 Nanoray.Pintail 映射成功
+参数桥接成立      我方 MailLetter DTO 与 lambda 委托跨过边界（register=ok）
+回调反向桥接成立  MFM 以它的 ILetter 回调我方 Action<ILetter>（callback_fired）
+mailReceived 写入 callback 体执行了 Add(letter.Id)
+防重复投递生效    第二次 has_custom_mail=False，而 condition 正是查 mailReceived
 ```
 
 **契约方案成立，退路作废。** 最初担心的"必须在运行时用 `System.Linq.Expressions` 构造泛型委托"整块复杂度因此消失，反射只剩 `MailController` 的两个静态方法。
+
+`has_custom_mail=False` 之所以能证明后两项，是因为因果链只有一条：`condition` 查 `!mailReceived.Contains(id)`，而 `mailReceived` 只由 callback 写入。condition 转为 false，只可能是 callback 写成功了。**这一步同时闭合了两个验证项，不需要再写额外探针。**
 
 另外两点已被独立核实：
 
@@ -364,9 +375,7 @@ verdict          bridge_ok
 接口必须 public  否则映射代理无法实现它
 ```
 
-首轮曾失败一次并已修复：`api.GetType()` 是 Pintail 生成的代理，其程序集里没有 MFM 的类型，所以 `MailController` 必须用非泛型 `helper.ModRegistry.GetApi(uniqueId)` 定位。
-
-**尚有一项待验证**：`callback_fired` 只在玩家真正关掉那封信之后出现，它验证回调委托的反向桥接与 §4.2.1 的 `mailReceived` 写入。步骤与预期见 §5.4。
+首轮曾失败两次并已修复：`api.GetType()` 是 Pintail 生成的代理，其程序集里没有 MFM 的类型，所以 `MailController` 必须用非泛型 `helper.ModRegistry.GetApi(uniqueId)` 定位；探针自身的 verdict 曾把"已读且正确不再投递"错报成 delivery incomplete，已改为 `bridge_ok_already_read`。
 
 **必须满足**：
 
@@ -483,7 +492,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 
 ### 5.4 实机步骤
 
-**探针先跑（§4.2.3）。** 在 `Mods/GameAgentStardew/config.json` 里把 `EnableMailBridgeProbe` 设为 `true`，启动游戏并加载存档，然后执行控制台命令：
+**探针已跑通（§4.2.3），本节记录复现方式。** 在 `Mods/GameAgentStardew/config.json` 里把 `EnableMailBridgeProbe` 设为 `true`，启动游戏并加载存档，然后执行控制台命令：
 
 ```text
 gameagent_mail_probe
@@ -497,17 +506,17 @@ register         我方 letter 与委托能否跨过接口边界   ← 这条失
 deliver          反射定位 MailController 并调用 UpdateMailBox()
 has_custom_mail  MFM 是否认为有自定义信待投递
 callback_fired   玩家关掉那封信之后出现，证明回调也跨过了边界
-verdict          bridge_ok / bridge_ok_delivery_incomplete / bridge_failed
+verdict          bridge_ok / bridge_ok_already_read / bridge_ok_delivery_incomplete / bridge_failed
 ```
 
 **收尾两步（验证回调与防重复投递）：**
 
 ```text
-1. 走到信箱前把信读掉
+1. 走到信箱前把信读掉（关掉信件界面的那一刻才触发 callback）
 2. 确认日志出现 callback_fired，然后重新执行 gameagent_mail_probe
 ```
 
-预期第二次运行时 `has_custom_mail` 变为 **false**。这同时证明两件事：callback 的反向桥接成立，且 §4.2.2 的 `condition` 真的阻止了重复投递——因为 callback 写入的 `letter.Id` 让 condition 转成了 false。
+预期第二次运行 `has_custom_mail` 变为 **false**、verdict 为 **`bridge_ok_already_read`**、`mail_received=true`。这同时证明 callback 的反向桥接与 §4.2.2 的 `condition` 都生效了。
 
 注意探针的 id 是固定的 `wia.probe.bridge`，所以第二步必须在读完信之后做，否则测的还是上一封未读的信。
 
@@ -568,15 +577,28 @@ verdict          bridge_ok / bridge_ok_delivery_incomplete / bridge_failed
 
 ## 6. 未确认项与已解决项
 
-| # | 未知 | 影响 | 计划 |
-| --- | --- | --- | --- |
-| 1 | 回调委托能否反向桥接（MFM 以它的 `ILetter` 调用我方 `Action<ILetter>`） | 决定 §4.2.1 的 `mailReceived` 写入是否成立 | 探针读信后应出现 `callback_fired`；接口映射与参数桥接已实证成立 |
-| 2 | 原版 mail 的 `%` 前缀命令是否也在 `Text` 解析链上 | 只影响"为什么拒绝 `%`"的解释，不影响校验本身 | 白名单已一律拒绝 `%`，不必先验证 |
-| 3 | `TokenParser` 的确切语法 | 无——白名单不依赖它 | 不验证。只有黑名单才需要先摸清语法，本轮已弃用黑名单 |
+**没有阻塞开工的未知项了。** 机制侧全部由实机探针确认，剩下的两项是设计上**不需要**验证的：
 
-**已解决，不再是未知项**：`GetApi<T>` 的接口映射与参数桥接已由实机探针确认成立（§4.2.3）；**运行时 `RegisterLetter` 在存档加载后立即可投递**（探针 `deliver=ok`、`has_custom_mail=True`，同一提交内注册即投递）；`RegisterLetter` 的真实签名（`Func<ILetter,bool>` / `Action<ILetter>`）与 `Letter` / `ApiLetter` 的关系已由反射核实（§2.1）；立即投递入口已确定为 `MailController.UpdateMailBox()`（§2.2、§4.4）；`player_debug_updatemailbox` 能否触发已有确定答案（不能，§2.2）；`mailReceived` 的写入方已确定为 callback 自身（§4.2.1，`ValidTagSuffix` 已在本机 1.20.0 符号表中确认）；重复投递的守卫已确定为 `condition`（§4.2.2，`Letter` 无 `Repeatable`）。
+| # | 项 | 为什么不验证 |
+| --- | --- | --- |
+| 1 | 原版 mail 的 `%` 前缀命令是否也在 `Text` 解析链上 | 只影响"为什么拒绝 `%`"的解释，不影响校验本身；白名单已一律拒绝 `%` |
+| 2 | `TokenParser` 的确切语法 | 白名单不依赖它。只有黑名单才需要先摸清语法，本轮已弃用黑名单 |
 
-`AutoOpen=false` + 无附件 + 无 recipe + 非 null condition：这四点使信件走标准 UI 路径，是本轮设计的基础。
+**已解决**：
+
+```text
+接口映射与参数桥接     实机探针确认（§4.2.3）
+回调反向桥接           读信后出现 callback_fired，且第二次运行条件转 false
+mailReceived 写入      由 condition 转 false 反推确认（§4.2.1）
+防重复投递             §4.2.2，Letter 无 Repeatable，condition 是唯一守卫
+存档加载后立即可投递    探针 deliver=ok 且 has_custom_mail=True
+RegisterLetter 签名    Func<ILetter,bool> / Action<ILetter>，已反射核实（§2.1）
+立即投递入口           MailController.UpdateMailBox()（§2.2、§4.4）
+跨 Mod 控制台命令       不可行，ICommandHelper 只有 Add（§2.2）
+契约是否与 MFM 一致     逐成员一致：ILetter 12 项、API 4 项
+```
+
+`AutoOpen=false` + 无附件 + 无 recipe + 非 null 且非常真的 condition：这四点使信件走标准 UI 路径且不会重复投递，是本轮设计的基础。
 
 ---
 
