@@ -271,6 +271,46 @@ Do not use it while the player is standing here and the answer can simply be spo
 
 而 C1 的三个场景里玩家**就站在 NPC 面前**、话可以当面说完——描述正在明确要求模型**不要**在这种情形下用信。C1-3 尤其说明问题：玩家已经给出"当面不好意思说"的框架（描述恰好把这类列为用信场景），模型仍然选择当面说出来。因此这不是"能力没发布"或"模型没看见"，而是**场景与描述不自洽**。
 
+### C1 第 2 次采样：改用延迟型动机 → 自主选中（2026-09-18，NPC=Linus）
+
+把动机换成"玩家明确要求现在别说"，让"当面说完"在逻辑上不成立（描述的护栏因此不再适用，而不是与它对抗）：
+
+```text
+玩家台词  我明天天不亮就出门，一走一整年。这会儿我得去收拾，你先别讲——
+          等我走了以后，再想办法告诉我。
+```
+
+回合 `event_1789735003326_47`（20:36:43）的三步：
+
+| 顺序 | 能力 | 结果 |
+| --- | --- | --- |
+| 1 | `send_mail` | `ActionResult status=Succeeded` |
+| 2 | `present_dialogue` | `"去吧，东西别落下。话我不说，你放心。等你走了，我自有法子。"` |
+| 3 | `emote` = `sad` | `Succeeded` |
+
+`tool_call_selected tool=send_mail` 是本次会话（也是 trace 全量）**第一次**出现。模型还在对话里主动说明自己不说、改用"别的法子"——说明它接住的正是"延迟送达"这个语义，而不是被关键词触发。
+
+信件 id：`wia.act_1789735008225843500_2019`（= `wia.` + 该 ActionRequest 的 `action_id`）。
+
+**结论：A 路线成立，不需要改任何模型可见文本。**
+
+> 附带发现：`RuntimeClient.FormatActionArguments` 只格式化 `emote` / `present_dialogue` / `move_to`，因此 `send_mail` 的 title 与 body **不会**出现在 SMAPI 日志里。信件内容是只能靠读信观察的，日志无法替代。
+
+#### 同一回合暴露的问题：`max_steps_exceeded`
+
+该回合的 `TurnCompletion` 是 **Failed**：
+
+```text
+status=Failed code=max_steps_exceeded message=max steps exceeded: max 3
+```
+
+三个动作全部 `Succeeded`、玩家侧效果正常，但模型每步只用一个工具、三步用尽后没有留下 settle 的机会，于是整回合被标记为失败。这不是邮件能力引入的缺陷，但会被它放大（写一封信往往需要 2–3 个动作）。
+
+影响面：turn 在 trace 与 history 中记为 failed；成功动作仍进入 memory 投影（`ProjectionKindPriorSuccessfulActions`）。对 C1 的退出条件（自主选中 + 成功执行 + 可读）**不构成阻塞**，但会让 10.2-4 的时间线上出现"游戏里明明正常、却显示失败"的回合。
+
+候选处置（待定，属产品行为）：把 Stardew 的 `max_steps` 从 3 调到 4（仅配置改动，重启 Runtime 生效），或保持现状并记为已知限制。
+
+
 ### C2 负向：不该发信时不调用（总纲硬验收）
 
 流程同 C1，期望相反。
