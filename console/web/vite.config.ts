@@ -13,14 +13,14 @@ export default defineConfig({
   plugins: [vue()],
   build: {
     outDir: '../dist',
-    // The output directory is deliberately not emptied. It holds the tracked
-    // placeholder that keeps `//go:embed all:dist` valid, and emptying it would
-    // delete that placeholder on every build: the working tree would show a
-    // deleted file, and building from an emptied tree would fail.
+    // The output directory is deliberately not emptied by Vite: this directory
+    // holds the tracked placeholder that keeps `//go:embed all:dist` valid, and
+    // emptying it would delete that placeholder on every build.
     //
-    // Stale hashed assets from earlier builds are left behind. They are
-    // unreferenced, so they are only disk noise; index.html always points at the
-    // bundle this build produced.
+    // Stale bundles must not be left behind either, because the embed packs
+    // whatever is here into the Runtime binary. `npm run build` therefore runs
+    // scripts/prepare-dist.mjs first, which removes everything but the
+    // placeholder. Run Vite directly only if you accept a growing binary.
     emptyOutDir: false,
   },
   server: {

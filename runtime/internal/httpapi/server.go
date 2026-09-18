@@ -324,7 +324,7 @@ const indexFile = "index.html"
 const assetsMissingMessage = `the client assets are not built.
 
 Build them with:
-    cd console/web && npm install && npm run build
+    cd console/web && npm ci && npm run build
 
 Then embed them by rebuilding the Runtime.`
 

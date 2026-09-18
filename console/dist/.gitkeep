@@ -3,7 +3,7 @@ Runtime binary through `//go:embed all:dist`.
 
 The build output is not tracked. Build it with:
 
-    cd console/web && npm install && npm run build
+    cd console/web && npm ci && npm run build
 
 This placeholder is tracked, and it is what keeps the embed pattern valid before
 the client has ever been built: the embed directive fails to compile if the

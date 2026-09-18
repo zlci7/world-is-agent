@@ -1,10 +1,13 @@
 /** Shapes returned by the Runtime control plane. Keep in step with
  *  runtime/internal/httpapi/server.go. */
 
+/** The model configuration as the Runtime reports it. It carries no credential
+ *  and no field that can carry one: the base URL is absent because a URL can
+ *  embed userinfo or a token, and `api_key_env_name` is the variable name rather
+ *  than the value. */
 export interface ModelSummary {
   provider?: string
   model?: string
-  base_url?: string
   api_key_env_name?: string
   api_key_configured: boolean
 }

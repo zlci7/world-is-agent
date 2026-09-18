@@ -26,7 +26,7 @@ The client is built from `console/web` and embedded into the Runtime binary. Bui
 
 ```powershell
 cd console/web
-npm install
+npm ci
 npm run build
 npm run type-check
 ```

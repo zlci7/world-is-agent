@@ -8,7 +8,6 @@ import "strings"
 type ConfigSummary struct {
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
-	BaseURL  string `json:"base_url,omitempty"`
 
 	// APIKeyEnvName is the environment variable the configuration points at,
 	// and only when it points at one. A credential written into the file
@@ -20,6 +19,12 @@ type ConfigSummary struct {
 }
 
 // DescribeConfig reads a model configuration file and summarizes it.
+//
+// The summary carries no credential and no field that can carry one. base_url is
+// deliberately absent: a URL may embed userinfo or a token in its query, so
+// echoing it would break the invariant that no route returns a credential. A
+// client that needs to show the endpoint should be given a sanitized origin
+// (scheme and host) instead of the configured value.
 func DescribeConfig(path string) (ConfigSummary, error) {
 	config, err := LoadConfig(path)
 	if err != nil {
@@ -29,7 +34,6 @@ func DescribeConfig(path string) (ConfigSummary, error) {
 	summary := ConfigSummary{
 		Provider: config.Provider,
 		Model:    config.Model,
-		BaseURL:  config.BaseURL,
 	}
 	// Only an env: reference has a name that is safe to display. Anything else
 	// is the credential itself and must not leave this package.

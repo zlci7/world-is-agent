@@ -75,6 +75,25 @@ func TestDescribeConfigNeverEchoesAnInlineCredential(t *testing.T) {
 	assertNoSecret(t, summary, "sk-inline-do-not-leak")
 }
 
+// A base URL can carry a credential in its userinfo or its query string, so a
+// summary that echoes it would leak one through the route that promises not to
+// return any. The summary therefore carries no URL at all.
+func TestDescribeConfigNeverEchoesTheBaseURL(t *testing.T) {
+	path := writeModelConfig(t, `{
+		"provider": "deepseek",
+		"api_key": "env:DESCRIBE_BASE_URL_KEY",
+		"base_url": "https://user:sk-url-password@proxy.example.com/v1?token=sk-query-token"
+	}`)
+
+	summary, err := DescribeConfig(path)
+	if err != nil {
+		t.Fatalf("DescribeConfig: %v", err)
+	}
+	assertNoSecret(t, summary, "sk-url-password")
+	assertNoSecret(t, summary, "sk-query-token")
+	assertNoSecret(t, summary, "user:")
+}
+
 func assertNoSecret(t *testing.T, summary ConfigSummary, secret string) {
 	t.Helper()
 	data, err := json.Marshal(summary)

@@ -35,9 +35,11 @@ The client is built separately and is not committed:
 
 ```powershell
 cd console/web
-npm install
+npm ci            # installs exactly what console/web/package-lock.json pins
 npm run build     # writes console/dist, which console/embed.go embeds
 ```
+
+Use `npm install` only when you intend to change a dependency and commit the regenerated lock. `npm run build` clears previous build output first: the bundle is embedded into the Runtime binary, so a leftover bundle would become binary size rather than harmless disk usage.
 
 `go build ./...` succeeds without the client, and the Runtime then reports `assets_not_built` with the commands above instead of serving an empty page. Development against the Vite dev server uses `npm run dev`, which proxies `/api` to `WIA_DEV_RUNTIME` (default `http://127.0.0.1:8765`).
 

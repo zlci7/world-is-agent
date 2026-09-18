@@ -5,36 +5,57 @@ import { exchangeBootstrapToken, fetchStatus, fetchTurns } from './api'
 
 const status = ref<Status | null>(null)
 const turns = ref<Turn[]>([])
-const problem = ref<string | null>(null)
+// Status and turns fail independently on purpose. The Runtime reports a trace it
+// cannot read without failing its own status, and the console is the surface that
+// has to stay useful when something is wrong.
+const statusProblem = ref<string | null>(null)
+const turnsProblem = ref<string | null>(null)
 const unauthorized = ref(false)
 const loaded = ref(false)
 
 let timer: number | undefined
 
-async function refresh() {
-  try {
-    const [nextStatus, nextTurns] = await Promise.all([fetchStatus(), fetchTurns()])
-    status.value = nextStatus
-    turns.value = nextTurns.turns
-    problem.value = null
-    unauthorized.value = false
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
-      unauthorized.value = true
-      problem.value = error.message
-    } else {
-      problem.value = error instanceof Error ? error.message : String(error)
-    }
-  } finally {
-    loaded.value = true
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function noteUnauthorized(error: unknown) {
+  if (error instanceof ApiError && error.status === 401) {
+    unauthorized.value = true
   }
+}
+
+async function refreshStatus() {
+  try {
+    status.value = await fetchStatus()
+    statusProblem.value = null
+  } catch (error) {
+    noteUnauthorized(error)
+    statusProblem.value = describe(error)
+  }
+}
+
+async function refreshTurns() {
+  try {
+    turns.value = (await fetchTurns()).turns
+    turnsProblem.value = null
+  } catch (error) {
+    noteUnauthorized(error)
+    turnsProblem.value = describe(error)
+  }
+}
+
+async function refresh() {
+  // Not Promise.all: one failing read must not hold back the other.
+  await Promise.all([refreshStatus(), refreshTurns()])
+  loaded.value = true
 }
 
 onMounted(async () => {
   try {
     await exchangeBootstrapToken()
   } catch (error) {
-    problem.value = error instanceof Error ? error.message : String(error)
+    turnsProblem.value = describe(error)
   }
   await refresh()
   timer = window.setInterval(refresh, 2000)
@@ -85,10 +106,10 @@ function triggerLabel(turn: Turn): string {
     </header>
 
     <p v-if="unauthorized" class="banner">
-      This browser has no session. Open the URL the Runtime printed at startup — the one with
-      <code>#token=</code> at the end — to hand over the credential.
+      This browser has no session, so the console cannot read the Runtime. The credential is handed
+      over when the Runtime opens the browser itself: restart the Runtime to get a new one. If it was
+      started with <code>--no-open</code>, open the bootstrap URL it printed in the Runtime log.
     </p>
-    <p v-else-if="problem" class="banner banner-error">{{ problem }}</p>
 
     <section v-if="status" class="card">
       <div class="state">
@@ -129,9 +150,15 @@ function triggerLabel(turn: Turn): string {
       </dl>
     </section>
 
+    <section v-else class="card">
+      <h2>Runtime</h2>
+      <p class="problem">{{ statusProblem || 'Reading Runtime status…' }}</p>
+    </section>
+
     <section class="card">
       <h2>Turns</h2>
-      <p v-if="loaded && turns.length === 0" class="empty">
+      <p v-if="turnsProblem" class="problem">Unable to read the trace: {{ turnsProblem }}</p>
+      <p v-if="loaded && !turnsProblem && turns.length === 0" class="empty">
         No turn yet. Talk to an NPC in the game and it will appear here.
       </p>
       <table v-else-if="turns.length > 0">
@@ -236,6 +263,12 @@ header h1 {
 
 .banner-error {
   border-left-color: var(--bad);
+}
+
+.problem {
+  margin: 0;
+  color: var(--bad);
+  overflow-wrap: anywhere;
 }
 
 .card {

@@ -53,7 +53,16 @@ runtime/internal/browser/  调起系统浏览器
 
 `console/dist/.gitkeep` 必须存在，否则 embed 模式匹配不到任何文件、`go build` 直接失败。
 
-前端构建**故意不清空** `dist/`（`emptyOutDir: false`）：Vite 默认会清空输出目录，那样每次构建都会删掉这个被跟踪的占位文件——工作区出现一个"被删除的已跟踪文件"，而从清空后的目录构建会直接失败。代价是历史哈希资源会留下，它们不再被引用，只是磁盘噪音。
+前端构建分两步（`npm run build`）：`scripts/prepare-dist.mjs` 先删掉 `dist/` 下除占位文件以外的一切，再由 Vite 写入。两个约束必须同时满足，任何一个单独看都是错的：
+
+```text
+Vite 不能清空 dist       emptyOutDir: false。清空会删掉被跟踪的占位文件——工作区出现一个
+                        "被删除的已跟踪文件"，而从清空后的目录构建会直接失败
+dist 不能留下旧产物      产物按内容哈希命名，改一次源码就多一个 bundle；而 //go:embed all:dist
+                        会把 dist 里的一切打进运行时二进制。旧 bundle 不是磁盘噪音，是体积
+```
+
+因此删除这件事交给构建脚本，不交给 Vite。只跑 `vite build` 会跳过清理，二进制随之变大。
 
 ## 3. 接口
 
@@ -86,20 +95,25 @@ Origin       POST 校验 Origin，与外来源不匹配即 403（第二道锁，
      → 前端立即清掉 URL fragment
 ```
 
-token 放在 **fragment**：浏览器不会把 fragment 发给服务器，因此它不进访问日志、不进代理、不进 Referer。页面的 `Referrer-Policy` 另外设为 `no-referrer`。
+token 放在 **fragment**：浏览器不会把 fragment 随请求发出，因此它不进 HTTP 请求、不进代理、不进 Referer。页面的 `Referrer-Policy` 另外设为 `no-referrer`。
+
+**但"不进日志"不成立，不能这么写。** 有两条路径会把带 token 的完整 URL 打到 Runtime 日志：`--no-open`，以及自动打开浏览器失败。这是有意保留的人工恢复手段——自动交接失败时用户仍需要一条路进去。正常自动打开路径只打印不带 token 的地址，所以 token 不进**正常路径**的日志。
 
 **bootstrap token 在进程生命周期内有效，且可多次交换。** 单次使用会让第二个浏览器、或清掉 cookie 后的刷新把用户逼到重启 Runtime；而能读到这个 URL 的人本来就能读到日志里的同一个值。重启即失效；需要立刻作废就重启进程。
 
 ### 3.3 密钥不回传
 
-`/api/status` 的模型信息来自 `llm.DescribeConfig`，它只产出 `provider` / `model` / `base_url` / `api_key_env_name` / `api_key_configured`：
+`/api/status` 的模型信息来自 `llm.DescribeConfig`，它只产出 `provider` / `model` / `api_key_env_name` / `api_key_configured`：
 
 ```text
 env:VAR 形式      只回传变量名，不回传变量的值
 直接写入的 key    不回传任何内容（没有可以安全显示的名字），只报告"未配置"
+base_url          不回传。URL 的 userinfo 或 query 可以携带凭证
+                 （https://user:token@host/v1?token=…），回传它等于从"承诺不回传凭证"
+                 的接口泄露一个凭证。要显示 endpoint 时应另给一个只含 scheme + host 的值
 ```
 
-这个不变量由测试固定（`describe_test.go`），因为 10.2-3 的向导要建立在它上面。
+这条不变量由测试固定（`describe_test.go` 三项：内联 key、URL 凭证、缺凭证），因为 10.2-3 的向导要建立在它上面。
 
 ### 3.4 端口
 
@@ -125,6 +139,8 @@ env:VAR 形式      只回传变量名，不回传变量的值
              单行解析失败不能带垮整个投影（否则模型换 schema 会让界面全空）
 ```
 
+**已知不完整的一处（不阻塞本切片）：** 32MB 截断点可能落在某个 turn 中间。此时该 turn 的 `turn_started` 不在读到的范围内，但它仍会被投影出来，于是它带着一个中间事件的时间、不完整的步数与工具列表、却显示为 `completed`。受影响的只有尾部第一条。两种收尾方式留待后续切片选择：看不到 `turn_started` 的尾部 turn 直接丢弃，或在摘要上标 `partial` 让界面明示。
+
 ## 6. 验收结果
 
 | 项 | 结果 | 证据 |
@@ -135,7 +151,9 @@ env:VAR 形式      只回传变量名，不回传变量的值
 | bootstrap token 错误/为空被拒且不下发 cookie | 通过 | `TestSessionExchangeRejectsAWrongBootstrapToken` |
 | 外来源 POST 被拒 | 通过 | `TestSessionExchangeRejectsAForeignOrigin` |
 | cookie 属性 | 通过 | `TestSessionCookieIsStrictAndHttpOnly` |
-| 密钥不出现在 status 响应 | 通过 | `TestStatusReportsConfigurationWithoutTheCredential`、`TestDescribeConfigNeverEchoesAnInlineCredential` |
+| 密钥不出现在 status 响应 | 通过 | `TestStatusReportsConfigurationWithoutTheCredential`、`TestDescribeConfigNeverEchoesAnInlineCredential`、`TestDescribeConfigNeverEchoesTheBaseURL` |
+| 重复构建不把旧 bundle 打进二进制 | 通过 | 改一次源码后直接 `vite build` 留下 2 个 bundle（已复现）；`npm run build` 后只剩 1 个 |
+| 状态与 turn 列表相互独立 | 通过 | 前端两次读取各自维护错误状态，`/api/turns` 失败不影响状态卡（页面拒绝 `Promise.all` 共沉） |
 | 缺少模型配置是可显示的状态而非失败请求 | 通过 | `TestStatusReportsAMissingModelConfiguration` |
 | turn 投影正确性 | 通过 | `TestTurnsProjectsACompletedTurn`、`TestTurnsProjectsAFailedTurn` 等 |
 | 尾部半行 / 坏行 / 读上限不产生假 turn | 通过 | `TestTurnsSkipsATornTrailingLine`、`TestTurnsSkipsAMalformedLine`、`TestTurnsReadsOnlyTheTailWhenBounded` |
@@ -144,7 +162,7 @@ env:VAR 形式      只回传变量名，不回传变量的值
 | 浏览器自动打开并渲染状态卡与 turn 列表 | 通过 | 实机确认 |
 | 非 Windows 启动器（darwin `open` / linux `xdg-open`） | **未验证** | 只在 Windows 实机跑过 |
 
-自动化测试数：`traceview` 10 项、`httpapi` 17 项、`llm` 配置描述 3 项。
+自动化测试数：`traceview` 10 项、`httpapi` 17 项、`llm` 配置描述 4 项。
 
 ## 7. 已知限制
 

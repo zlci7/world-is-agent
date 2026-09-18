@@ -6,7 +6,7 @@
   "description": "Local client for World Is Agent. Built assets are embedded into the Runtime binary.",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/prepare-dist.mjs && vite build",
     "type-check": "vue-tsc --noEmit",
     "preview": "vite preview"
   },
