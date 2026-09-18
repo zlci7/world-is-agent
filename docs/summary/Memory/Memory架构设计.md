@@ -1,4 +1,4 @@
-﻿# GameAgent Memory Architecture v0.2
+# GameAgent Memory Architecture v0.2
 
 > Status: Architecture Draft
 > Date: 2026-09-08
@@ -94,10 +94,11 @@ Retrieved 是对仍保留原文的查询结果。检索只返回候选片段；C
 
 ## 6. Store 与持久身份
 
-正式持久后端使用 `modernc.org/sqlite`。默认世界路径：
+正式持久后端使用 `modernc.org/sqlite`。路径由 `memory_store.root` 决定，默认是该值的 data-root 相对形式：
 
 ```text
-runtime/.local/memory/<sha256(game_id)>/<sha256(world_id)>/memory.db
+<memory_store.root>/<sha256(game_id)>/<sha256(world_id)>/memory.db
+默认 memory_store.root = data/memory（相对 Runtime data root）
 ```
 
 Hash 为 lowercase hex，只负责路径安全；原始 game/world 写入 metadata 并在打开时校验。个人读写始终限制 entity，世界分库不能代替 owner 校验。
