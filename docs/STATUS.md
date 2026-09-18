@@ -1,4 +1,4 @@
-# Status
+﻿# Status
 
 World Is Agent is in experimental MVP0 development.
 
@@ -44,7 +44,7 @@ Stardew Valley is the first real adapter and validation environment.
 | Providers | Provider-neutral model interface with Fake, DeepSeek, and OpenAI implementations. |
 | Trace | JSONL turn trace written under `runtime/.local/traces.jsonl`, including bounded context request summaries. |
 
-Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and real dialogue persistence/readback are covered. Real Runtime process-restart recovery, the specified cross-version end-to-end path, and race validation remain open; see the [acceptance record](phase8/GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md#验收结论). SQLite is independent of the game save: future comparable GameTime is filtered, but abandoned-branch history may become visible when game time catches up.
+Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and real dialogue persistence/readback are covered. Real Runtime process-restart recovery, the specified cross-version end-to-end path, and race validation remain open; see the [acceptance record](phase08/GameAgent MVP0 Phase8.1 技术开发与验收方案.md#验收结论). SQLite is independent of the game save: future comparable GameTime is filtered, but abandoned-branch history may become visible when game time catches up.
 
 ## Experimental
 

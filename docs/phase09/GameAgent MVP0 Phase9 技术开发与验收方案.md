@@ -1,4 +1,4 @@
-# GameAgent MVP0 Phase9 技术开发与验收方案
+﻿# GameAgent MVP0 Phase9 技术开发与验收方案
 
 > **Status:** Implementation Plan Draft
 > **Date:** 2026-09-13
@@ -8,7 +8,7 @@
 > **技术栈:** Go、SQLite、gRPC / Protobuf、C#、SMAPI
 > **Roadmap:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md)
 > **Architecture:** [Runtime 整体架构设计规范](../summary/GameAgent%20Runtime%20整体架构设计规范.md)
-> **Memory 基线:** [Phase8.2–8.3 开发与验收记录](../phase8/GameAgent%20MVP0%20Phase8.2-8.3%20开发与验收记录.md)
+> **Memory 基线:** [Phase8.2–8.3 开发与验收记录](../phase08/GameAgent MVP0 Phase8.2-8.3 开发与验收记录.md)
 > **后续阶段:** Phase10 Environment Recovery；Phase11 Evaluation、Developer Experience 与产品化
 
 ## 1. 目标、范围与交付边界

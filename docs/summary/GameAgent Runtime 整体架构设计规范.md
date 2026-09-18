@@ -1,11 +1,11 @@
-# World Is Agent (WIA) Runtime 整体架构设计规范
+﻿# World Is Agent (WIA) Runtime 整体架构设计规范
 
 > **Public Documentation Note (2026-09-01):** 根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md) 和 [docs/STATUS.md](../STATUS.md) 是 GitHub 首次读者的公开事实源。本文保留为详细架构基线和设计约束资料。
 >
 > **Version:** v0.7
 > **Status:** Architecture Baseline
 > **Baseline Evidence:** Phase1 Accepted + Phase2 Accepted + Phase3 Accepted + Phase4 Accepted + Phase5 Accepted + Phase5.5 Accepted + Phase5.6 Accepted + Phase6 Accepted + Phase6.5 Accepted
-> **Revision Source:** [GameAgent 多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR](../phase6/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[GameAgent MVP0 Phase6.5 技术开发与验收方案](../phase6.5/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）
+> **Revision Source:** [GameAgent 多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR](../phase06/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[GameAgent MVP0 Phase6.5 技术开发与验收方案](../phase06/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）
 > **Purpose:** 定义 WIA 的长期架构边界、核心运行模型、模块职责、依赖方向和演进约束。
 > 本文中的 `MUST / MUST NOT / SHOULD / MAY` 为规范性关键词。
 >

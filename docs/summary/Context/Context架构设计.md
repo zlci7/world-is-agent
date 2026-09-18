@@ -4,8 +4,8 @@
 > Date: 2026-08-27
 > Scope: Context Sources + Context Engine + Model Context
 > Identity Baseline: `AgentSessionKey = game_id + world_id + entity_id`
-> Compatibility Baseline: [GameAgent 多游戏兼容性与 Agent Binding 决策](./summary/GameAgent 多游戏兼容性与 Agent Binding 决策.md)
-> Phase7 Normative Subset: Candidate — [Phase7.0 Context Contract Entry Gate](./phase7/GameAgent%20MVP0%20Phase7.0%20技术开发与验收方案.md)
+> Compatibility Baseline: [GameAgent 多游戏兼容性与 Agent Binding 决策](../GameAgent 多游戏兼容性与 Agent Binding 决策.md)
+> Phase7 Normative Subset: Candidate — [Phase7.0 Context Contract Entry Gate](../../phase07/GameAgent%20MVP0%20Phase7.0%20技术开发与验收方案.md)
 > Design Goal: 为长期运行、多 World、多 Agent 的游戏 Agent Runtime 提供清晰、可扩展、可验证的上下文架构。
 
 ---

@@ -1,4 +1,4 @@
-# GameAgent Memory Architecture v0.2
+﻿# GameAgent Memory Architecture v0.2
 
 > Status: Architecture Draft
 > Date: 2026-09-08
@@ -11,11 +11,11 @@ GameAgent Memory 保存具体世界中具体 Agent 的交互来源，以有界�
 
 | 阶段 | 架构职责 | 状态 |
 | --- | --- | --- |
-| [Phase8.1](../../phase8/GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md) | 现有 Recent 记录的 SQLite 持久化 | Accepted，具体限制见验收记录 |
-| [Phase8.2](../../phase8/GameAgent%20MVP0%20Phase8.2%20技术开发与验收方案.md) | 完整约定终态 History、滚动 Summary、近期原文投影 | Implementation Plan Draft |
-| [Phase8.3](../../phase8/GameAgent%20MVP0%20Phase8.3%20技术开发与验收方案.md) | 原文检索、可选留存清理 | Implementation Plan Draft |
+| [Phase8.1](../../phase08/GameAgent MVP0 Phase8.1 技术开发与验收方案.md) | 现有 Recent 记录的 SQLite 持久化 | Accepted，具体限制见验收记录 |
+| [Phase8.2](../../phase08/GameAgent MVP0 Phase8.2 技术开发与验收方案.md) | 完整约定终态 History、滚动 Summary、近期原文投影 | Implementation Plan Draft |
+| [Phase8.3](../../phase08/GameAgent MVP0 Phase8.3 技术开发与验收方案.md) | 原文检索、可选留存清理 | Implementation Plan Draft |
 
-本文定义长期边界，不把规划能力视为已经实现。[Phase8 总方案](../../phase8/GameAgent%20MVP0%20Phase8%20技术开发与验收方案.md) 维护分期与依赖，各技术方案维护接口、默认值、里程碑和验收合同。
+本文定义长期边界，不把规划能力视为已经实现。[Phase8 总方案](../../phase08/GameAgent MVP0 Phase8 技术开发与验收方案.md) 维护分期与依赖，各技术方案维护接口、默认值、里程碑和验收合同。
 
 ## 2. 核心边界
 

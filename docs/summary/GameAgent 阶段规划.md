@@ -1,4 +1,4 @@
-# GameAgent 阶段规划
+﻿# GameAgent 阶段规划
 
 > **Public Documentation Note (2026-09-01):** [docs/STATUS.md](../STATUS.md) 是当前公开能力状态入口。本文保留为阶段规划、阶段验收和内部开发节奏资料。
 >
@@ -9,7 +9,7 @@
 > **Date:** 2026-09-10
 > **Architecture Baseline:** GameAgent Runtime Architecture v0.7
 > **Current Baseline:** Phase1 Accepted + Phase2 Accepted + Phase3 Accepted + Phase4 Accepted + Phase5 Accepted + Phase5.5 Accepted + Phase5.6 Accepted + Phase6 Accepted + Phase6.5 Accepted + Phase7.0 Accepted + Phase7.1 Accepted + Phase7.2 Accepted + Phase7.3 Accepted + Phase7.4 Accepted + Phase8.1 Accepted + Phase8.2 Accepted + Phase8.3 Accepted；代码基线 `main` @ `daf4f98`，保留各阶段验收限制
-> **Revision Source:** 评审意见（Roadmap Review，2026-08-18）；Phase3 评估（Protocol v1alpha2 Decision，2026-08-20）；[多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[Stardew Adapter 方案对比](../adapter/Stardew Adapter 方案对比.md)（2026-08-27）；[Phase6 Async Action Protocol Strategy ADR](../phase6/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[Phase6.5 Stardew Dialogue Interaction Convergence](../phase6.5/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）；GameAgent 阶段规划 v1.1 评审意见（2026-09-02）；Phase7 Context Subsystem Replan（2026-09-02）；Phase7 Contract Review（2026-09-02）；Phase7 Baseline Candidate Review（2026-09-02）；Phase7 Roadmap Baseline Freeze（2026-09-02）；Phase7.0 Contract Revision（2026-09-02）；Phase7.0 Gate Scope Correction（2026-09-02）；Phase7.0 Minor Review Correction（2026-09-02）；Phase7.0 Over-scope Guard Correction（2026-09-02）；Phase7.3 Implementation Acceptance（2026-09-04）；Phase7.4 Code Acceptance（2026-09-06，`main` @ `e50794c`）
+> **Revision Source:** 评审意见（Roadmap Review，2026-08-18）；Phase3 评估（Protocol v1alpha2 Decision，2026-08-20）；[多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[Stardew Adapter 方案对比](../adapter/Stardew Adapter 方案对比.md)（2026-08-27）；[Phase6 Async Action Protocol Strategy ADR](../phase06/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[Phase6.5 Stardew Dialogue Interaction Convergence](../phase06/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）；GameAgent 阶段规划 v1.1 评审意见（2026-09-02）；Phase7 Context Subsystem Replan（2026-09-02）；Phase7 Contract Review（2026-09-02）；Phase7 Baseline Candidate Review（2026-09-02）；Phase7 Roadmap Baseline Freeze（2026-09-02）；Phase7.0 Contract Revision（2026-09-02）；Phase7.0 Gate Scope Correction（2026-09-02）；Phase7.0 Minor Review Correction（2026-09-02）；Phase7.0 Over-scope Guard Correction（2026-09-02）；Phase7.3 Implementation Acceptance（2026-09-04）；Phase7.4 Code Acceptance（2026-09-06，`main` @ `e50794c`）
 
 ---
 
@@ -76,12 +76,12 @@ Phase2 将系统从“能跑通一轮”升级为一个可观察、可配置、�
 
 Accepted 状态的依据不在本文重复展开，以下文档作为当前 Roadmap 的证据入口：
 
-- [GameAgent MVP0 Phase1 技术开发与验收方案](../phase1/GameAgent MVP0 Phase1 技术开发与验收方案.md)
-- [GameAgent MVP0 Phase1 工程设计规范](../phase1/GameAgent MVP0 Phase1 工程设计规范.md)
-- [GameAgent MVP0 Phase2 技术开发与验收方案](../phase2/GameAgent MVP0 Phase2 技术开发与验收方案.md)
-- [GameAgent MVP0 Phase2 Trace 链路观测设计](../phase2/GameAgent MVP0 Phase2 Trace 链路观测设计.md)
-- [GameAgent MVP0 Phase5 技术开发与验收方案](../phase5/GameAgent MVP0 Phase5 技术开发与验收方案.md)
-- [GameAgent MVP0 Phase8.2–8.3 开发与验收记录](../phase8/GameAgent%20MVP0%20Phase8.2-8.3%20开发与验收记录.md)
+- [GameAgent MVP0 Phase1 技术开发与验收方案](../phase01/GameAgent MVP0 Phase1 技术开发与验收方案.md)
+- [GameAgent MVP0 Phase1 工程设计规范](../phase01/GameAgent MVP0 Phase1 工程设计规范.md)
+- [GameAgent MVP0 Phase2 技术开发与验收方案](../phase02/GameAgent MVP0 Phase2 技术开发与验收方案.md)
+- [GameAgent MVP0 Phase2 Trace 链路观测设计](../phase02/GameAgent MVP0 Phase2 Trace 链路观测设计.md)
+- [GameAgent MVP0 Phase5 技术开发与验收方案](../phase05/GameAgent MVP0 Phase5 技术开发与验收方案.md)
+- [GameAgent MVP0 Phase8.2–8.3 开发与验收记录](../phase08/GameAgent MVP0 Phase8.2-8.3 开发与验收记录.md)
 - [GameAgent Runtime 整体架构设计规范](./GameAgent Runtime 整体架构设计规范.md)
 
 ---
@@ -1258,7 +1258,7 @@ Adapter reconnect / Environment Recovery
 
 共同保持读取 fail-open、写入失败不回滚已发生动作、稳定逻辑键幂等与 GameTime 可见性。摘要必须检查累计来源时间，不能在回档后泄露可比较的未来来源。Trace 只作诊断。
 
-详细合同见 [Phase8 总方案](../phase8/GameAgent%20MVP0%20Phase8%20技术开发与验收方案.md)、[Phase8.1](../phase8/GameAgent%20MVP0%20Phase8.1%20技术开发与验收方案.md)、[Phase8.2](../phase8/GameAgent%20MVP0%20Phase8.2%20技术开发与验收方案.md) 与 [Phase8.3](../phase8/GameAgent%20MVP0%20Phase8.3%20技术开发与验收方案.md)。
+详细合同见 [Phase8 总方案](../phase08/GameAgent MVP0 Phase8 技术开发与验收方案.md)、[Phase8.1](../phase08/GameAgent MVP0 Phase8.1 技术开发与验收方案.md)、[Phase8.2](../phase08/GameAgent MVP0 Phase8.2 技术开发与验收方案.md) 与 [Phase8.3](../phase08/GameAgent MVP0 Phase8.3 技术开发与验收方案.md)。
 
 ## 非目标
 
@@ -1354,7 +1354,7 @@ Runtime 断线时游戏照常运行和保存，当前临时控制权安全释放
 - Runtime Core 保持 game-agnostic，现有对话、异步动作和 Memory 回归通过；
 - 跨地图与日程恢复可行性验证、开发里程碑和验收记录齐全。
 
-详细合同见 [Phase9 技术开发与验收方案](../phase9/GameAgent%20MVP0%20Phase9%20技术开发与验收方案.md)。
+详细合同见 [Phase9 技术开发与验收方案](../phase09/GameAgent MVP0 Phase9 技术开发与验收方案.md)。
 
 ## 阶段结束 Review
 
