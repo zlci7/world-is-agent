@@ -148,14 +148,17 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 
 白名单必须是**封闭集合**，不能写成"允许可打印字符、再拒绝几个特殊字符"——后者仍然是黑名单，因为 `$ # { } < > \ | ~ `` 等会全部放行，而这恰恰是本方案开头说不能依赖的做法。
 
+先做规范化，再做白名单判定，两步顺序不能反（规范化的理由见下）。
+
 判定规则（两个字段共用，只有 `^` 与长度不同）：
 
 ```text
 允许    Unicode 字母、数字、文字（含汉字）
 允许    普通空格
-允许    明确列出的标点：，。！？、；：…—（）《》""'' 与 , . ! ? ; : ( ) - ——
+允许    明确列出的 ASCII 标点：, . ! ? ; : ( ) - ' "
+允许    明确列出的全角标点：，。！？、；：（）《》〈〉「」『』…—""''
 允许    @                    两个字段都限次
-允许    ^                    仅 body，限次；title 按单行处理，拒绝
+允许    ^                    仅 body，限次；title 按单行处理
 拒绝    其余一切字符          默认拒绝，含 [ ] % $ # { } < > \ | ~ ` 等
 限制    长度上限              title 较短，body 与信件 UI 容量对齐
 ```
@@ -167,6 +170,17 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 ```
 
 只有明确列进安全集的才通过，其余一律返回 `REJECTED`。**只要一个字符没有被显式允许，它就不该通过**——这就是白名单与黑名单的区别。
+
+**换行必须被规范化，不能拒绝。** 模型写正文时会自然地输出真实换行符，如果一律拒绝，几乎每封真实信件都会失败——而模型并不知道 MFM 用 `^` 表示换行。Adapter 的职责正是这层翻译：
+
+```text
+body   先将 \r\n 与 \r 归一为 \n，再把每个 \n 转换为 ^，然后按白名单校验并统计 ^ 数量
+title  换行归一为单个空格（标题是单行），再按白名单校验
+```
+
+这不增加攻击面：`^` 本来就在允许集内、本来就有次数上限，规范化只是把同一种语义的另一种写法映射过去。规范化之后，**任何残留的控制字符都直接拒绝**。
+
+> 这一条是实机验证收口时才发现的：方案早先写的是"拒绝裸换行字节"，那会与"模型写正文"这件事直接冲突。宁可让 Adapter 做翻译，也不要让模型去猜 MFM 的换行语法。
 
 **为什么 `^` 和 `@` 是允许而不是拒绝**：两者都是排版能力，不是副作用通道（一个换行、一个替换玩家名）。全部拒绝会让每封信挤成一行，直接损害 §5.2 的人设一致性验收。允许并限次，而不是拒绝。
 
@@ -385,13 +399,16 @@ callback:  letter => { if (!Game1.player.mailReceived.Contains(letter.Id))
 具体实现由探针的失败结果决定——提前设计容易把 Letter 与 ILetter 又混一次。
 ```
 
-**已实现并通过实机验证**（`src/Integrations/MailFramework/` + `src/Diagnostics/StardewMailProbe.cs`）。两次运行 + 一次读信构成完整证据：
+**已实现并通过实机验证**（`src/Integrations/MailFramework/` + `src/Diagnostics/StardewMailProbe.cs`）。运行、读信、再运行构成完整证据：
 
 ```text
 第一次运行   resolve ok / register ok / deliver ok / has_custom_mail True / verdict bridge_ok
-读信之后     callback_fired  detail=wia.probe.bridge
-第二次运行   resolve ok / register ok / deliver ok / has_custom_mail False
-             verdict bridge_ok_already_read  mail_received=true
+             register detail 打印出传入的 title 与 body 原文
+读信之后     玩家确认信件正文就是该原文，未出现 "(no translation:...)"
+             callback_fired  detail=wia.probe.bridge
+第二次运行   reset ok（清掉探针自己的标记）→ register ok / deliver ok
+             has_custom_mail True / verdict bridge_ok
+再读信再运行 mail_received=True → has_custom_mail False → verdict bridge_ok_already_read
 ```
 
 结论：
@@ -399,14 +416,17 @@ callback:  letter => { if (!Game1.player.mailReceived.Contains(letter.Id))
 ```text
 接口映射成立      GetApi<IMailFrameworkModApi> 由 Nanoray.Pintail 映射成功
 参数桥接成立      我方 MailLetter DTO 与 lambda 委托跨过边界（register=ok）
+内容传递成立      玩家看到的是传入的原文；I18N=null 生效，见 §4.2.1
 回调反向桥接成立  MFM 以它的 ILetter 回调我方 Action<ILetter>（callback_fired）
 mailReceived 写入 callback 体执行了 Add(letter.Id)
-防重复投递生效    第二次 has_custom_mail=False，而 condition 正是查 mailReceived
+防重复投递生效    读信后再运行 has_custom_mail=False，而 condition 正是查 mailReceived
 ```
 
 **契约方案成立，退路作废。** 最初担心的"必须在运行时用 `System.Linq.Expressions` 构造泛型委托"整块复杂度因此消失，反射只剩 `MailController` 的两个静态方法。
 
 `has_custom_mail=False` 之所以能证明后两项，是因为因果链只有一条：`condition` 查 `!mailReceived.Contains(id)`，而 `mailReceived` 只由 callback 写入。condition 转为 false，只可能是 callback 写成功了。**这一步同时闭合了两个验证项，不需要再写额外探针。**
+
+**内容传递这一条差点被漏掉。** 前两轮探针全部 `bridge_ok`，但那时 `I18N` 传的是 translation helper，玩家实际读到的是 SMAPI 的占位符。机制全绿而内容错误——所以 §5.4 把"看一眼正文"列成独立步骤，不允许用机制结论代替。
 
 另外两点已被独立核实：
 
@@ -454,7 +474,7 @@ failed   mail_register_failed        注册抛异常
 failed   mail_delivery_failed        投递抛异常
 ```
 
-**顺序约束**：校验必须在**任何 MFM 调用之前**完成。文本未通过校验时，不得构造 `Letter`、不得注册、不得投递——校验失败必须是纯本地拒绝，不留下部分生效的状态。
+**顺序约束**：校验必须在**任何 MFM 调用之前**完成。文本未通过校验时，不得构造 `Letter`、不得注册、不得投递——校验失败必须是纯本地拒绝，不留下部分生效的状态。校验内部则先做换行规范化（§3），再做白名单判定。
 
 ---
 
@@ -631,7 +651,8 @@ verdict          bridge_ok / bridge_ok_already_read / bridge_ok_delivery_incompl
 
 ```text
 接口映射与参数桥接     实机探针确认（§4.2.3）
-回调反向桥接           读信后出现 callback_fired，且第二次运行条件转 false
+内容传递               玩家确认读到的是传入原文；I18N=null 是前提（§4.2.1）
+回调反向桥接           读信后出现 callback_fired，且读信后条件转 false
 mailReceived 写入      由 condition 转 false 反推确认（§4.2.1）
 防重复投递             §4.2.2，Letter 无 Repeatable，condition 是唯一守卫
 存档加载后立即可投递    探针 deliver=ok 且 has_custom_mail=True
@@ -640,6 +661,8 @@ RegisterLetter 签名    Func<ILetter,bool> / Action<ILetter>，已反射核实�
 跨 Mod 控制台命令       不可行，ICommandHelper 只有 Add（§2.2）
 契约是否与 MFM 一致     逐成员一致：ILetter 12 项、API 4 项
 ```
+
+**MFM 集成机制的验证到此关闭**，不再继续研究这个 mod。后续（CapabilityCatalog、条件发布、`MailTextValidator`、Action 幂等、正负向模型验收）都属于 WIA 已知架构内的常规实现，不再是"这个第三方 mod 能不能接"的未知。
 
 `AutoOpen=false` + 无附件 + 无 recipe + 非 null 且非常真的 condition：这四点使信件走标准 UI 路径且不会重复投递，是本轮设计的基础。
 
