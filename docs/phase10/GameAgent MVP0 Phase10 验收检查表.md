@@ -298,11 +298,15 @@ Do not use it while the player is standing here and the answer can simply be spo
 
 回合 `event_1789735003326_47`（20:36:43）的三步：
 
-| 顺序 | 能力 | 结果 |
+| 顺序 | 能力 | 结果（trace 原文） |
 | --- | --- | --- |
-| 1 | `send_mail` | `ActionResult status=Succeeded` |
-| 2 | `present_dialogue` | `"去吧，东西别落下。话我不说，你放心。等你走了，我自有法子。"` |
-| 3 | `emote` = `sad` | `Succeeded` |
+| 1 | `send_mail` | `action_status=ACTION_STATUS_SUCCEEDED` |
+| 2 | `present_dialogue` | **`action_status=ACTION_STATUS_REJECTED`** → `tool_batch_failed` → `agent_step_failed reason=model_visible_tool_failure` |
+| 3 | `emote` = `sad` | `Succeeded` → `agent_step_completed`，随后 `agent_step_failed reason=max_steps_exceeded` |
+
+`present_dialogue` 从提交到被拒只隔 **7ms**（20:36:50.019 → .026），说明是适配器侧的守卫立即拒绝，不是游戏侧执行失败。对话文本本身（"去吧，东西别落下。话我不说，你放心。等你走了，我自有法子。"）来自 `ActionRequest` 日志，**没有对应的成功 `ActionResult`**。
+
+最可能的原因是**玩家在这一回合进行中走开了**：`present_dialogue` 要求交互上下文与距离仍然成立，而同一模式在 Penny 那次是明确可见的（`ordinary interaction ended: npc=npc:Penny reason=player_not_near`）。信件正文里那句"你走了，我才敢说这句话"也正好对应这一点——模型是在玩家已经离开之后才写下的。
 
 `tool_call_selected tool=send_mail` 是本次会话（也是 trace 全量）**第一次**出现。模型还在对话里主动说明自己不说、改用"别的法子"——说明它接住的正是"延迟送达"这个语义，而不是被关键词触发。
 
@@ -311,6 +315,8 @@ Do not use it while the player is standing here and the answer can simply be spo
 **结论：A 路线成立，不需要改任何模型可见文本。**
 
 > 附带发现：`RuntimeClient.FormatActionArguments` 只格式化 `emote` / `present_dialogue` / `move_to`，因此 `send_mail` 的 title 与 body **不会**出现在 SMAPI 日志里。信件内容是只能靠读信观察的，日志无法替代。
+>
+> 第二个附带发现：被拒的 `present_dialogue` 在游戏里**不可见**——玩家不会看到任何提示，只是这次没有回复。这条属于可观测性问题，留待 10.2-4。
 
 #### 读信结果（实机截图）
 
@@ -343,15 +349,23 @@ Do not use it while the player is standing here and the answer can simply be spo
 status=Failed code=max_steps_exceeded message=max steps exceeded: max 3
 ```
 
-三个动作全部 `Succeeded`、玩家侧效果正常，但模型每步只用一个工具、三步用尽后没有留下 settle 的机会，于是整回合被标记为失败。这不是邮件能力引入的缺陷，但会被它放大（写一封信往往需要 2–3 个动作）。
+**机制（回看原始 trace 确认，不是推断）：**
 
-影响面：turn 在 trace 与 history 中记为 failed；成功动作仍进入 memory 投影（`ProjectionKindPriorSuccessfulActions`）。对 C1 的退出条件（自主选中 + 成功执行 + 可读）**不构成阻塞**，但会让 10.2-4 的时间线上出现"游戏里明明正常、却显示失败"的回合。
+```text
+step 1  send_mail          Succeeded
+step 2  present_dialogue   REJECTED（适配器侧守卫，7ms）→ model_visible_tool_failure
+step 3  emote              Succeeded → 但已无剩余步数 → max_steps_exceeded
+```
 
-候选处置（待定，属产品行为）：把 Stardew 的 `max_steps` 从 3 调到 4（仅配置改动，重启 Runtime 生效），或保持现状并记为已知限制。
+`settle_after_success` **没有失效**：它只在调用成功时触发，而这一步是被拒的，所以本就不该 settle。Runtime 的 settle 逻辑与 `present_dialogue` 的 policy 都是对的。
 
-**处置：已改为 5**（`runtime/config/games/stardew-valley/agent.json`，重启 Runtime 生效）。选 5 而不是 4，是因为这个回合用了 3 步且每步只调用一个工具，需要留出 settle 余量；`max_tool_calls_per_step` 仍是 4，模型可以自行合并动作。
+真正的失败形态是：**一个中途被拒的动作吃掉一步，模型用下一步做恢复，3 步用完就没有留给 settle 的余地**。这不是邮件能力引入的缺陷，但会被它放大——写信通常要 2 个动作起步，再加一次拒绝恢复就超预算。玩家在回合进行中走开是完全正常的行为，因此这个形态会反复出现。
 
-> **与 TurnTimeout 的相互作用**（Phase5 评审已指出过同一问题）该保持留意：`llm_timeout_ms = 60000`、`turn_timeout_ms = 270000`，5 步全部命中 LLM 超时的极端值是 300s，会先被 TurnTimeout 截断。实测这一步约 3s/步（3 步回合共 9s），因此本轮不改 TurnTimeout；若实机出现 `turn_cancelled`/超时，再同步上调。
+处置：**保留 `max_steps = 5`**（依据是"允许一次拒绝 + 恢复 + settle"，不是"写信需要 3 步"）。Penny 那次在同样的流程下 `TurnCompletion status=Completed`，与该依据一致。
+
+`runtime/config/agent.json` 的通用默认仍是 3——保持"通用默认窄、具体游戏按需放宽"的分层。
+
+> 留待后续（不在本轮）：`max_steps` 用尽时，如果最后一步的工具调用是成功的，是否仍应判失败？这是 Phase5 定义的语义（`max_steps` 表示模型决策次数上限，用尽即失败），改动它属于语义变更，不在本轮范围。
 
 
 ### C2 负向：不该发信时不调用（已由 C1 证据覆盖，不再单独执行）
