@@ -24,6 +24,8 @@
 | D4 | 可修改配置 | 本轮**只做首次 model 配置**；不做 Ready 之后的热切换；默认 UI 不暴露 `base_url` |
 | D5 | 默认配置来源 | **embed + 首次 seed**；只在首次初始化 seed，不 merge / 不 overwrite / 不自动升级；显式 agent config override 时完全不 seed |
 | D6 | 成功状态 | **三个状态独立**：Runtime Ready / Model Connection / Game Connected，互不冒充 |
+| D7 | seed 的 `agent.json` | seed 源是 `games/stardew-valley/agent.json`，落到 `<root>/config/agent.json`；顶层通用基线只作开发/测试用（§4.1、§5.2） |
+| D8 | 游戏路径 | 持久化到 `<root>/config/console.json`，**只写用户显式 override**；Core 不读它（§4.2） |
 
 ### 2.1 D1 的完整语义
 
@@ -88,11 +90,11 @@ if r.loop != nil && !r.placeholder { return nil }
 填写 → 测试连接 → 成功才写入 secret 与 model.json → Configure() → Runtime Ready
 ```
 
-测试失败就**不落盘**，用户可以直接改。唯一的例外是离线用户：提供一次显式确认（"不测试直接保存"），并在 UI 上标明该配置未经验证。
+测试失败就**不落盘**，用户可以直接改。唯一的例外是离线用户：提供一次显式确认（"不测试直接保存"），并在 UI 上标明该配置未经验证。未落盘 key 的测试路径见 §6，权威提交的复测见 §7.1。
 
-## 4. 需要补决的两个结构问题
+## 4. 两个结构问题及其结论
 
-### D7（阻塞）：seed 的 `agent.json` 用哪一份
+### 4.1 D7：seed 的 `agent.json` 用哪一份
 
 **已核实：per-game profile 根本不会被 Runtime 自动加载。** 仓库里没有 profile 解析机制——`agent.LoadConfigFile` 只读一个路径，来源是 `GAMEAGENT_AGENT_CONFIG` 或 `<root>/config/agent.json`。`runtime/config/games/stardew-valley/agent.json` 只是**开发脚本**用 `-AgentConfig` 显式传进去的。
 
@@ -105,46 +107,51 @@ runtime/config/games/stardew-valley/agent.json Stardew：max_steps 5、definitio
                                               "config/games"、Stardew prompt + tool_instruction
 ```
 
-缺 `definition_catalog_root` 就不会加载 33 个 NPC definition；`max_steps 3` 也不够一次"工具 → 确认 → 收尾"的回合。所以**seed 哪一份直接决定"配好了"是不是 README 里那个 agent**。
+缺 `definition_catalog_root` 就不会加载 33 个 NPC definition；`max_steps 3` 也不够一次"工具 → 确认 → 收尾"的回合。所以**seed 哪一份直接决定"配好了"是不是开发/README 验证过的那个 agent**。
 
-| 选项 | 代价 |
-| --- | --- |
-| **a（建议）** seed `<root>/config/agent.json` ← **Stardew profile 的内容**；`runtime/config/agent.json` 保留为开发/测试基线，不参与 seed | 语义明确：发行默认就是 Stardew 配置。代价是两个 `agent.json` 角色不同，必须在文档里写清 |
-| b seed 通用基线，另加一个"按 game_id 选 profile"的机制 | 那是一次真正的 Runtime 生命周期改动：`game_id` 只在适配器 Hello 之后才知道，profile 必须延迟加载。属于 10.3 的工作 |
-| c 只 seed definitions，`agent.json` 用通用基线 | 省事，但 agent 行为与开发环境不一致（无 definition、步数不足），等于交付一个"能跑但不像"的东西 |
+**结论：seed 源是 Stardew profile，目标是 `<root>/config/agent.json`（逐项映射见 §5.2）。** `runtime/config/agent.json` 保留为开发与测试基线，不参与产品 seed。
 
-**建议 a。**
+不采用"按 `game_id` 选 profile"的机制：`game_id` 只在适配器 Hello 之后才知道，那要求 profile 延迟加载，属于 10.3 的 Runtime 生命周期工作。
 
-### D8（小）：用户填的游戏路径是否持久化
+### 4.2 D8：用户填的游戏路径
 
-Runtime 自己不使用游戏路径，它只服务于依赖体检。选项：
+Runtime 自己不使用游戏路径，它只服务于依赖体检。
 
-```text
-不持久化      每次打开控制台重新探测；探测失败就要用户重填
-持久化覆盖值  只在"探测失败/用户改过"时写入控制台自己的设置文件
-```
-
-**建议持久化覆盖值**（空值不写），落点 `<root>/config/console.json`，并在文档里标明它属于控制台、Agent Core 不读它。若你更看重"配置文件只由 Core 拥有"，就选不持久化。
+**结论：持久化到 `<root>/config/console.json`，且只写用户显式确认的 override。** 自动探测结果不写——否则一次错误的启发式结果会从"临时探测值"变成"永久配置"。该文件属于控制台，Agent Core 不读它。
 
 ## 5. Seed 机制
 
 ### 5.1 资产位置（零文件搬迁）
 
-Go 的 `//go:embed` 不能使用 `..`，所以 embed 包必须位于资产目录或其上层。`runtime/config/` 恰好是 `games/**` 与 `agent.json` 的**同一层**，因此直接在该目录加一个 Go 包即可：
+Go 的 `//go:embed` 不能使用 `..`，所以 embed 包必须位于资产目录或其上层。`runtime/config/` 恰好是 `games/**` 的**同一层**，因此直接在该目录加一个 Go 包即可：
 
 ```text
-runtime/config/defaults.go        package config；//go:embed agent.json games
+runtime/config/defaults.go        package config；//go:embed all:games
 ```
 
 这样不用移动任何现有文件，也不用把包命名成 `runtime`（那会与标准库 `runtime` 同名，在每个同时用 `runtime.GOOS` 的文件里都要别名）。
 
-**embed 只包含要 seed 的两项**：`agent.json`（来自 D7 的选择）与 `games/**`。**不含 `model.json`**——那正是向导要生成的。
+**embed 只包含 `games/**`，不含顶层的 `runtime/config/agent.json`。** 后者是通用的开发/测试基线，不是产品默认值（见 D7）。
 
-已实测该布局可行：把 `package config` 放在 `runtime/config/` 并 embed `agent.json` + `all:games`，可嵌入 **37 个文件**（`agent.json` 加 `games/` 下 36 个），且 `check-architecture.ps1` 仍然通过。
+已实测该布局可行：把 `package config` 放在 `runtime/config/` 并 embed `all:games`，可嵌入 **36 个文件**（`games/stardew-valley/agent.json` 加 `definitions/` 下 35 个），且 `check-architecture.ps1` 仍然通过。
 
 **该文件有一个约束**：`scripts/check-architecture.ps1` 会检查 `runtime/` 下所有 `*.go` 与 `*.json` 是否含游戏专有词（`runtime/config/games/` 被排除，`runtime/config/defaults.go` 不被排除）。所以这个文件里不能出现游戏名，注释也要保持通用措辞。
 
-### 5.2 触发规则：`agent.json` 作为首次初始化锚点
+### 5.2 seed 的源与目标（逐项映射，不是整树复制）
+
+```text
+源  runtime/config/games/stardew-valley/agent.json
+→   <root>/config/agent.json
+
+源  runtime/config/games/stardew-valley/definitions/**.json
+→   <root>/config/games/stardew-valley/definitions/**.json
+```
+
+**只有这一个 Stardew profile 权威源。** 产品默认就是这份内容，不额外复制出第三份 `agent.json`，也不把 `games/stardew-valley/agent.json` 写进用户树——已核实 catalog loader 只读 `games/<game>/definitions/`（`runtime/internal/definition/loader.go:26`），用户树里那份文件没有任何消费者，写进去只会变成一份会漂移的副本。
+
+`runtime/config/agent.json`（通用基线）继续只服务开发与测试，完全不参与 seed。
+
+### 5.3 触发规则：`agent.json` 作为首次初始化锚点
 
 ```text
 <root>/config/agent.json 不存在  → 判定为 fresh，执行 seed
@@ -156,31 +163,86 @@ GAMEAGENT_AGENT_CONFIG 已设置    → 完全跳过 seed（显式配置优先�
 
 **落盘顺序：** 先写 `games/**` 与其它文件，**`agent.json` 最后原子落盘**（临时文件 + rename）。中途崩溃时下次仍判定为未初始化，可以重新完成。
 
-### 5.3 seed 什么
+### 5.4 seed 什么
 
 ```text
-✅ <root>/config/agent.json                                     （D7 决定内容）
-✅ <root>/config/games/stardew-valley/definitions/**.json
+✅ <root>/config/agent.json                                  ← games/stardew-valley/agent.json 的内容
+✅ <root>/config/games/stardew-valley/definitions/**.json    ← 35 个 definition
 ❌ <root>/config/model.json
+❌ <root>/config/games/stardew-valley/agent.json（无消费者，见 §5.2）
 ❌ 任何 secret
 ```
 
-## 6. 接口
+## 6. 连接测试：未落盘 key 的瞬态路径
+
+### 6.1 为什么需要一条独立路径
+
+首次向导要在**写盘之前**测试用户刚输入的 key，但持久化配置只承认 `env:` 与 `file:`，且内联 key 继续被拒绝。所以不能把用户输入塞进 `Config.APIKey` 再交给 `NewProvider`——那等于绕开刚冻结的边界。
+
+**正确的区分是：`inline key 不得持久化` 与 `向导需要用未落盘的 key 测一次` 是两条不同的规则。**
+
+```text
+持久化配置路径            Config.APIKey ∈ {env:, file:} → NewProviderFromConfigFile
+                         resolveAPIKey 继续拒绝其它形式
+瞬态候选项路径            ProbeConfig{provider, model, base_url, api_key} → ProbeConnection
+                         api_key 是函数参数，不来自任何配置文件
+```
+
+### 6.2 瞬态候选项的边界（必须逐条成立）
+
+```text
+只存在于该次请求与 Go 内存
+不写 model.json、不写 secret 文件
+不进入日志
+不进入 trace
+不进入任何 /api 响应
+调用返回后立即丢弃
+```
+
+测试连接的结果因此也必须分类返回，且**错误消息不得包含请求头或凭证**：
+
+```text
+verified                 请求成功
+authentication_failed    401 / 403
+network_unavailable      连接失败、DNS、超时
+provider_error           其它非成功响应
+```
+
+实现上：用最小的一次调用（例如 `max_tokens=1`）加一个较短超时；分类只依赖状态码与错误类别，不回传 provider 的原始响应体。**要有一条测试断言 key 不出现在结果里**，与 `llm` 包现有的配置摘要测试同一种做法。
+
+## 7. 接口
 
 沿用 10.2-2 已有的会话、Host 校验与静态资源机制；新增端点都在 `/api` 下、都需要会话凭证。
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| POST | `/api/setup/model` | 测试（可选）→ 写 secret → 原子写 `model.json` → `Configure()` |
-| POST | `/api/setup/test` | 只做连接测试，返回分类结果，不落盘 |
+| POST | `/api/setup/test` | 交互式预检查。**永不落盘。** |
+| POST | `/api/setup/model` | 权威提交：服务端对**这次请求的同一组参数**再测一次，成功才写 secret → 原子写 `model.json` → `Configure()` |
 | GET | `/api/setup/environment` | 依赖体检：探测结果 + 用户覆盖值 + 在线权威状态 |
-| PUT | `/api/setup/environment` | 保存用户选定的游戏路径（D8 选持久化时才有） |
+| PUT | `/api/setup/environment` | 保存用户选定的游戏路径（仅显式 override 时写） |
+
+### 7.1 权威提交不复用前端的测试结论
+
+前端的 Test 只是 UX 预检查。**服务端不信任"前端已经测过了"**，否则存在 TOCTOU：前端测 A 通过、提交时 payload 变成 B，就直接落盘了一个未验证的配置。
+
+```text
+正常路径   Test → Save → 服务端再 Test → Commit
+离线路径   Save with skip_connection_test=true → Commit + UI 标记 Unverified
+```
+
+离线逃生口由请求显式携带：
+
+```json
+{ "skip_connection_test": true }
+```
+
+它必须是用户二次确认后的请求，且 UI 要同时说明两件事：**保存成功不等于模型可用**；由于本轮不支持 Ready 之后替换 model，**离线保存错了 key 需要重启 Runtime 才能纠正**。
 
 `GET /api/status` 扩展为三段状态（Runtime / Model Connection / Game Connected）加 seed 结果，仍然**不返回任何 secret**。
 
 约束（沿用 10.2-2 的既有边界）：只监听 loopback、Host 必须回环、`/api` 需要会话、响应不回传凭证、`Cache-Control: no-store`。
 
-## 7. Runtime 侧最小新增面
+## 8. Runtime 侧最小新增面
 
 三个状态里有两条来自 Runtime 之外的信息，需要**只读**访问器（不改变 gRPC、协议、Loop 与调度行为）：
 
@@ -192,7 +254,7 @@ Game Connected       新增：gateway 只读世界状态（workspace 绑定是�
 
 `gateway.Server.WorldRegistry()` 已经是导出方法，但 `ReadyWorlds()` 只返回 `task.Head`，不含能力名。因此需要新增一个只读快照访问器（例如 `WorldStatuses()`，返回世界键、就绪标志、实体 id、能力名），由 `httpapi` 通过窄接口消费——与 10.2-1 的 `coreReadiness` 同一种做法。
 
-## 8. 依赖体检状态矩阵
+## 9. 依赖体检状态矩阵
 
 ```text
 Stardew installation      Detected / Not found / User selected
@@ -205,23 +267,25 @@ Mail Framework Mod        Available / Unavailable / Unknown
 - 第四行只在已连接时才有权威值；未连接时显示 `Unknown`，不得显示"缺失"。
 - 游戏路径的启发式来源（Steam 注册表、`libraryfolders.vdf`、常见路径）**只是提示，不是事实源**；实现时逐个验证并记录，找不到就留空让用户填。
 
-## 9. 实现顺序
+## 10. 实现顺序
 
 按依赖从底向上，不从 UI 开始：
 
 ```text
-① Default seed           空数据根启动后 agent.json + Stardew definitions 自动就位
-② Secret storage         env: / file:、0600 与 ACL、权限失败即保存失败、secret 不外泄
-③ Model Setup API        写 secret → 原子写 model.json → Configure() → needs_configuration → ready
-④ Model connection check 区分 authentication failed / network unavailable / provider error
-⑤ First-run UI           Provider / Model / API Key；Save 前先测试
-⑥ Stardew diagnostics    启发式路径 + 在线权威状态 + MFM 可选显示
-⑦ 空数据根实机验收        见 §10
+①  Default seed          空数据根启动后 agent.json + Stardew definitions 自动就位
+②  Secret storage        env: / file:、0600 与 ACL、权限失败即保存失败、secret 不外泄
+③  Model Setup API       写 secret → 原子写 model.json → Configure()；只接受显式 skip_connection_test
+④  Connection probe      瞬态候选项路径；③ 的提交改为"先复测再落盘"，skip 变成逃生口
+⑤  First-run UI          Provider / Model / API Key；Save 前先测试
+⑥  Stardew diagnostics   启发式路径 + 在线权威状态 + MFM 可选显示
+⑦  空数据根实机验收        见 §11
 ```
 
 ①必须在③之前：③的验收前提是"新用户拿到的是一个能用的默认配置树"。
 
-## 10. 端到端验收
+③与④的先后有一个必须交代的点：④之前不存在瞬态测试路径，因此 ③ 的提交路径**只接受显式的 `skip_connection_test`**，不会在没人注意的情况下落盘一个"看起来验证过"的配置；④落地后才把复测设为默认、把 skip 降级为逃生口。⑤ 必须在 ④ 之后，否则 UI 会暴露一个还不能验证的保存按钮。
+
+## 11. 端到端验收
 
 用**完全空的数据根**跑完整条链路：
 
@@ -245,7 +309,7 @@ Mail Framework Mod        Available / Unavailable / Unknown
 | MFM 缺失 | 显示"邮件能力不可用"，但 Game Connected 仍为 Connected |
 | 重启 | Ready 之后重启，配置与 seed 结果都保持 |
 
-## 11. 明确不做
+## 12. 明确不做
 
 ```text
 Ready 之后的热切换 provider/model/key   需要真实的 core replacement 语义，本轮不做
@@ -256,7 +320,7 @@ Background Trigger                      见总方案 §2.6
 Mobile / LAN / 远程访问                 见总方案 §3.4
 ```
 
-## 12. 已核实的代码事实
+## 13. 已核实的代码事实
 
 ```text
 bootstrap.Configure()     只重读 model.json；真实 core 上重复调用是 no-op（首次配置可用，热切换不可用）
@@ -266,14 +330,22 @@ bootstrap.Open()          agent.json 缺失时 LoadConfigFile 返回 DefaultConf
 llm.resolveAPIKey()       只接受 env:；有测试显式拒绝内联 key
 agent.LoadConfigFile()    文件不存在时返回默认值，不报错
 per-game profile          不存在自动加载机制；只能由 GAMEAGENT_AGENT_CONFIG 显式指定
+definition loader         只读 <root>/<game>/definitions/*.json；games/<game>/agent.json 没有任何消费者
 dataroot.Layout           secrets/ 由 Ensure() 以 0700 创建
 gateway.Server            WorldRegistry() 已导出；ReadyWorlds() 只返回 task.Head，不含能力名
 ```
 
-## 13. 待你确认
+## 14. 决策记录
 
 ```text
-D7  seed 的 agent.json 用哪个        建议 a：用 Stardew profile 内容，通用 baseline 只留作开发基线
-D8  游戏路径覆盖值是否持久化          建议：持久化到 <root>/config/console.json（Core 不读它）
-3.1  Save 前必须先测试连接            建议：是；离线用户走一次显式"不测试直接保存"
+D1  b   env: 保留，新增 file:；相对路径基于 model.json 所在目录
+D2  a   明文 + 权限收紧；权限设置失败即保存失败
+D3  b   文件系统只做启发式；在线权威判断来自 ready 与能力列表；路径启发式预填、用户可改
+D4  a   本轮只做首次 model 配置；不做 Ready 后热切换；默认 UI 不暴露 base_url
+D5  a   embed + 首次 seed；锚点为 agent.json；不 merge / 不覆盖 / 不升级；显式 override 时完全不 seed
+D6  分级 Runtime Ready / Model Connection / Game Connected 三态独立
+D7  a   seed 源是 games/stardew-valley/agent.json，落到 <root>/config/agent.json（§5.2）
+        顶层通用 agent.json 只作开发/测试基线，不参与 seed
+D8  持久化到 <root>/config/console.json；只写用户显式 override，自动探测结果不写；Core 不读它
+3.1 先测试再落盘；保留显式 skip_connection_test 逃生口（§6、§7.1）
 ```

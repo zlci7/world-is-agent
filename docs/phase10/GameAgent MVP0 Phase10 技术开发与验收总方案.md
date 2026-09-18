@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 已确认开工；10.1 代码侧已实现（剩余实机与模型验收），10.2-1 Runtime Bootstrap & Data Root 已实现（§3.2.2），10.2-2 本地控制面首个切片已实现并实机验证（[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)）
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；10.2-1 Runtime Bootstrap & Data Root 已实现（§3.2.2）；10.2-2 本地控制面首个切片已实现并实机验证（[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)）；10.2-3 决策已冻结（[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)）；10.2-4、发行步骤与 10.3 未开工
 > **Date:** 2026-09-18
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
@@ -610,7 +610,7 @@ Adapter 是事实来源                   能力、schema、description、执行
 | 10 | 静态加密是否用 OS 密钥库（DPAPI 等） | 纵深防御增强项，不改变 §3.4.2 的硬约束；由 10.2 子方案决定 |
 | 11 | 10.1 读类 follow-up 是否本轮做 | 非硬验收；若 MFM 有低成本可读状态可顺带验证 |
 | 12 | `tool_policy` 是否提升为 `Capability.tool_policy` 一等字段 | 由第二个 Adapter 的实际 policy 需求判定，判据见 §4.5；这是 10.3 的退出条件之一，不是可选项 |
-| 13 | 自主触发的实现路线 | 已选定：复用 Phase 9 durable task + wake，作为 10.1 之后的独立小阶段。10.1 不含 Background Trigger；proposal 注册路径已查清为纯 Adapter 改动，见 §2.6 |
+| 13 | 自主触发 | **MVP0 不纳入。** durable task + 游戏时钟唤醒已由 Phase9 实机验证（§2.6.1），不再单独安排 mail-specific 后续；不引入 Background Trigger |
 
 ---
 
