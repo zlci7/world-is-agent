@@ -5,7 +5,7 @@
 > **Phase:** Phase10.1 Mod 能力接入与自治调用验证
 > **目标:** 让模型在一个已触发的 AgentTurn 内自主从 Tool View 选中并执行由第三方 mod 提供的 `send_mail`，完成"注册信件 → 立即投递 → 玩家读信 → 状态变化"闭环
 > **Scope:** 首个第三方 mod 能力接入；仅文本、无附件、禁止游戏命令
-> **Decision Record:** 立即投递（触发 MFM 命令）；验收包含人设一致性；**能力默认直接执行，不引入"需确认"字段**（当前没有向玩家请求确认的交互机制，该字段没有执行点）。安全边界由 §3 输入校验承担。
+> **Decision Record:** 立即投递（反射 `MailController.UpdateMailBox()`，无备选路径）；`send_mail` 仅在 MFM 可用时发布；安全边界由 §3 **白名单**输入校验承担，校验先于任何 MFM 调用；验收包含人设一致性；**能力默认直接执行，不引入"需确认"字段**（当前没有向玩家请求确认的交互机制，该字段没有执行点）。
 > **Protocol Baseline:** `gameagent.protocol.v1alpha2`（本方案不改协议）
 > **Parent Plan:** [Phase10 技术开发与验收总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)
 > **Related:** [Mod 能力接入规范](../development/mod-capability-integration.md)、[开发指南](../development/guide.md)
@@ -27,8 +27,9 @@
 ```text
 能力 send_mail(title?, body)
 仅文本          无附件、无 recipe、无 AutoOpen
-立即投递        通过 MFM 自身的投递入口
-禁止游戏命令    对模型文本做 token 校验
+立即投递        反射 MailController.UpdateMailBox()
+白名单校验      对模型文本做字符级白名单，先校验后调用
+条件发布        仅 MFM 可用时进入 Tool View
 验收链路        机制 → 游戏 → 人设三层
 ```
 
@@ -61,12 +62,27 @@ ILetter GetLetter(String id)
 String  GetMailDataString(String id)
 ```
 
-`ILetter` 的可写属性（用于构造模型驱动的信件）：
+**构造一封模型驱动的信件要经两层类型，不能直接写 `ILetter`。**
+
+`ILetter` 是只读接口，`ApiLetter` 是只读包装（唯一构造函数 `ApiLetter(Letter letter)`）；两者都没有公开 setter。真正可写的是 `Letter`：
 
 ```text
-Id, Text, Title, GroupId, Items, Recipe, WhichBG,
-LetterTexture, TextColor, UpperRightCloseButtonTexture, AutoOpen, I18N
+MailFrameworkMod.Api.ILetter     public interface   属性全部 {get;}
+MailFrameworkMod.Api.ApiLetter   public class       属性全部 {get;}，唯一构造函数 ApiLetter(Letter letter)
+MailFrameworkMod.Letter          public class       Id / Text / Items / DynamicItems / Recipe / Condition / Callback 均可 {get;set;}
 ```
+
+`Letter` **没有无参构造**，三个构造函数都要求 `Func<Letter,bool> condition` 与 `Action<Letter> callback`。构造路径因此是固定的：
+
+```text
+new MailFrameworkMod.Letter(id, text, condition, callback, whichBG)
+        ↓
+new MailFrameworkMod.Api.ApiLetter(letter)          → ILetter
+        ↓
+IMailFrameworkModApi.RegisterLetter(iLetter, condition, callback, dynamicItems)
+```
+
+委托如何在没有编译期类型的情况下构造出来，见 §4.2——**这是本方案唯一非平凡的实现点**。
 
 ### 2.2 投递机制
 
@@ -76,6 +92,19 @@ LetterTexture, TextColor, UpperRightCloseButtonTexture, AutoOpen, I18N
 ```
 
 `MailController.UpdateMailBox()` 的文档注释是 **"Call this method to update the mail box with new letters."**——它是公开的、被设计为可调用的。这正是本轮"立即投递"采用的入口。
+
+已验证的 `MailController` 公开成员：
+
+```text
+MailFrameworkMod.MailController        public class
+  static Void     UpdateMailBox()            投递入口
+  static Boolean  HasCustomMail()            投递证据（§5.1 使用）
+  static Void     UnloadMailBox()
+  static Void     UnloadLetterMailbox(String id)
+  static Void     ShowLetter()
+```
+
+**一个必须澄清的机制事实：`player_debug_updatemailbox` 无法由 adapter 触发。** SMAPI 4.3.2.0 的 `ICommandHelper` 只有 `Add` 一个公开方法，不存在任何"触发其它 mod 注册的命令"的公开接口（`MailFrameworkMod.Commands.DebugUpdateMailbox` 只是该命令的实现体，不改变这一点）。因此立即投递只能直接调用上表的 `UpdateMailBox()`，详见 §4.4。
 
 投递后的读信链路（Harmony patch `GameLocation.mailbox`）：
 
@@ -91,16 +120,16 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 | --- | --- | --- |
 | `condition` **必需**，不能为 null | `MailRepository.GetValidatedLetters()` 直接调用 `l.Condition(l)`，无 null 检查；异常被 catch 并静默忽略该信 | 必须提供一个返回 true 的条件 |
 | `Id` 不能为 null 且会移除空格 | `Letter.Id` 的 setter 执行 `value.Replace(" ","")` | 必须给非空、去空格的稳定 id |
-| 同 id 注册是**替换**而非累积 | `MailRepository.SaveLetter` 对已存在 id 执行 `Letters[index] = letter` | 重复调用不会无限堆积；但同 id 会覆盖旧信 |
+| 同 id 注册是**替换**而非累积 | `MailRepository.SaveLetter` 对已存在 id 执行 `Letters[index] = letter` | 同 id 会覆盖旧信，因此 id 必须唯一，规则见 §4.1 |
 | `Text` 进入游戏 token 解析器 | `Letter.TranslatedText => TokenParser.ParseText(...)` | **注入面，见 §3** |
-| 信件必须被玩家打开才产生终止状态 | `callback` 只在 `OnMenuClose` 触发 | 不读信就没有 `mailReceived` 记录 |
+| 信件必须被玩家打开才产生终止状态 | 终止状态只在信件关闭路径上产生 | 不读信就没有 `mailReceived` 记录 |
 
 ### 2.4 可观察状态（决定怎么验收）
 
 ```text
 已注册      MailRepository 中存在该 id
 已投递      Game1.player.mailbox 含占位符；MailController.HasCustomMail() == true
-已读        Game1.player.mailReceived 含 letter.Id（callback 写入）
+已读        Game1.player.mailReceived 含 letter.Id（信件关闭路径写入，写入方见 §6）
 ```
 
 前两项可在没有玩家配合时确认；第三项必须由玩家读信。
@@ -115,15 +144,23 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 
 也就是说 **`Text` 是游戏命令的载体**。如果模型产出的文本里出现命令或 token 语法，就会变成对游戏状态的修改——在本轮"仅文本"的约束下，这是**唯一仍然存在的副作用通道**。
 
-**因此 `send_mail` 必须在 Adapter 侧做输入校验**，至少覆盖：
+**因此 `send_mail` 必须在 Adapter 侧做输入校验。校验采用白名单，不采用黑名单。**
+
+黑名单在这里必然不完整：`Text` 最终交给游戏的 `TokenParser`，而**我们没有它的完整语法**。方案早期版本只列了 `^ @ [ ]` 三个字符，但原版 `Data/mail` 的命令语法使用 `%` 前缀，该前缀是否也在解析链上尚未验证。凡是"猜哪些输入危险"的做法，都会漏掉没想到的那一类。
+
+白名单把"我们是否搞清了 TokenParser 语法"从安全前提里移除：
 
 ```text
-拒绝或转义   ^           换行控制
-拒绝或转义   @           玩家名替换
-拒绝         [ ] 形式的 token / 游戏命令
-限制         长度上限（与信件 UI 容量对齐）
-限制         非可打印字符
+允许      可打印字符      含中文
+允许      ^              换行，信件排版的刚需，限制出现次数
+允许      @              玩家名替换，限制出现次数
+拒绝      [ ] %          命令与 token 通道，一律拒绝
+拒绝      控制字符        含裸换行字节；换行统一由 ^ 表达
+限制      长度上限        与信件 UI 容量对齐
+限制      ^ 数量上限      防止用换行堆出超长信件
 ```
+
+**为什么 `^` 和 `@` 是允许而不是拒绝**：两者都是排版能力，不是副作用通道（一个换行、一个替换玩家名）。全部拒绝会让每封信挤成一行，直接损害 §5.2 的人设一致性验收。允许并限次，而不是拒绝。
 
 校验失败必须以 `REJECTED` 返回明确 code（例如 `mail_body_invalid`），**不得把未经校验的文本写入 `Text`**。
 
@@ -143,10 +180,38 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 - 输入 schema：`body`（必填，string，maxLength 上限）、`title`（可选）。
 - 在 `RuntimeClient` 的执行分派中接入该能力。
 
+**信件 id 生成规则（必须固定，不能留给实现时随手决定）**：
+
+`RegisterLetter` 对同 id 是**替换**，不同 id 会持续累积到 `MailRepository`。两种极端都不可接受：固定 id 会让玩家永远只看到最后一封；纯随机 id 会让仓库无限增长且无法在验收时核对。本轮采用可追溯且不会重复的规则：
+
+```text
+gameagent.{source_turn_id}.{step_index}
+```
+
+以 `ActionRequest.source_turn_id` 为前缀，信件即可追溯到产生它的 AgentTurn；同一 Turn 内多次调用以 step 序号区分；不使用随机数。
+
+**分派位置（选错会重复发送 ActionResult）**：
+
+`RuntimeClient` 现有两种分派写法，语义不同：
+
+```text
+if + return     处理器自己 SendActionResult（present_dialogue / resolve_meeting）
+switch 返回值    由外层统一 SendActionResult（emote / face_player）
+```
+
+`send_mail` 是 Sync、无 continuation，**必须走后者**。
+
+**能力发布方式（本节冻结，不留"或"）**：
+
+`send_mail` **只在 MFM 可用时进入 CapabilityList**；MFM 不可用时能力不发布，模型看不到它。调用侧的 `mail_framework_unavailable` 分支仍要实现，但它是防御路径而非主路径。
+
+采用条件发布而不是"始终发布、调用时拒绝"的理由有两层：其一，"能力暴露什么，模型就会尝试什么"，让模型看不见一个当前无法执行的工具，比让它先选中再被拒绝更干净；其二，条件发布的先例已存在于同一个方法（`BuildEnvironmentCapabilities` 的 `includeTaskCapabilities` 参数），不需要新机制。
+
 **验收**：
 
 - `CapabilityList` 的 Stardew 静态检查与 `CapabilityCatalog` 测试同步更新并通过。
 - 模型可见的工具清单包含 `send_mail`，schema 正确。
+- MFM 不可用时 `send_mail` 不在工具清单中。
 
 ### 4.2 MFM 集成层（可选依赖）
 
@@ -154,17 +219,38 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 
 理由：若 adapter 直接引用 `MailFrameworkMod.dll`，未安装该 mod 的用户会让 adapter 在加载/运行时崩溃。
 
-**做法**：新增独立的 mod 集成模块，通过反射在运行时解析 MFM 的类型与方法：
+**做法**：新增独立的 mod 集成模块，通过反射在运行时解析 MFM 的类型与方法。
+
+必须解析的具体目标（全部已用反射核实为 public）：
 
 ```text
-Mods registry:   helper.ModRegistry.GetApi("DIGUS.MailFrameworkMod")
-类型解析:        按名字找 ILetter / Letter 构造与属性
-调用:            在主线程上构造信件并 RegisterLetter
+MailFrameworkMod.MailFrameworkModEntry.GetApi()     取得 API 实例
+MailFrameworkMod.Api.IMailFrameworkModApi           调用面
+MailFrameworkMod.Letter                             可写模型，构造信件
+MailFrameworkMod.Api.ApiLetter                      包装为 ILetter
+MailFrameworkMod.MailController.UpdateMailBox()     立即投递
+MailFrameworkMod.MailController.HasCustomMail()     投递证据
 ```
+
+**唯一的非平凡实现点：运行时构造委托。**
+
+`Letter` 没有无参构造，三个构造函数都要求 `Func<Letter,bool> condition` 与 `Action<Letter> callback`。而 `Letter` 在 Adapter 编译期不可见（不能引用 DLL），这两个委托类型因此必须**在运行时凭空造出来**，只能用 `System.Linq.Expressions`：
+
+```csharp
+Type letterType = /* 反射得到 MailFrameworkMod.Letter */;
+Type funcType   = typeof(Func<,>).MakeGenericType(letterType, typeof(bool));
+
+ParameterExpression parameter = Expression.Parameter(letterType, "letter");
+Delegate condition = Expression.Lambda(funcType, Expression.Constant(true), parameter).Compile();
+```
+
+`condition` 必须恒返回 `true`：`MailRepository.GetValidatedLetters()` 直接调用 `l.Condition(l)` 且没有 null 检查（§2.3）。
+
+`callback` 与 `dynamicItems` 传非 null 的空实现，以规避"是否允许 null"这个未知项（§6 #1）。**本轮不依赖 `callback` 完成任何状态写入**——`mailReceived` 由信件关闭路径产生，其写入方是 §6 #5 的待确认项；先传空实现实测，只有当实测显示没有记录时，才在 `callback` 内写入 `letter.Id`。
 
 **必须满足**：
 
-- MFM 未安装时，adapter 正常加载，`send_mail` 不进入 Tool View，或调用时以明确 code（例如 `mail_framework_unavailable`）REJECTED。
+- MFM 未安装时，adapter 正常加载，`send_mail` 不进入 Tool View；调用侧另有 `mail_framework_unavailable` 防御分支。
 - 所有 MFM 调用都在游戏主线程（`MainThreadDispatcher`）上执行。
 - MFM 调用抛异常时必须转成 `failed` ActionResult，带明确 code，不吞掉、不崩溃。
 
@@ -178,23 +264,28 @@ MFM 的主流用法是内容包：写 `mail.json` + `manifest.json`（`ContentPa
 
 ### 4.4 立即投递
 
-**改动**：注册成功后触发 MFM 的投递入口。
+**改动**：注册成功后反射调用 MFM 的投递入口 `MailController.UpdateMailBox()`。
 
-**首选**：触发 MFM 注册的控制台命令 `player_debug_updatemailbox`（SMAPI `ICommandHelper`，需在主线程执行）。
-**备选**：若命令触发不可行，反射调用 `MailController.UpdateMailBox()`。
+**不存在备选路径。** 方案早期版本把"触发控制台命令 `player_debug_updatemailbox`"列为首选，但该路径不成立：SMAPI 4.3.2.0 的 `ICommandHelper` 只有 `Add` 一个公开方法，不提供触发其它 mod 命令的接口（见 §2.2）。绕过它去反射 SMAPI 内部的命令管理器，只会引入更脆弱的依赖。
+
+`UpdateMailBox()` 本来就是 MFM 自己的投递实现，控制台命令只是它的入口之一。直接调用少一层，也更稳定。
 
 **验收**：调用后 `HasCustomMail()` 为 true，且 `Game1.player.mailbox` 出现占位符。
 
 ### 4.5 校验与结果
 
-**改动**：实现 §3 的文本校验；构造 ActionResult 时区分：
+**改动**：实现 §3 的白名单校验；构造 ActionResult 时区分：
 
 ```text
-succeeded                    信件已注册并投递
-REJECTED mail_body_invalid   文本未通过校验
-REJECTED mail_framework_unavailable  MFM 未安装
-failed   mail_register_failed / mail_delivery_failed  并带原因
+succeeded                            信件已注册并投递
+REJECTED mail_body_invalid           body 未通过白名单校验
+REJECTED mail_title_invalid          title 未通过白名单校验
+REJECTED mail_framework_unavailable  MFM 未安装（防御分支，正常路径下该能力不发布）
+failed   mail_register_failed        注册抛异常
+failed   mail_delivery_failed        投递抛异常
 ```
+
+**顺序约束**：校验必须在**任何 MFM 调用之前**完成。文本未通过校验时，不得构造 `Letter`、不得注册、不得投递——校验失败必须是纯本地拒绝，不留下部分生效的状态。
 
 ---
 
@@ -204,7 +295,7 @@ failed   mail_register_failed / mail_delivery_failed  并带原因
 
 | 层 | 证据 | 是否需要玩家 |
 | --- | --- | --- |
-| 机制 | 自动化测试：文本校验规则、幂等注册、MFM 缺失时的 REJECTED 路径 | 否 |
+| 机制 | 自动化测试：白名单校验规则、id 生成规则、MFM 缺失时能力不发布、参数解析 | 否 |
 | 游戏 | SMAPI 日志出现注册/投递记录；`HasCustomMail() == true`；`mailbox` 含占位符 | 否 |
 | 闭环 | 玩家走近信箱读到信；`mailReceived` 含 letter.Id | 是 |
 
@@ -213,17 +304,28 @@ failed   mail_register_failed / mail_delivery_failed  并带原因
 - 用 `AutoOpen=true` 让信件不显示就写入状态——它证明的是"我们写了数据"，不是"agent 送出了一封信"。
 - 用 `player_addreceivedmail` 直接写 `mailReceived`——那绕过了投递机制，验证的就不是我们的能力。
 
+> 边界说明：在信件 `callback` 内写 `letter.Id`（§6 #5 的兜底方案）与上面的调试命令**不是一回事**。`callback` 是 MFM 自己的信件完成钩子，只在玩家真正关掉那封信之后才被调用；调试命令则跳过整条投递链路。前者可接受，后者不可接受。
+
 ### 5.2 人设一致性验收（本轮决策要求）
 
-链路打通后，需要在同一 NPC 上做多轮真实模型采样，验证信件内容与角色定义一致：
+链路打通后，需要对真实模型采样，验证信件内容与角色定义一致。样本量与合格线必须事先固定，否则容易滑向"跑通就算合格"。
 
 ```text
-方法        同一 NPC（含 AgentDefinition 的角色）× 不同场景/玩家输入，各生成一封
-检查项      署名与身份一致、语气与 speech_style 一致、内容与该角色关系状态一致、无越界承诺
-判定        逐条人工评判并记录；不达标样本保留原文与判定理由
+样本       主 NPC（含 AgentDefinition）× 4 个场景，各 1 封
+           场景取：普通问候 / 玩家请求 / 玩家拒绝或负面回应 / 涉及长期承诺
+           另加对照 NPC × 2 个场景，各 1 封
+           合计 6 封
+检查项     署名与身份一致
+           语气与 speech_style 一致
+           内容与该角色当前关系状态一致
+           无越界承诺（不承诺游戏做不到的事，不替代玩家决策）
+判定       逐封逐项人工评判，记录通过 / 不通过
+合格线     「无越界承诺」必须 6/6 通过（硬性，无例外）
+           其余三项允许合计 1 处瑕疵
+不通过     保留信件原文、模型输入与判定理由；修复后重采，不修改已记录的样本
 ```
 
-样本数量与判定标准在开工前与用户确认，避免"跑通了就算合格"。
+合格线对"无越界承诺"要求 6/6，因为它直接对应 §7 的对外结论；其余三项属表现质量，允许一处瑕疵但必须记录在案。
 
 ### 5.3 验证命令
 
@@ -262,22 +364,27 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 ### 5.4 实机步骤
 
 1. 确认 `Mods/MailFrameworkMod` 与 `Mods/GameAgentStardew` 均加载，SMAPI 日志无报错。
-2. 加载存档，触发一次 NPC 对话，使 agent 有自主决策机会。
-3. 观察 SMAPI 日志：`send_mail` 是否被模型自主选择（不是被 prompt 点名）。
-4. 确认信件已投递（`HasCustomMail()` / 日志）。
-5. 走近信箱读信，确认文本与模型输出一致、无 token 被解析。
-6. 确认 `mailReceived` 含 letter.Id。
+2. 确认 SMAPI 日志中的 CapabilityList **包含 `send_mail`**（条件发布生效）。
+3. 加载存档，触发一次 NPC 对话，使 agent 有自主决策机会。
+4. 观察 SMAPI 日志：`send_mail` 是否被模型自主选择（不是被 prompt 点名）。
+5. 确认信件已投递（`HasCustomMail()` / 日志），且信件 id 符合 §4.1 的生成规则。
+6. 走近信箱读信，确认文本与模型输出一致、无 token 被解析。
+7. 确认 `mailReceived` 含 letter.Id。
+8. 临时移出 `Mods/MailFrameworkMod` 重进游戏，确认 adapter 正常加载、`send_mail` 不在 CapabilityList 中、不报错（负向验证）。
 
 ---
 
-## 6. 未确认项（开工后需实机确认）
+## 6. 未确认项与已解决项
 
 | # | 未知 | 影响 | 计划 |
 | --- | --- | --- | --- |
-| 1 | `RegisterLetter` 的 API 内部实现（该文件本轮未取到） | 无法确认为 null 的 callback/dynamicItems 是否安全 | 传非 null 空实现，规避不确定性 |
+| 1 | 为 null 的 `callback` / `dynamicItems` 是否安全 | 决定传空实现还是构造真委托 | 传非 null 空实现，规避不确定性 |
 | 2 | 运行时 `RegisterLetter` 在存档加载后是否立即可投递 | 决定立即投递是否成立 | 第 1 个模块就用日志验证 |
-| 3 | `player_debug_updatemailbox` 能否由 adapter 触发 | 决定立即投递用命令还是反射 | 命令不可行则走 `MailController.UpdateMailBox()` |
-| 4 | `TokenParser` 对 `^`/`@`/`[]` 的确切行为 | 决定校验是拒绝还是转义 | 以实机验证为准，保守先拒绝 |
+| 3 | 原版 mail 的 `%` 前缀命令是否也在 `Text` 解析链上 | 只影响"为什么拒绝 `%`"的解释，不影响校验本身 | 白名单已一律拒绝 `%`，不必先验证 |
+| 4 | `TokenParser` 的确切语法 | 无——白名单不依赖它 | 不验证。只有黑名单才需要先摸清语法，本轮已弃用黑名单 |
+| 5 | 读信时 `mailReceived` 由 MFM 自己写入，还是需要我们在 `callback` 里写 | 决定 §5.1 闭环证据怎么产生 | 先传空实现实测；若无记录，则在该 `callback` 内写入 `letter.Id` |
+
+**已解决，不再是未知项**：`RegisterLetter` 的签名与 `Letter` / `ApiLetter` 的构造方式已由反射核实（§2.1）；立即投递入口已确定为 `MailController.UpdateMailBox()`（§2.2、§4.4）；`player_debug_updatemailbox` 能否触发已有确定答案（不能，§2.2）。
 
 `AutoOpen=false` + 无附件 + 无 recipe + 非 null condition：这四点使信件走标准 UI 路径，是本轮设计的基础。
 
@@ -285,10 +392,10 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 
 ## 7. 退出条件
 
-1. `send_mail` 进入 Tool View，且 MFM 未安装时以明确 code REJECTED、adapter 不崩溃。
+1. MFM 可用时 `send_mail` 进入 Tool View；MFM 未安装时该能力不发布、adapter 正常加载，调用侧防御分支以明确 code REJECTED。
 2. 在一个由玩家或游戏事件触发的 AgentTurn 内，系统 prompt 不点名 `send_mail`，模型自行从 Tool View 选中并调用它（有 SMAPI 日志证据）。这验证的是 Turn 内 Tool Selection，不要求 Background Trigger 或 NPC 自发目标。
 3. 信件成功投递，玩家可读，`mailReceived` 记录 letter.Id。
-4. 文本校验有自动化测试覆盖，注入样本被拒。
+4. §3 白名单校验与 §4.1 id 生成规则均有自动化测试覆盖，超范围字符与注入样本被拒。
 5. 人设一致性按 §5.2 完成一轮采样与判定。
 6. §5.3 全部通过；`check-architecture.ps1` 的 game-agnostic 断言未被削弱。
 7. 协议与 Mod 运行时标识未改动。
