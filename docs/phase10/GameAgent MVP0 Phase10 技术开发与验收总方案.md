@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 已确认开工；10.1 代码侧已实现（剩余实机与模型验收），10.2-1 Runtime Bootstrap & Data Root 已实现（§3.2.2）
+> **Status:** 已确认开工；10.1 代码侧已实现（剩余实机与模型验收），10.2-1 Runtime Bootstrap & Data Root 已实现（§3.2.2），10.2-2 本地控制面首个切片已实现并实机验证（[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)）
 > **Date:** 2026-09-18
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
@@ -144,7 +144,7 @@ StoreOptions.MaxTasksPerWorld   单世界任务上限
 
 > **一个只有游戏和 Runtime 的普通用户，能在不读源码、不改配置文件的前提下把 WIA 跑起来，并看见 agent 在做什么。**
 
-当前配置面仍然是手工的：配置写在数据根下的 `config/`，`GAMEAGENT_MODEL_CONFIG` / `GAMEAGENT_AGENT_CONFIG` 可以覆盖，且 runtime **没有任何 HTTP 面**。10.2-1 已经让 Runtime 不再依赖 cwd，也不再因为缺少模型配置而直接退出；剩下的问题是"用户怎么把它配起来、怎么看见它在做什么"。
+当前配置面仍然是手工的：配置写在数据根下的 `config/`，`GAMEAGENT_MODEL_CONFIG` / `GAMEAGENT_AGENT_CONFIG` 可以覆盖。10.2-1 已经让 Runtime 不再依赖 cwd，也不再因为缺少模型配置而直接退出；10.2-2 已经让进程在启动时提供本地控制面并自动打开浏览器。剩下的问题是"用户怎么把它配起来"——控制面目前只能**显示**缺什么，不能写入配置。
 
 ### 3.2 关键前置：Runtime Bootstrap 与统一 Data Root
 
@@ -230,7 +230,7 @@ Runtime-owned path   config / trace / task db / memory root / definition root �
 验收测试             acceptance 以 --data-root 指向自己的临时目录
 ```
 
-仍然属于后续子阶段：HTTP 面、首次运行向导、secret 存储与权限收紧、可视化。**模型配置目前仍需手工写入数据根下的 `config/model.json`。**
+仍然属于后续子阶段：首次运行向导、secret 存储与权限收紧、可视化。**模型配置目前仍需手工写入数据根下的 `config/model.json`**；HTTP 面已由 10.2-2 提供。
 
 ### 3.3 技术选型与优先级（已确认）
 
@@ -262,13 +262,15 @@ Runtime-owned path   config / trace / task db / memory root / definition root �
 
 代价（明确接受）：需要自己设计 HTTP 接口，并加本地访问保护（见 §3.4）。这是标准做法，不是需要设计的新机制。
 
-已核实的代码事实：
+已核实的代码事实（10.2-2 开工前）：
 
 ```text
-runtime 当前没有任何 HTTP 服务        （无 ListenAndServe / ServeHTTP）
-runtime 当前没有任何 embed 静态资源    （无 //go:embed）
+runtime 当时没有任何 HTTP 服务        （无 ListenAndServe / ServeHTTP）
+runtime 当时没有任何 embed 静态资源    （无 //go:embed）
 因此 HTTP 面与资产内嵌都是净新增，不影响现有 gRPC 链路
 ```
+
+10.2-2 已按此实现：HTTP 面在 `runtime/internal/httpapi`，资产内嵌在 `gameagent/console`。
 
 本机工具链现状（已核实）：
 
@@ -352,13 +354,13 @@ DeepSeek API Key      Configured ✓      [ Replace ]
 | 步骤 | 内容 | 为什么在这个位置 |
 | --- | --- | --- |
 | 10.2-1 | Runtime Bootstrap & Data Root：Bootstrap 与 Agent Core 分离（未配置模型时进程继续提供 gRPC，状态为 `needs_configuration`）；统一 App/Data Root，配置路径、trace、SQLite、memory root、definition root 全部从它解析 | 当前未配置模型会在任何 server 之前 `log.Fatalf`，且 trace 路径硬编码依赖从仓库根启动；不做这个后面都不成立 |
-| 10.2-2 | 极简本地 HTTP 面 + 资产内嵌：health / status / turn 列表；`//go:embed` 前端产物；**HTTP 的 bind、端口与本地访问保护** | 客户端要有东西可连；同时它就是 10.1 与 10.3 的调试面。**它是 10.2-1 控制面的载体，不是第二套 HTTP 面** |
+| 10.2-2 | 极简本地 HTTP 面 + 资产内嵌：status / turn 列表；`//go:embed` 前端产物；**HTTP 的 bind、端口与本地访问保护** | 客户端要有东西可连；同时它就是 10.1 与 10.3 的调试面。**它是 10.2-1 控制面的载体，不是第二套 HTTP 面** |
 | 10.2-3 | 首次运行向导与依赖体检：写配置与 key、检查 .NET / SMAPI / 游戏路径 / key 有效性 | 这一步做完，"外人能跑起来"才成立 |
 | 10.2-4 | 可视化：AgentTurn 时间线（复用现有 JSONL trace）、对话记录、任务与记忆查看 | 这是"好看"，前三步才是"能用" |
 
 注意 10.2-2 与 10.2-4 共用同一个 HTTP 面：**不需要为"控制面"和"UI 接口"各做一套。**
 
-**10.2-1 已实现**（见 §3.2.1、§3.2.2）；10.2-2 及之后尚未开工，其内部设计留到各自子方案。
+**10.2-1 已实现**（见 §3.2.1、§3.2.2）。**10.2-2 的首个切片已实现并实机验证**：控制面、凭证交接、`/api/status`、`/api/turns`、资产内嵌与自动打开浏览器；服务端不提供 `health` 路由——它没有消费者，且总方案 §3.4 要求 `/api` 全部带凭证，一个免凭证的健康检查与该约束直接冲突。10.2-3、10.2-4 与发行步骤尚未开工，其内部设计留到各自子方案或本子阶段的后续切片。
 
 ### 3.6 发行形态与明确不做
 

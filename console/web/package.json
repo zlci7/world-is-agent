@@ -1,0 +1,23 @@
+{
+  "name": "wia-console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local client for World Is Agent. Built assets are embedded into the Runtime binary.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "type-check": "vue-tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.7.3",
+    "vite": "^6.0.11",
+    "vue-tsc": "^2.2.0"
+  }
+}

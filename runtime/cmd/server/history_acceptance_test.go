@@ -850,7 +850,8 @@ func historyAcceptanceStart(t *testing.T, binary, work, modelPath, agentPath, lo
 		t.Fatalf("BLOCKED: %s became occupied; no existing process was stopped", historyAcceptanceAddress)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
-	*process = historyAcceptanceProcess{cmd: exec.CommandContext(ctx, binary, "--data-root", work), done: make(chan struct{}), ctx: ctx, cancel: cancel}
+	// --no-open keeps the local client from launching a browser during a test run.
+	*process = historyAcceptanceProcess{cmd: exec.CommandContext(ctx, binary, "--data-root", work, "--no-open"), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	process.cmd.Dir = work
 	process.cmd.Env = historyAcceptanceEnv(map[string]string{
 		"GAMEAGENT_MODEL_CONFIG": modelPath, "GAMEAGENT_AGENT_CONFIG": agentPath, historyAcceptanceKeyEnv: localKey,

@@ -15,9 +15,10 @@ Run commands from the repository root unless noted otherwise. Check commands liv
 ## Repository Areas
 
 ```text
-runtime/     Go runtime, gateway, loop, scheduling, memory, trace, providers
+runtime/     Go runtime, gateway, loop, scheduling, memory, trace, providers, local control plane
 protocol/    Protobuf contract and generated bindings
 adapters/    Game-specific adapters
+console/     Local client (Vue 3 + TypeScript + Vite) and the Go package that embeds its build
 docs/        Status, guides, ADRs, phase plans, acceptance records
 scripts/     Local validation and helper scripts
 ```
@@ -25,6 +26,22 @@ scripts/     Local validation and helper scripts
 ## Repository Model
 
 WIA is organized as Runtime + Protocol + Adapter. Adapters are logically independent of this repository's directory layout: they depend on a versioned protocol instead of on `adapters/stardew` sitting at a known path. See [logical-separation.md](logical-separation.md) for the work that removes the remaining layout coupling.
+
+## Local Client
+
+The Runtime serves a local HTTP control plane and embeds the client into its own binary, so starting the Runtime opens a browser at `http://127.0.0.1:<port>/#token=...` and hands over a session credential automatically. Nothing is copied by hand, and no route returns the model credential.
+
+The client is built separately and is not committed:
+
+```powershell
+cd console/web
+npm install
+npm run build     # writes console/dist, which console/embed.go embeds
+```
+
+`go build ./...` succeeds without the client, and the Runtime then reports `assets_not_built` with the commands above instead of serving an empty page. Development against the Vite dev server uses `npm run dev`, which proxies `/api` to `WIA_DEV_RUNTIME` (default `http://127.0.0.1:8765`).
+
+Design and acceptance record: [Phase10.2-2 本地控制面](../phase10/GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md).
 
 ## Adapter Capabilities From Third-Party Mods
 

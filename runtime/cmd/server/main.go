@@ -9,15 +9,28 @@ import (
 	"os/signal"
 	"syscall"
 
+	"gameagent/console"
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/bootstrap"
+	"gameagent/runtime/internal/browser"
 	"gameagent/runtime/internal/dataroot"
+	"gameagent/runtime/internal/httpapi"
 
 	"google.golang.org/grpc"
 )
 
+// version is reported to the local client. It is the Runtime build identity, not
+// a release version, and is kept as a constant until releases carry one.
+const version = "dev"
+
+// grpcAddr is where adapters connect. It is an interface with the games that
+// already install adapters, so it stays fixed.
+const grpcAddr = "127.0.0.1:50051"
+
 func main() {
 	dataRoot := flag.String(dataroot.FlagName, "", "runtime data root; overrides the "+dataroot.EnvName+" environment variable")
+	httpAddr := flag.String("http-addr", "127.0.0.1:0", "local control plane address; must be a loopback address, port 0 picks a free port")
+	noOpen := flag.Bool("no-open", false, "do not open the browser at the local client")
 	flag.Parse()
 
 	// Bootstrap always succeeds for a writable data root. The agent core is the
@@ -38,6 +51,17 @@ func main() {
 		log.Printf("GameAgent definition catalog root: %s", root)
 	}
 
+	// The control plane starts before the adapter can connect, and keeps working
+	// while the agent core is not ready. That is the whole point of separating
+	// bootstrap from the core: the client is how the user finds out what is
+	// missing, so it cannot depend on the core being configured.
+	controlPlane := startControlPlane(*httpAddr, runtime, *noOpen)
+	defer func() {
+		if controlPlane != nil {
+			_ = controlPlane.Shutdown()
+		}
+	}()
+
 	process, err := newGatewayRuntime(context.Background(), runtime)
 	if err != nil {
 		log.Fatalf("open task runtime failed: %v", err)
@@ -46,13 +70,13 @@ func main() {
 	grpcServer := grpc.NewServer()
 	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, process.gateway)
 
-	listener, err := net.Listen("tcp", "127.0.0.1:50051")
+	listener, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		log.Fatalf("listen failed: %v", err)
 	}
 
 	go func() {
-		log.Println("GameAgent Runtime listening on 127.0.0.1:50051")
+		log.Printf("GameAgent Runtime listening on %s", grpcAddr)
 		if err := grpcServer.Serve(listener); err != nil && err != grpc.ErrServerStopped {
 			log.Printf("serve stopped: %v", err)
 		}
@@ -67,4 +91,40 @@ func main() {
 	if err := process.shutdown(context.Background(), grpcServer); err != nil {
 		log.Printf("shutdown task runtime: %v", err)
 	}
+}
+
+// startControlPlane serves the local client. A control plane that cannot start is
+// reported and not fatal: the game is still playable only through the gRPC
+// adapter, so refusing to run would turn a missing UI into a broken game.
+func startControlPlane(addr string, runtime *bootstrap.Runtime, noOpen bool) *httpapi.Server {
+	server, err := httpapi.New(httpapi.Options{
+		Addr:     addr,
+		Runtime:  runtime,
+		Assets:   console.Assets(),
+		GRPCAddr: grpcAddr,
+		Version:  version,
+		Logger:   log.Default(),
+	})
+	if err != nil {
+		log.Printf("GameAgent local client unavailable: %v", err)
+		return nil
+	}
+
+	go func() {
+		if err := server.Serve(); err != nil {
+			log.Printf("local client stopped: %v", err)
+		}
+	}()
+
+	log.Printf("GameAgent local client: %s", server.URL())
+	if noOpen {
+		log.Printf("open this URL to hand the session to your browser: %s", server.BrowserURL())
+		return server
+	}
+	if err := browser.Open(server.BrowserURL()); err != nil {
+		// Losing the automatic handover is recoverable: the URL above carries the
+		// same token, so the user can still open it.
+		log.Printf("open browser failed: %v; open this URL instead: %s", err, server.BrowserURL())
+	}
+	return server
 }

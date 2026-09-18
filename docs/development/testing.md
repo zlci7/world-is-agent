@@ -20,6 +20,19 @@ go test -race ./runtime/...
 
 On Windows, the race detector requires a working 64-bit C toolchain. Run it on Linux, CI, or a Windows machine with the required compiler installed.
 
+## Local Client
+
+The client is built from `console/web` and embedded into the Runtime binary. Build it before running a Runtime whose UI you want to see:
+
+```powershell
+cd console/web
+npm install
+npm run build
+npm run type-check
+```
+
+`go build ./...` does not need Node: without a build, the Runtime serves `assets_not_built` with these commands instead of an empty page.
+
 ## Protocol
 
 ```powershell
@@ -94,12 +107,17 @@ The script copies the adapter and protocol into a temporary directory outside th
    Without a model configuration the Runtime still starts and logs
    `agent core is not ready (needs_configuration)` with the path it expects.
 
+   The Runtime also starts the local client and opens a browser tab at
+   `http://127.0.0.1:<port>/#token=...`. Pass `--no-open` to suppress the browser,
+   which is what automated runs use; the log then prints the URL to open by hand.
+
 2. Build and install the Stardew adapter.
 3. Launch Stardew Valley through `StardewModdingAPI.exe`.
 4. Load a save with at least one reachable villager NPC.
 5. Interact with an NPC.
 6. Confirm SMAPI logs show Runtime connection, `GameEvent`, `EventAck`, `Observation`, `ActionRequest`, `ActionResult`, and `TurnCompletion`.
 7. Confirm `runtime/data/traces.jsonl` contains the matching AgentTurn trace.
+8. Confirm the browser tab lists that turn.
 
 For dialogue validation, confirm the NPC line appears through Stardew's native dialogue flow, then reply choices or free text appear afterward.
 

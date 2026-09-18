@@ -33,6 +33,7 @@ Each phase has its own directory, and sub-phases live inside their parent phase 
 - [Phase7](phase07/)
 - [Phase8](phase08/)
 - [Phase9](phase09/)
+- [Phase10](phase10/)
 
 [docs/STATUS.md](STATUS.md) is the public source of truth for current capability status and known limits. Phase documents can contain internal terminology, temporary implementation plans, and historical acceptance details, including references to documents that no longer exist in the repository; those records are kept as written.
 

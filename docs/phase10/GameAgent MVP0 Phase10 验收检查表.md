@@ -14,6 +14,7 @@ B   10.1 阶段二 冒烟                       5/5 通过
 C1  正向：模型自主选中                     通过（延迟型动机；Linus、Penny 各复现一次）
 C2  负向：不适用时不调用                   由 C1 的 3 个普通动机回合提供证据（推断，已标明）
 C3  人设抽验                              通过（Penny，四项全过）
+D   10.2-2 本地控制面首个切片              已实现并实机验证（见 [10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md) §6）
 ```
 
 10.1 退出条件 §7 的八条均已满足；其中第 5、6 条按缩减后的口径执行（见 10.1 方案 §7 的范围缩减说明）。
@@ -41,12 +42,14 @@ C3  人设抽验                              通过（Penny，四项全过）
   go build -o $exe ./runtime/cmd/server
   ```
 
+  A 段用 `--no-open` 启动，避免自动打开浏览器干扰观察。想顺便看本地控制台时去掉它即可（见 [10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)）。
+
 ### A1 未配置也能启动，且进程不退出
 
 ```powershell
 $root = Join-Path $env:TEMP "wia-check-empty"
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
-& $exe --data-root $root
+& $exe --data-root $root --no-open
 ```
 
 | 检查 | 期望 |
@@ -54,6 +57,7 @@ Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 | 日志 | `GameAgent data root: <root>` |
 | 日志 | `GameAgent agent core is not ready (needs_configuration): model configuration not found at <root>\config\model.json` |
 | 日志 | `GameAgent Runtime listening on 127.0.0.1:50051` |
+| 日志 | `GameAgent local client: http://127.0.0.1:<port>`（`--no-open` 时随后打印带 token 的 URL） |
 | 进程 | **保持存活**，不退出 |
 | 目录 | `<root>` 下生成 `config/`、`data/`、`secrets/` |
 | 目录 | `data/tasks/tasks.sqlite`、`data/traces.jsonl` 被创建 |
@@ -67,7 +71,7 @@ Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 ```powershell
 Copy-Item -Recurse runtime\config (Join-Path $root "config")
 $env:GAMEAGENT_AGENT_CONFIG = Join-Path $root "config\games\stardew-valley\agent.json"
-& $exe --data-root $root
+& $exe --data-root $root --no-open
 ```
 
 | 检查 | 期望 |
@@ -79,13 +83,14 @@ $env:GAMEAGENT_AGENT_CONFIG = Join-Path $root "config\games\stardew-valley\agent
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "<任意非空占位值>"
-& $exe --data-root $root
+& $exe --data-root $root --no-open
 ```
 
 | 检查 | 期望 |
 | --- | --- |
 | 日志 | `GameAgent agent core ready: model config <path>` |
 | 日志 | `GameAgent Runtime listening on 127.0.0.1:50051` |
+| 日志 | `GameAgent local client: http://127.0.0.1:<port>` |
 | 定义目录 | 日志无 `definition catalog ... is unusable`（`definition_catalog_root` 相对数据根解析成功） |
 
 清理：`Remove-Item Env:\GAMEAGENT_AGENT_CONFIG, Env:\DEEPSEEK_API_KEY`
@@ -115,7 +120,7 @@ go test ./runtime/cmd/server/ -run TestRetrievalServerAcceptance -count=1
 
 ```powershell
 Push-Location C:\
-& $exe --data-root $root
+& $exe --data-root $root --no-open
 Pop-Location
 ```
 

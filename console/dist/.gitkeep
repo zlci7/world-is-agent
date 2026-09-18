@@ -1,0 +1,15 @@
+This directory holds the built client, which console/embed.go embeds into the
+Runtime binary through `//go:embed all:dist`.
+
+The build output is not tracked. Build it with:
+
+    cd console/web && npm install && npm run build
+
+This placeholder is tracked, and it is what keeps the embed pattern valid before
+the client has ever been built: the embed directive fails to compile if the
+directory matches no files. The Vite build intentionally does not empty this
+directory so that the placeholder survives. Delete the generated files if you
+want, but keep a file here.
+
+A Runtime built without the client reports assets_not_built to the browser and
+prints the commands above, instead of serving an empty page.

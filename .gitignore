@@ -3,6 +3,13 @@ bin/
 obj/
 runtime/server.exe
 
+# The client build. dist/ is produced from console/web/ and embedded into the
+# Runtime binary; only the placeholder that keeps the embed pattern valid is
+# tracked, so a checked-in bundle can never drift from its source.
+console/dist/*
+!console/dist/.gitkeep
+console/web/node_modules/
+
 # IDE/editor state
 .vs/
 .vscode/
@@ -29,6 +36,10 @@ coverage.out
 
 # Local private config overrides
 runtime/config/*.local.json
+
+# Credentials. The development data root is inside the repository, so a secret
+# written to <root>/secrets/ during local testing must never be committable.
+runtime/secrets/
 
 # AGENTS.md is tracked: it is the repository's standing agent instructions.
 

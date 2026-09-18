@@ -14,6 +14,7 @@
 * **统一 Agent 生命周期**：支持 AgentTurn、多步决策与执行
 * **Context & Memory**：管理 Agent 上下文与持久化记忆
 * **Capability → Tool**：由游戏动态声明能力并注册为模型工具
+* **本地控制台**：启动 Runtime 自动打开浏览器，查看 agent 状态与最近 AgentTurn
 * **Agent 隔离**：基于 `game_id + world_id + entity_id` 管理独立 Agent
 * **同步 / 异步执行**：支持游戏动作及长生命周期任务
 
