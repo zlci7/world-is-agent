@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"gameagent/runtime/internal/agent"
+	"gameagent/runtime/internal/bootstrap"
 	"gameagent/runtime/internal/gateway"
 	"gameagent/runtime/internal/task"
 	"google.golang.org/grpc"
@@ -15,8 +15,8 @@ type gatewayRuntime struct {
 	store   *task.SQLiteStore
 }
 
-func newGatewayRuntime(ctx context.Context, loop *agent.Loop, config agent.TaskConfig) (*gatewayRuntime, error) {
-	config = config.WithDefaults()
+func newGatewayRuntime(ctx context.Context, core *bootstrap.Runtime) (*gatewayRuntime, error) {
+	config := core.AgentConfig().Task.WithDefaults()
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -30,9 +30,9 @@ func newGatewayRuntime(ctx context.Context, loop *agent.Loop, config agent.TaskC
 			return nil, err
 		}
 		process.store = store
-		options = append(options, gateway.WithTaskService(task.NewService(store)), gateway.WithTaskResultHistory(loop.HistoryStore()))
+		options = append(options, gateway.WithTaskService(task.NewService(store)), gateway.WithTaskResultHistory(core.HistoryStore()))
 	}
-	process.gateway = gateway.NewServer(loop, options...)
+	process.gateway = gateway.NewServer(core, options...)
 	if config.Enabled {
 		dispatch := task.DispatcherConfig{ScanInterval: config.ScanInterval, BatchSize: config.DispatchBatch, RetryMin: config.RetryMin, RetryMax: config.RetryMax}
 		if err := process.gateway.StartTaskDispatcher(ctx, dispatch, nil, nil); err != nil {

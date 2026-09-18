@@ -1,4 +1,4 @@
-﻿# Status
+# Status
 
 World Is Agent is in experimental MVP0 development.
 
@@ -42,7 +42,9 @@ Stardew Valley is the first real adapter and validation environment.
 | Context budget | Deterministic provider-neutral estimated-token budget selection, section cropping, tool size admission, and final request hard gates. |
 | Context diagnostics | `ContextBuildReport` and bounded `ToolAdmissionReport` summaries record fallback, cropping, dropped content, tool admission, and final request estimated-token size. |
 | Providers | Provider-neutral model interface with Fake, DeepSeek, and OpenAI implementations. |
-| Trace | JSONL turn trace written under `runtime/.local/traces.jsonl`, including bounded context request summaries. |
+| Trace | JSONL turn trace written under the Runtime data root at `data/traces.jsonl`, including bounded context request summaries. |
+| Data root | Every Runtime-owned path resolves from one data root instead of the process working directory. Precedence: `--data-root`, then `WIA_DATA_ROOT`, then the platform data directory (`%LOCALAPPDATA%\WorldIsAgent`, `~/Library/Application Support/WorldIsAgent`, or `$XDG_DATA_HOME/wia`). Absolute configured paths are used as-is; relative ones resolve against the data root. |
+| Startup | Bootstrap and the agent core are separate: the Runtime serves gRPC even when no model configuration exists, reporting `needs_configuration` with the expected path instead of exiting. |
 
 Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and real dialogue persistence/readback are covered. Real Runtime process-restart recovery, the specified cross-version end-to-end path, and race validation remain open; see the [acceptance record](phase08/GameAgent MVP0 Phase8.1 技术开发与验收方案.md#验收结论). SQLite is independent of the game save: future comparable GameTime is filtered, but abandoned-branch history may become visible when game time catches up.
 
@@ -73,6 +75,7 @@ Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and
 | Heartbeat/liveness productization | Heartbeat exists in protocol but is not yet a completed recovery mechanism. |
 | Scenario evaluation | No public scenario evaluation suite yet. |
 | Packaged release | Local developer workflow is the primary installation path. |
+| First-run configuration | The Runtime stays up and reports what is missing, but there is no client yet: the model configuration must be written by hand. |
 
 ## Maintenance Rule
 

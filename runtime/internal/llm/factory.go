@@ -12,10 +12,9 @@ import (
 	"gameagent/runtime/internal/model"
 )
 
-const (
-	defaultConfigPath = "runtime/config/model.json"
-	configEnvName     = "GAMEAGENT_MODEL_CONFIG"
-)
+// ConfigEnvName overrides the model configuration path. The Runtime resolves a
+// relative value against its data root.
+const ConfigEnvName = "GAMEAGENT_MODEL_CONFIG"
 
 type Config struct {
 	model.WindowLimits
@@ -23,13 +22,6 @@ type Config struct {
 	Model    string `json:"model"`
 	APIKey   string `json:"api_key"`
 	BaseURL  string `json:"base_url"`
-}
-
-func ConfigPathFromEnv() string {
-	if path := strings.TrimSpace(os.Getenv(configEnvName)); path != "" {
-		return path
-	}
-	return defaultConfigPath
 }
 
 func LoadConfig(path string) (Config, error) {

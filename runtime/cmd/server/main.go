@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net"
 	"os"
@@ -9,58 +10,32 @@ import (
 	"syscall"
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
-	"gameagent/runtime/internal/agent"
-	"gameagent/runtime/internal/definition"
-	"gameagent/runtime/internal/llm"
-	"gameagent/runtime/internal/trace"
+	"gameagent/runtime/internal/bootstrap"
+	"gameagent/runtime/internal/dataroot"
 
 	"google.golang.org/grpc"
 )
 
 func main() {
-	modelProvider, modelConfig, err := llm.NewProviderFromConfigFile(llm.ConfigPathFromEnv())
+	dataRoot := flag.String(dataroot.FlagName, "", "runtime data root; overrides the "+dataroot.EnvName+" environment variable")
+	flag.Parse()
+
+	// Bootstrap always succeeds for a writable data root. The agent core is the
+	// part that needs configuration, and its state is reported rather than fatal:
+	// the process has to stay alive for the user to be able to configure it.
+	runtime, err := bootstrap.Open(*dataRoot, dataroot.OS())
 	if err != nil {
-		log.Fatalf("load model provider failed: %v", err)
+		log.Fatalf("open runtime failed: %v", err)
 	}
-	log.Printf("GameAgent model provider: %s model=%s", modelConfig.Provider, modelConfig.Model)
-
-	// 初始化 trace recorder。
-	var traceRecorder trace.Recorder
-	traceRecorder, err = trace.NewJSONLRecorder(
-		// MVP0 trace path 依赖从仓库根目录作为 cwd 启动；后续由 agent.json 的 trace.path 接管。
-		"runtime/.local/traces.jsonl",
-		trace.JSONLRecorderOptions{},
-	)
-	if err != nil {
-		log.Printf("create trace recorder failed: %v, fallback to noop", err)
-		traceRecorder = trace.NoopRecorder{}
-	}
-	defer traceRecorder.Close(context.Background())
-
-	agentConfig, err := agent.LoadConfigFile(agent.ConfigPathFromEnv())
-	if err != nil {
-		log.Fatalf("load agent config failed: %v", err)
-	}
-	log.Printf(
-		"GameAgent agent config: turn=%s llm=%s observe=%s action=%s",
-		agentConfig.TurnTimeout,
-		agentConfig.LLMTimeout,
-		agentConfig.ObserveTimeout,
-		agentConfig.ActionTimeout,
-	)
-
-	var definitionCatalog definition.Catalog
-	if agentConfig.DefinitionCatalogRoot != "" {
-		definitionCatalog, err = definition.LoadCatalogFromDir(agentConfig.DefinitionCatalogRoot)
-		if err != nil {
-			log.Fatalf("load definition catalog failed: %v", err)
-		}
-		log.Printf("GameAgent definition catalog root: %s", agentConfig.DefinitionCatalogRoot)
+	defer runtime.Close()
+	log.Printf("GameAgent data root: %s", runtime.Layout().Root())
+	if runtime.State() == bootstrap.StateReady {
+		log.Printf("GameAgent agent core ready: model config %s", runtime.ModelConfigPath())
+	} else {
+		log.Printf("GameAgent agent core is not ready (%s): %s", runtime.State(), runtime.Reason())
 	}
 
-	agentLoop := agent.NewLoop(modelProvider, traceRecorder, agentConfig, agent.WithDefinitionCatalog(definitionCatalog))
-
-	process, err := newGatewayRuntime(context.Background(), agentLoop, agentConfig.Task)
+	process, err := newGatewayRuntime(context.Background(), runtime)
 	if err != nil {
 		log.Fatalf("open task runtime failed: %v", err)
 	}

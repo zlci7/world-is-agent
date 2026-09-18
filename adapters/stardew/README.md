@@ -78,12 +78,18 @@ powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-standalone
 
 Task storage and scheduling start with Runtime by default. The Stardew configuration provides the 190-second async action and 270-second turn budgets. After loading a save, Task tools become available when world binding completes.
 
-1. Start Runtime from the repository root:
+1. Start Runtime with the development data root and the Stardew agent configuration:
 
    ```powershell
-   $env:GAMEAGENT_AGENT_CONFIG="runtime/config/games/stardew-valley/agent.json"
+   $env:WIA_DATA_ROOT="$PWD/runtime"
+   $env:GAMEAGENT_AGENT_CONFIG="config/games/stardew-valley/agent.json"
    go run ./runtime/cmd/server
    ```
+
+   Every Runtime-owned path resolves from the data root, so the working
+   directory no longer decides where configuration and data live. The
+   configuration path above is relative to that data root, not to the working
+   directory.
 
 2. Build and install the adapter.
 3. Launch Stardew Valley through `StardewModdingAPI.exe`.

@@ -17,7 +17,7 @@
   "max_tool_result_output_depth": 4,
   "max_tool_result_output_fields": 64,
   "max_tool_result_output_array_items": 32,
-  "definition_catalog_root": "runtime/config/games",
+  "definition_catalog_root": "config/games",
   "prompt": {
     "language": "Simplified Chinese",
     "npc_style": "自然、简短、符合 Stardew Valley NPC 的语气",

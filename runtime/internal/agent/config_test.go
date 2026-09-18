@@ -193,8 +193,9 @@ func TestConfigWithDefaultsFillsSQLiteMemoryStoreConfig(t *testing.T) {
 	if cfg.MemoryStore.Kind != "sqlite" {
 		t.Fatalf("default memory store kind = %q, want sqlite", cfg.MemoryStore.Kind)
 	}
-	if cfg.MemoryStore.Root != "runtime/.local/memory" {
-		t.Fatalf("default memory store root = %q, want runtime/.local/memory", cfg.MemoryStore.Root)
+	// The default is relative to the Runtime data root, so it must stay relative.
+	if cfg.MemoryStore.Root != "data/memory" || filepath.IsAbs(cfg.MemoryStore.Root) {
+		t.Fatalf("default memory store root = %q, want the data-root relative default", cfg.MemoryStore.Root)
 	}
 	if cfg.MemoryStore.BusyTimeout != 5*time.Second {
 		t.Fatalf("default memory store busy timeout = %s, want 5s", cfg.MemoryStore.BusyTimeout)
@@ -312,8 +313,12 @@ func TestBundledStardewConfigEnablesDefinitionCatalogRoot(t *testing.T) {
 		t.Fatalf("load bundled Stardew config: %v", err)
 	}
 
-	if filepath.ToSlash(cfg.DefinitionCatalogRoot) != "runtime/config/games" {
-		t.Fatalf("DefinitionCatalogRoot = %q, want runtime/config/games", cfg.DefinitionCatalogRoot)
+	// The bundled catalog root is relative to the Runtime data root.
+	if filepath.ToSlash(cfg.DefinitionCatalogRoot) != "config/games" {
+		t.Fatalf("DefinitionCatalogRoot = %q, want the data-root relative config/games", cfg.DefinitionCatalogRoot)
+	}
+	if filepath.IsAbs(cfg.DefinitionCatalogRoot) {
+		t.Fatalf("DefinitionCatalogRoot = %q, want a relative path", cfg.DefinitionCatalogRoot)
 	}
 }
 

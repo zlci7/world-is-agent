@@ -20,6 +20,7 @@ Thumbs.db
 *.temp
 *.stackdump
 runtime/.local/
+runtime/data/
 
 # Go local artifacts
 *.test

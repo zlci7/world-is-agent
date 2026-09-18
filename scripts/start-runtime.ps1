@@ -30,6 +30,8 @@ if ($null -eq $config -or $config -isnot [PSCustomObject]) {
 Get-Command go -ErrorAction Stop | Out-Null
 
 Write-Host "Agent configuration: $configPath"
+$dataRoot = Join-Path $root 'runtime'
+Write-Host "Data root: $dataRoot"
 foreach ($field in @('async_action_timeout_ms', 'turn_timeout_ms')) {
     $value = $config.$field
     if ($null -eq $value -or $value -le 0) { $value = 'Runtime default (not explicitly configured)' }
@@ -38,9 +40,13 @@ foreach ($field in @('async_action_timeout_ms', 'turn_timeout_ms')) {
 Write-Host 'Starting Runtime in foreground. Press Ctrl+C to stop.'
 
 $previousConfig = $env:GAMEAGENT_AGENT_CONFIG
+$previousDataRoot = $env:WIA_DATA_ROOT
 Push-Location $root
 try {
     $env:GAMEAGENT_AGENT_CONFIG = $configPath
+    # Development keeps its data in the repository instead of the platform data
+    # directory, so the config tree under runtime/ stays the authority.
+    $env:WIA_DATA_ROOT = $dataRoot
     & go run ./runtime/cmd/server
     if ($LASTEXITCODE -ne 0) {
         throw "Runtime exited with code $LASTEXITCODE"
@@ -48,5 +54,6 @@ try {
 }
 finally {
     $env:GAMEAGENT_AGENT_CONFIG = $previousConfig
+    $env:WIA_DATA_ROOT = $previousDataRoot
     Pop-Location
 }

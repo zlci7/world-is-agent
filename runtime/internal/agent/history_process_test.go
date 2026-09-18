@@ -343,9 +343,11 @@ func TestHistoryProcessHelper(t *testing.T) {
 	if os.Getenv("GAMEAGENT_HISTORY_PROCESS_REAL") == "true" {
 		cfg.Compaction.MaxSummaryTokens = 2048
 		configureHistoryProcessDiagnostic(t, os.Getenv("GAMEAGENT_HISTORY_PROCESS_DIAGNOSTIC"))
-		modelPath := llm.ConfigPathFromEnv()
-		if !filepath.IsAbs(modelPath) {
-			modelPath = filepath.Join("../../..", modelPath)
+		modelPath := strings.TrimSpace(os.Getenv(llm.ConfigEnvName))
+		if modelPath == "" {
+			modelPath = filepath.Join("..", "..", "..", "runtime", "config", "model.json")
+		} else if !filepath.IsAbs(modelPath) {
+			modelPath = filepath.Join("..", "..", "..", modelPath)
 		}
 		configured, modelConfig, err := llm.NewProviderFromConfigFile(modelPath)
 		if err != nil {

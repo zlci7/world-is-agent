@@ -306,8 +306,8 @@ func runHistoryServerAcceptance(t *testing.T, real bool) {
 			if storedSummary == nil || storedSummary.ID != checkpoint.ID || storedSummary.Text != checkpoint.Text || storedSummary.Revision != checkpoint.Revision {
 				t.Fatal("restarts changed the persisted checkpoint instead of recovering it")
 			}
-			if info, err := os.Stat(filepath.Join(work, "runtime", ".local", "traces.jsonl")); err != nil || info.Size() == 0 {
-				t.Fatal("production trace was not written beneath the temporary server cwd")
+			if info, err := os.Stat(historyAcceptanceTracePath(work)); err != nil || info.Size() == 0 {
+				t.Fatal("production trace was not written beneath the temporary server data root")
 			}
 			completed = append(completed, latest)
 		}) {
@@ -476,7 +476,7 @@ func historyAcceptanceWaitTrace(t *testing.T, work, eventID string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		events, err := historyAcceptanceReadSafeTrace(filepath.Join(work, "runtime", ".local", "traces.jsonl"))
+		events, err := historyAcceptanceReadSafeTrace(historyAcceptanceTracePath(work))
 		if err == nil {
 			for _, event := range events {
 				if event.Event == "turn_completed" && event.EventID == eventID {
@@ -530,7 +530,7 @@ func historyAcceptanceExport(t *testing.T, reportDir, mode, phase string, tick i
 	for _, source := range page.Sources {
 		sourceIDs = append(sourceIDs, source.ID)
 	}
-	trace, err := historyAcceptanceReadSafeTrace(filepath.Join(work, "runtime", ".local", "traces.jsonl"))
+	trace, err := historyAcceptanceReadSafeTrace(historyAcceptanceTracePath(work))
 	if err != nil {
 		evidenceErrors = append(evidenceErrors, "trace_missing_or_partial")
 	}
@@ -836,6 +836,12 @@ type historyAcceptanceProcess struct {
 	cancel context.CancelFunc
 }
 
+// historyAcceptanceTracePath is where a child writes its trace for the data root
+// it was started with.
+func historyAcceptanceTracePath(work string) string {
+	return filepath.Join(work, "data", "traces.jsonl")
+}
+
 func historyAcceptanceStart(t *testing.T, binary, work, modelPath, agentPath, localKey string, process *historyAcceptanceProcess, observers ...io.Writer) {
 	t.Helper()
 	// Release the probe immediately before spawning. A race for the port is
@@ -844,7 +850,7 @@ func historyAcceptanceStart(t *testing.T, binary, work, modelPath, agentPath, lo
 		t.Fatalf("BLOCKED: %s became occupied; no existing process was stopped", historyAcceptanceAddress)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
-	*process = historyAcceptanceProcess{cmd: exec.CommandContext(ctx, binary), done: make(chan struct{}), ctx: ctx, cancel: cancel}
+	*process = historyAcceptanceProcess{cmd: exec.CommandContext(ctx, binary, "--data-root", work), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	process.cmd.Dir = work
 	process.cmd.Env = historyAcceptanceEnv(map[string]string{
 		"GAMEAGENT_MODEL_CONFIG": modelPath, "GAMEAGENT_AGENT_CONFIG": agentPath, historyAcceptanceKeyEnv: localKey,

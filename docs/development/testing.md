@@ -80,15 +80,26 @@ The script copies the adapter and protocol into a temporary directory outside th
 1. Start the Runtime:
 
    ```powershell
-   go run ./runtime/cmd/server
+   .\scripts\start-runtime.ps1
    ```
+
+   The Runtime resolves every path it owns from a data root, so the working
+   directory no longer matters. The development script points that root at
+   `runtime/`; to do it by hand:
+
+   ```powershell
+   $env:WIA_DATA_ROOT = "$PWD/runtime"; go run ./runtime/cmd/server
+   ```
+
+   Without a model configuration the Runtime still starts and logs
+   `agent core is not ready (needs_configuration)` with the path it expects.
 
 2. Build and install the Stardew adapter.
 3. Launch Stardew Valley through `StardewModdingAPI.exe`.
 4. Load a save with at least one reachable villager NPC.
 5. Interact with an NPC.
 6. Confirm SMAPI logs show Runtime connection, `GameEvent`, `EventAck`, `Observation`, `ActionRequest`, `ActionResult`, and `TurnCompletion`.
-7. Confirm `runtime/.local/traces.jsonl` contains the matching AgentTurn trace.
+7. Confirm `runtime/data/traces.jsonl` contains the matching AgentTurn trace.
 
 For dialogue validation, confirm the NPC line appears through Stardew's native dialogue flow, then reply choices or free text appear afterward.
 

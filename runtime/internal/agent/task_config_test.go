@@ -41,7 +41,8 @@ func TestTaskConfigDefaultsAndOverrides(t *testing.T) {
 			t.Fatal(err)
 		}
 		task := config.Task
-		if !task.Enabled || task.DBPath != "runtime/.local/tasks/tasks.sqlite" || task.ScanInterval != time.Second || task.DispatchBatch != 32 || task.RetryMin != time.Second || task.RetryMax != 30*time.Second {
+		// The default is relative to the Runtime data root, so it must stay relative.
+		if !task.Enabled || task.DBPath != "data/tasks/tasks.sqlite" || filepath.IsAbs(task.DBPath) || task.ScanInterval != time.Second || task.DispatchBatch != 32 || task.RetryMin != time.Second || task.RetryMax != 30*time.Second {
 			t.Fatalf("defaults=%+v", task)
 		}
 		options := task.StoreOptions

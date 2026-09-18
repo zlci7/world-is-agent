@@ -1051,7 +1051,7 @@ func retrievalAcceptanceExport(t *testing.T, reportDir, phase, work, memRoot str
 	} else {
 		evidence["after_stop"] = after
 	}
-	events, err := retrievalAcceptanceReadTrace(filepath.Join(work, "runtime", ".local", "traces.jsonl"))
+	events, err := retrievalAcceptanceReadTrace(historyAcceptanceTracePath(work))
 	if err != nil {
 		evidence["trace_error"] = "temporary trace absent or partial"
 	}

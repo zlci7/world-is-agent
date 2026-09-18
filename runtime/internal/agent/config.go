@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	defaultConfigPath = "runtime/config/agent.json"
-	configPathEnv     = "GAMEAGENT_AGENT_CONFIG"
+	// ConfigEnvName overrides the agent configuration path. The Runtime resolves a
+	// relative value against its data root.
+	ConfigEnvName = "GAMEAGENT_AGENT_CONFIG"
 
 	defaultMemoryEnabled = true
 )
@@ -209,15 +210,6 @@ func DefaultConfig() Config {
 			ToolInstruction: "Use available tools from the current View. Choose tools from their descriptions and input schemas. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more tools are needed.",
 		},
 	}
-}
-
-// ConfigPathFromEnv 解析 Agent 配置文件路径。
-// GAMEAGENT_AGENT_CONFIG 用于本地覆盖默认配置，未设置时读取 runtime/config/agent.json。
-func ConfigPathFromEnv() string {
-	if path := os.Getenv(configPathEnv); path != "" {
-		return path
-	}
-	return defaultConfigPath
 }
 
 // LoadConfigFile 读取并解析 Agent 配置文件。

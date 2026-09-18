@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 已确认开工；10.1 代码侧已实现（剩余实机与模型验收），当前进行 10.2-1 Runtime Bootstrap & Data Root
+> **Status:** 已确认开工；10.1 代码侧已实现（剩余实机与模型验收），10.2-1 Runtime Bootstrap & Data Root 已实现（§3.2.2）
 > **Date:** 2026-09-18
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
@@ -142,11 +142,11 @@ StoreOptions.MaxTasksPerWorld   单世界任务上限
 
 > **一个只有游戏和 Runtime 的普通用户，能在不读源码、不改配置文件的前提下把 WIA 跑起来，并看见 agent 在做什么。**
 
-当前配置面完全是手工的：`runtime/config/model.json`、`runtime/config/agent.json`、环境变量 `GAMEAGENT_MODEL_CONFIG` / `GAMEAGENT_AGENT_CONFIG`，且 runtime **没有任何 HTTP 面**。这既是"对外可运行"的最大缺口，也是本子阶段的起点。
+当前配置面仍然是手工的：配置写在数据根下的 `config/`，`GAMEAGENT_MODEL_CONFIG` / `GAMEAGENT_AGENT_CONFIG` 可以覆盖，且 runtime **没有任何 HTTP 面**。10.2-1 已经让 Runtime 不再依赖 cwd，也不再因为缺少模型配置而直接退出；剩下的问题是"用户怎么把它配起来、怎么看见它在做什么"。
 
 ### 3.2 关键前置：Runtime Bootstrap 与统一 Data Root
 
-三件已核实的事实（`runtime/cmd/server/main.go`）：
+10.2-1 开工前核实的三件事（现已处理，保留作为问题定义）：
 
 ```text
 启动顺序     main 先加载 model provider，失败即 log.Fatalf，此时还没有任何 server
@@ -214,6 +214,21 @@ Linux        $XDG_DATA_HOME/wia，未设置则 ~/.local/share/wia
 2. **exe 同级不是好默认值。** `go run`、开发脚本、自动化验收三个场景都会因此依赖 override——一个需要被处处绕开的默认值没有价值。Portable Release 的含义是"不需要 Installer"，不是"状态必须和 exe 放在一起"。
 
 代价（明确接受）：用户不容易自己找到这个目录。这项代价由 Web UI 承担——配置入口本来就是 UI，后续补一个 `Open Data Directory` 即可。
+
+#### 3.2.2 10.2-1 实现结果
+
+```text
+Root Resolver        --data-root > WIA_DATA_ROOT > 平台默认目录
+路径规则             绝对路径原样使用；相对路径相对 root；未配置用 root 默认值
+Runtime-owned path   config / trace / task db / memory root / definition root 全部从 root 解析
+启动生命周期         Bootstrap 与 Agent Core 分离：未配置模型时不再 Fatal，
+                     进程继续提供 gRPC，状态为 needs_configuration 并带上期望的配置路径
+显式覆盖              GAMEAGENT_MODEL_CONFIG / GAMEAGENT_AGENT_CONFIG 仍然生效，
+                     其相对值同样相对 root 解析
+验收测试             acceptance 以 --data-root 指向自己的临时目录
+```
+
+仍然属于后续子阶段：HTTP 面、首次运行向导、secret 存储与权限收紧、可视化。**模型配置目前仍需手工写入数据根下的 `config/model.json`。**
 
 ### 3.3 技术选型与优先级（已确认）
 
@@ -340,6 +355,8 @@ DeepSeek API Key      Configured ✓      [ Replace ]
 | 10.2-4 | 可视化：AgentTurn 时间线（复用现有 JSONL trace）、对话记录、任务与记忆查看 | 这是"好看"，前三步才是"能用" |
 
 注意 10.2-2 与 10.2-4 共用同一个 HTTP 面：**不需要为"控制面"和"UI 接口"各做一套。**
+
+**10.2-1 已实现**（见 §3.2.1、§3.2.2）；10.2-2 及之后尚未开工，其内部设计留到各自子方案。
 
 ### 3.6 发行形态与明确不做
 

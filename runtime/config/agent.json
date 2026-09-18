@@ -1,7 +1,7 @@
 {
   "task": {
     "enabled": true,
-    "db_path": "runtime/.local/tasks/tasks.sqlite",
+    "db_path": ".local/tasks/tasks.sqlite",
     "scan_interval_ms": 1000,
     "dispatch_batch": 32,
     "retry_min_ms": 1000,
@@ -62,7 +62,7 @@
   },
   "memory_store": {
     "kind": "sqlite",
-    "root": "runtime/.local/memory",
+    "root": ".local/memory",
     "busy_timeout_ms": 5000,
     "max_records_per_entity": 100,
     "max_projection_batches_per_entity": 400

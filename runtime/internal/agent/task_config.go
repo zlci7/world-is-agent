@@ -21,8 +21,11 @@ type TaskConfig struct {
 	StoreOptions  task.StoreOptions
 }
 
+// DefaultTaskDBPath is relative to the Runtime data root.
+const DefaultTaskDBPath = "data/tasks/tasks.sqlite"
+
 func DefaultTaskConfig() TaskConfig {
-	return TaskConfig{Enabled: true, DBPath: "runtime/.local/tasks/tasks.sqlite", ScanInterval: time.Second, DispatchBatch: 32, RetryMin: time.Second, RetryMax: 30 * time.Second}
+	return TaskConfig{Enabled: true, DBPath: DefaultTaskDBPath, ScanInterval: time.Second, DispatchBatch: 32, RetryMin: time.Second, RetryMax: 30 * time.Second}
 }
 
 func (c TaskConfig) WithDefaults() TaskConfig {

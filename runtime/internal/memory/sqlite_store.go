@@ -20,8 +20,11 @@ import (
 )
 
 const (
-	SQLiteSchemaVersion                        = "phase8_1_recent_v1"
-	DefaultSQLiteMemoryRoot                    = "runtime/.local/memory"
+	SQLiteSchemaVersion = "phase8_1_recent_v1"
+	// DefaultSQLiteMemoryRoot is relative to the Runtime data root. The Runtime
+	// resolves it before use; a caller that passes a relative root of its own is
+	// relative to the process working directory.
+	DefaultSQLiteMemoryRoot                    = "data/memory"
 	DefaultSQLiteBusyTimeout                   = 5 * time.Second
 	DefaultSQLiteMaxRecordsPerEntity           = 100
 	DefaultSQLiteMaxProjectionBatchesPerEntity = DefaultSQLiteMaxRecordsPerEntity * 4
