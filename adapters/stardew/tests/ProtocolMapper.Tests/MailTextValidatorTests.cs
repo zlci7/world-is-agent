@@ -159,6 +159,29 @@ public sealed class MailTextValidatorTests
     }
 
     [Fact]
+    public void TitleRejectsLineBreakToken()
+    {
+        // A real newline becomes a space, but a literal ^ belongs to the body only.
+        Assert.False(MailTextValidator.TryValidateTitle("first^second", out _, out string code));
+        Assert.Equal(MailTextValidator.TitleInvalidCode, code);
+    }
+
+    [Fact]
+    public void TitleRejectsTooManyPlayerNameTokens()
+    {
+        string title = new('@', MailTextValidator.MaxPlayerNameTokens + 1);
+        Assert.False(MailTextValidator.TryValidateTitle(title, out _, out string code));
+        Assert.Equal(MailTextValidator.TitleInvalidCode, code);
+    }
+
+    [Fact]
+    public void TitleAcceptsPlayerNameTokensAtTheLimit()
+    {
+        string title = new('@', MailTextValidator.MaxPlayerNameTokens);
+        Assert.True(MailTextValidator.TryValidateTitle(title, out _, out _));
+    }
+
+    [Fact]
     public void TitleRejectsOverlongText()
     {
         string title = new('a', MailTextValidator.MaxTitleLength + 1);

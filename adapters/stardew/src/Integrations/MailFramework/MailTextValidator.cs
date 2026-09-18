@@ -51,13 +51,16 @@ internal static class MailTextValidator
         if (string.IsNullOrWhiteSpace(title))
             return true;
 
-        // A title is single line, so a newline becomes a space rather than a line-break token.
+        // A title is single line, so a newline becomes a space rather than a line-break token,
+        // and a literal ^ is rejected outright: the line-break token belongs to the body only.
         string value = Normalize(title).Replace('\n', ' ').Trim();
 
         if (value.Length == 0)
             return true;
 
-        if (value.Length > MaxTitleLength || !AllAllowed(value))
+        if (value.Length > MaxTitleLength ||
+            CountOf(value, PlayerNameToken) > MaxPlayerNameTokens ||
+            !AllAllowed(value, allowLineBreakToken: false))
         {
             code = TitleInvalidCode;
             return false;
@@ -85,7 +88,7 @@ internal static class MailTextValidator
         if (value.Length > MaxBodyLength ||
             CountOf(value, LineBreakToken) > MaxBodyLineBreaks ||
             CountOf(value, PlayerNameToken) > MaxPlayerNameTokens ||
-            !AllAllowed(value))
+            !AllAllowed(value, allowLineBreakToken: true))
         {
             code = BodyInvalidCode;
             return false;
@@ -106,12 +109,16 @@ internal static class MailTextValidator
     /// <summary>
     /// A character passes only when it is explicitly recognised. This is the whole point of the
     /// method: the failure mode to avoid is releasing anything merely because nobody listed it.
+    /// <paramref name="allowLineBreakToken"/> is false for the single-line title, so a literal
+    /// line-break token there is rejected rather than silently treated as body syntax.
     /// </summary>
-    private static bool AllAllowed(string value)
+    private static bool AllAllowed(string value, bool allowLineBreakToken)
     {
         foreach (char character in value)
         {
-            if (character == ' ' || character == PlayerNameToken || character == LineBreakToken)
+            if (character == ' ' || character == PlayerNameToken)
+                continue;
+            if (character == LineBreakToken && allowLineBreakToken)
                 continue;
             if (char.IsLetterOrDigit(character))
                 continue;
