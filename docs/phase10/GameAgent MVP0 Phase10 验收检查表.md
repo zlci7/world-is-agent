@@ -175,40 +175,111 @@ B 段过程中出现过一次 `Runtime stream failed: StatusCode="Cancelled", De
 
 ## C. 10.1 阶段三：模型验收
 
-需要真实模型。**必须先确认系统 prompt 不点名 `send_mail`。**
+需要真实模型。**这一段是整个 10.1 的结论所在**：A、B 两段只能证明"能力能发布、能执行"，只有 C 段能证明"**模型在没人点名的情况下自己选了它**"。
+
+### C0 开工前检查
+
+缺任何一条，后面的结果都不成立：
+
+- [ ] Runtime 是最新构建，且以开发数据根启动：`.\scripts\start-runtime.ps1`
+- [ ] 探针已关：`Mods/GameAgentStardew/config.json` 里 `EnableMailBridgeProbe=false`；重启游戏后日志中**不再出现** `wia_mail_bridge_probe`
+- [ ] 游戏内两个 Mod 加载，日志出现 `GameAgent WorldBindingReady received: status=ready`
+- [ ] CapabilityList 含 `send_mail`（B 段已确认；若中间动过 Mod 目录需重新确认）
+- [ ] **系统 prompt 不含 `send_mail`** —— 这一条的成立与否决定整段是否作废：
+
+  ```powershell
+  Select-String -Path runtime\config\agent.json, runtime\config\games\stardew-valley\agent.json -Pattern "send_mail"
+  ```
+
+  期望**无匹配**。prompt 里出现其它游戏工具名（例如 `move_to_landmark`）不影响本条，规范只禁止点名 `send_mail`。
+- [ ] 真实 API key 可用：随便说一句话，NPC 能正常回话
+
+### C1 每一句的操作流程（C1 / C2 通用）
+
+1. 走到 NPC 面前正常交互（鼠标左键或动作键），等 NPC 说出第一句。
+   `config.json` 的 `AgentTargets` 为空表示**不限 NPC**，任意村民都可以；做 C3 时再固定主 NPC 与对照 NPC。
+2. 在自由输入框里输入台词，发送。
+3. 等这一回合结束（NPC 有回应，或对话结束）。
+4. 收证据：
+
+   ```powershell
+   # Runtime 侧：模型选了什么工具（这才是"模型自己选的"证据）
+   Select-String -Path runtime\data\traces.jsonl -Pattern "send_mail" | Select-Object -Last 5
+
+   # 适配器侧：真的执行了吗
+   Select-String -Path "$env:APPDATA\StardewValley\ErrorLogs\SMAPI-latest.txt" -Pattern "capability=send_mail" | Select-Object -Last 5
+   ```
+
+   判定口径：
+
+   ```text
+   trace 里出现 send_mail            → 模型自主选中（tool_call_selected）
+   SMAPI ActionRequest capability=send_mail + ActionResult status=Succeeded → 真的执行了
+   两者缺一 → 这一句不算通过
+   ```
+
+5. 按文末模板记录。
+
+> **SMAPI 日志是累加的**（`SMAPI-latest.txt` 含本次游戏会话的全部内容）。每句之前先记一个时间点或行号，否则很容易把上一句的证据算到这一句头上。
 
 ### C1 正向：动机场景下模型自主选中（退出条件 §7 第 2 条）
 
-| 场景 | 玩家台词（不出现"写信""发邮件"等工具语义） | 结果 |
-| --- | --- | --- |
-| 关系疏远期 | 你最近是不是很忙？我好久没收到你的消息了。 | |
-| 临别期 | 我明天要出远门，可能好些天见不到你。 | |
-| 未说出口期 | 有什么想跟我说、但当面不好意思说的吗？ | |
+| # | 场景 | 玩家台词（不含"写信""发邮件"等工具语义） | 是否自主选中 |
+| --- | --- | --- | --- |
+| C1-1 | 关系疏远期 | 你最近是不是很忙？我好久没收到你的消息了。 | |
+| C1-2 | 临别期 | 我明天要出远门，可能好些天见不到你。 | |
+| C1-3 | 未说出口期 | 有什么想跟我说、但当面不好意思说的吗？ | |
 
-每个场景记录：
+选中之后，逐项确认：
 
-- [ ] 玩家台词原文
-- [ ] 模型是否选中 `send_mail`（SMAPI 日志）
-- [ ] 信件 id 是否符合 `wia.{action_id}` 规则
-- [ ] 走近信箱能读到信，正文与模型输出一致、无 token 被解析
-- [ ] `mailReceived` 含 letter.Id
+- [ ] Runtime trace 出现该回合的 `send_mail`
+- [ ] SMAPI 出现 `ActionRequest … capability=send_mail …` 与 `ActionResult sent: … capability=send_mail status=Succeeded`
+- [ ] 记下那一行的 `action_id`；信件 id 应等于 `wia.<action_id>`（生成规则由代码固定，实机不显示 id，因此这是推导值而非观察值）
+- [ ] 回农场的信箱读信：**能读到**，标题与正文就是模型写的内容，**没有** `(no translation:…)`，也**没有**任何 token 被游戏解析成效果
+- [ ] 读完信后在 SMAPI 控制台敲 `player_debug_updatemailbox`，该信**不应**再次出现
 
-**边界:** 这里放宽的是玩家台词，不是系统 prompt。**不通过时不得放宽"不点名"条件来凑通过**；先修 `description` / schema 再重采。
+  最后这一步是 `mailReceived` 写入的实机证据：信件 `condition` 是"`mailReceived` 不含该 id"，重新投递被拦住即说明读信时 callback 确实写入了 id。**只在同一次游戏会话内有效**——重启游戏后注册信息本身也没了，所以别跨会话做这一步。
+
+**次数必须记录。** 每句最多重复 3 次；3 次都没选中就按**失败**记录（保留对话、模型输出、工具选择），不要继续重试到蒙对一次为止——那样的"通过"没有意义。
+
+**边界：** 这里放宽的是玩家台词，不是系统 prompt。不得改 prompt 提示写信来凑通过；应先修 `description` / schema 再重采。
 
 ### C2 负向：不该发信时不调用（总纲硬验收）
 
-| 场景 | 玩家台词 | 期望 |
-| --- | --- | --- |
-| 当下事实询问 | 今天天气怎么样？／现在几点了？ | 不调用 `send_mail` |
-| 面对面即时话题 | 你手上拿的是什么？ | 不调用 `send_mail` |
-| 简单确认 | 好的，那明天见。 | 不调用 `send_mail` |
+流程同 C1，期望相反。
 
-- [ ] 三个场景均未出现 `send_mail`；出现即判不通过，并保留完整对话与模型输出
+| # | 场景 | 玩家台词 | 期望 |
+| --- | --- | --- | --- |
+| C2-1 | 当下事实询问 | 今天天气怎么样？ | 不调用 `send_mail` |
+| C2-2 | 面对面即时话题 | 你手上拿的是什么？ | 不调用 `send_mail` |
+| C2-3 | 简单确认 | 好的，那明天见。 | 不调用 `send_mail` |
+
+- [ ] 三个场景的 trace 与 SMAPI 日志中均**没有** `send_mail`；出现一次即判不通过
+- [ ] 记录模型实际选了什么（`present_dialogue` 或直接结束都算合格）
+
+> `模型会选 send_mail` ≠ `模型看见新工具就乱用`。只验正向等于只证明了一半。
 
 ### C3 人设一致性采样（§5.2）
 
-- [ ] 6 封采样完成，逐封判定是否符合该角色当前关系状态与语气
-- [ ] 达到 §5.2 的合格线
+样本构成**事先固定，不临时增减**：
+
+```text
+主 NPC（有 AgentDefinition 的角色）× 4 个场景，各 1 封
+    场景：普通问候 / 玩家请求 / 玩家拒绝或负面回应 / 涉及长期承诺
+对照 NPC × 2 个场景，各 1 封
+合计 6 封
+```
+
+逐封检查四项：
+
+- [ ] 署名与身份一致
+- [ ] 语气与 `speech_style` 一致
+- [ ] 内容与该角色当前关系状态一致
+- [ ] 无越界承诺（不承诺游戏做不到的事，不替代玩家决策）
+
+**合格线：**「无越界承诺」必须 **6/6** 通过（硬性，无例外）；其余三项合计最多允许 1 处瑕疵，但必须记录在案。
+
+不通过时：保留信件原文、模型输入与判定理由；修复后重采，**不修改已记录的样本**。
 
 ### C4 收尾回归
 
@@ -224,15 +295,22 @@ B 段过程中出现过一次 `Runtime stream failed: StatusCode="Cancelled", De
 
 ---
 
-## 记录模板
+## 记录模板（C 段每句一份）
 
 ```text
-日期          2026-__-__
-数据根        例：D:\data\project\game-agent\world-is-agent\runtime
-Runtime 版本  本地 HEAD 短 hash
-场景          A1 / B2 / C1-临别期 …
-玩家台词
-模型工具选择
-结论          通过 / 不通过 / 阻塞
-证据          SMAPI 日志片段 / trace 片段 / 截图路径
+日期            2026-__-__
+条目            C1-2 临别期 / C2-1 天气 …
+NPC             名字 + 当前关系状态（心数）
+玩家台词        原文
+尝试次数        第 1 次 / 共 2 次
+模型工具选择    tool_call_selected = …（trace 片段）
+适配器执行      ActionRequest capability=…；ActionResult status=… code=…
+信件 action_id  action_… → 期望信件 id：wia.action_…
+读信            标题与正文原文；是否出现 (no translation:…)
+重投递检查      player_debug_updatemailbox 后是否再次出现（是／否）
+结论            通过 / 不通过 / 阻塞
+判定理由
+证据            trace 行号 / SMAPI 日志时间点 / 截图路径
 ```
+
+C3 的每封另附：所属场景、四项检查的逐项结论、「无越界承诺」的判定理由。
