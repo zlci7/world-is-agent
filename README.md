@@ -6,6 +6,8 @@
 
 目前以 **Stardew Valley** 作为第一个真实游戏 Adapter。
 
+![World Is Agent](docs/images/world-is-agent.jpg)
+
 ## 核心能力
 
 * **Runtime / Adapter 解耦**：通过 gRPC 双向流连接游戏与 Agent Runtime

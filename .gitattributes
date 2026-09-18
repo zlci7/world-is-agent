@@ -1,1 +1,9 @@
 * text=auto eol=lf
+
+# Binary assets: never apply text/eol normalization
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
