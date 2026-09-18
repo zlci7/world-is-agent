@@ -1,10 +1,14 @@
-# 能力接入：Mod 邮件能力（send_mail）技术开发方案
+# GameAgent MVP0 Phase10.1 Mod 邮件能力技术开发方案
 
-> **Status:** Proposed — 等待用户确认后开工
+> **Status:** Implementation Plan Draft — 等待用户确认后开工
 > **Date:** 2026-09-18
-> **Scope:** 让 agent 自主调用 MailFrameworkMod 的邮件能力，完成"注册信件 → 立即投递 → 玩家读信 → 状态变化"闭环
-> **Decision Record:** 立即投递（触发 MFM 命令）；仅文本（无附件、禁止游戏命令）；验收包含人设一致性；**能力默认直接执行，不引入"需确认"字段**（当前没有向玩家请求确认的交互机制，该字段没有执行点）。安全边界由 §3 输入校验承担。
-> **Related:** [guide.md](guide.md)、[mod-capability-integration.md](mod-capability-integration.md)、[logical-separation.md](logical-separation.md)
+> **Phase:** Phase10.1 Mod 能力接入与自治调用验证
+> **目标:** 让模型在一个已触发的 AgentTurn 内自主从 Tool View 选中并执行由第三方 mod 提供的 `send_mail`，完成"注册信件 → 立即投递 → 玩家读信 → 状态变化"闭环
+> **Scope:** 首个第三方 mod 能力接入；仅文本、无附件、禁止游戏命令
+> **Decision Record:** 立即投递（触发 MFM 命令）；验收包含人设一致性；**能力默认直接执行，不引入"需确认"字段**（当前没有向玩家请求确认的交互机制，该字段没有执行点）。安全边界由 §3 输入校验承担。
+> **Protocol Baseline:** `gameagent.protocol.v1alpha2`（本方案不改协议）
+> **Parent Plan:** [Phase10 技术开发与验收总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)
+> **Related:** [Mod 能力接入规范](../development/mod-capability-integration.md)、[开发指南](../development/guide.md)
 
 ---
 
@@ -125,7 +129,7 @@ UpdateMailBox()  → 向 Game1.player.mailbox 插入占位符 MailFrameworkPlace
 
 这条不是"安全加分项"，而是本轮能否算"仅文本"的前提。
 
-**注意：不引入 `requires_player_confirmation` 这类字段。** 当前没有向玩家请求确认的交互机制，字段没有执行点，加了也只是无人消费的元数据。本轮的安全边界完全由上面的输入校验承担，并遵守 [mod-capability-integration.md](mod-capability-integration.md) §3.4 与 §3.7。
+**注意：不引入 `requires_player_confirmation` 这类字段。** 当前没有向玩家请求确认的交互机制，字段没有执行点，加了也只是无人消费的元数据。本轮的安全边界完全由上面的输入校验承担，并遵守 [Mod 能力接入规范](../development/mod-capability-integration.md) §3.4 与 §3.7。
 
 ---
 

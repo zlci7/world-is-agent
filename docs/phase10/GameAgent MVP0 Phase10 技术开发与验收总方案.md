@@ -8,7 +8,7 @@
 > **技术栈:** Go、SQLite、gRPC / Protobuf、C#、SMAPI、Vue 3 + TypeScript + Vite（构建期）、Go `net/http` 与 `//go:embed`（本地控制面与 UI 分发）
 > **Roadmap:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md)
 > **Architecture:** [Runtime 整体架构设计规范](../summary/GameAgent%20Runtime%20整体架构设计规范.md)
-> **前置:** [Mod 能力接入规范](../development/mod-capability-integration.md)、[邮件能力方案](../development/mail-capability.md)、[Phase A 逻辑分离](../development/logical-separation.md)
+> **前置:** [Mod 能力接入规范](../development/mod-capability-integration.md)、[Phase10.1 邮件能力方案](GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md)、[Phase A 逻辑分离](../development/logical-separation.md)
 
 ---
 
@@ -58,7 +58,7 @@ MVP0 已经证明了"单一游戏 + 自有能力 + 本地开发"的闭环。Phas
 
 要点在于"自主"的**范围**：它指 Turn 内的 **Tool Selection**，不是 NPC 自己产生目标。例如玩家说"之后给我留封信告诉我结果"，模型自己从 `present_dialogue`、`send_mail` 等工具中选出 `send_mail`——这已经足以证明 Capability 自主选择，**不需要引入 Background Trigger 或 Autonomous Goal**（那属于本版本明确不做的范围）。
 
-首个接入对象已确定：**MailFrameworkMod（MFM 1.20.0，邮件能力）**。详细方案见 [mail-capability.md](../development/mail-capability.md)，本阶段遵守 [mod-capability-integration.md](../development/mod-capability-integration.md) 的全部硬边界。
+首个接入对象已确定：**MailFrameworkMod（MFM 1.20.0，邮件能力）**。详细方案见 [Phase10.1 Mod 邮件能力技术开发方案](GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md)，本阶段遵守 [Mod 能力接入规范](../development/mod-capability-integration.md) 的全部硬边界。
 
 ### 2.2 覆盖的能力类型
 

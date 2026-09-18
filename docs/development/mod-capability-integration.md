@@ -2,7 +2,7 @@
 
 > **Status:** Normative — Adapter 接入第三方 mod 能力时必须遵守
 > **Date:** 2026-09-18
-> **Origin:** 从第一个第三方 mod 接入（[mail-capability.md](mail-capability.md)）沉淀
+> **Origin:** 从第一个第三方 mod 接入（[Phase10.1 邮件能力方案](../phase10/GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md)）沉淀
 > **Related:** [guide.md](guide.md)、[logical-separation.md](logical-separation.md)、[testing.md](testing.md)
 
 ---

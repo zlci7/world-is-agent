@@ -30,7 +30,7 @@ WIA is organized as Runtime + Protocol + Adapter. Adapters are logically indepen
 
 Adapters may wrap another mod's API and expose it as a Capability, so the agent can select it like any other tool. Third-party mods stay optional dependencies: when one is absent, the adapter still loads and the capability is rejected with an explicit code.
 
-The normative rules — optional dependency, public-interface access, main-thread execution, external text validation, direct execution without player confirmation, and the landing checklist — live in [mod-capability-integration.md](mod-capability-integration.md). The first integration built on them is [mail-capability.md](mail-capability.md).
+The normative rules — optional dependency, public-interface access, main-thread execution, external text validation, direct execution without player confirmation, and the landing checklist — live in [mod-capability-integration.md](mod-capability-integration.md). The first integration built on them is [Phase10.1 邮件能力方案](../phase10/GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md).
 
 ## Documentation Expectations
 
