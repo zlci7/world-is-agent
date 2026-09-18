@@ -227,6 +227,23 @@ switch 返回值    由外层统一 SendActionResult（emote / face_player）
 - 模型可见的工具清单包含 `send_mail`，schema 正确。
 - MFM 不可用时 `send_mail` 不在工具清单中。
 
+**可用性检查的时点（正式实现必须遵守）**：
+
+`GetApi<T>` 只能在所有 mod 初始化完成之后调用，所以在 `Entry()` 里解析并永久缓存 unavailable 是错的——那一刻 MFM 的 API 还没注册完。正确顺序是把它挂到 `GameLaunched`：
+
+```text
+Entry
+    ↓  只注册事件与命令，不做 MFM 解析
+OnGameLaunched
+    ↓  先 Resolve MailFrameworkIntegration
+    ↓  再 StartRuntimeClient
+Runtime 请求 CapabilityList
+    ↓
+按 integration != null 条件发布 send_mail
+```
+
+`ModEntry` 现在本就是 `OnGameLaunched → StartRuntimeClient()`，把解析插在 `StartRuntimeClient()` 之前即可，不需要新的事件钩子。探针已按这个时点工作（§4.2.3），正式实现照搬。
+
 ### 4.2 MFM 集成层（可选依赖）
 
 **关键设计：MFM 是第三方可选 mod，不能让 adapter 产生硬依赖。**
@@ -251,8 +268,8 @@ Integrations/MailFramework/
 IMailFrameworkModApi? api = helper.ModRegistry.GetApi<IMailFrameworkModApi>("DIGUS.MailFrameworkMod");
 
 api.RegisterLetter(
-    letter,
-    condition:    _ => true,
+    letter,                                        // MailLetter，I18N 恒为 null，见 §4.2.1
+    condition:    letter => !Game1.player.mailReceived.Contains(letter.Id),
     callback:     letter => { /* 见 §4.2.1 */ },
     dynamicItems: _ => new List<Item>());
 ```
@@ -261,9 +278,9 @@ SMAPI 的 `GetApi<T>` 会把 MFM 的 API 映射到本接口（"mapped to a given
 
 这条路线不是本方案的新发明，有两重现成依据：SMAPI 自 3.14.0 起就支持把**自定义 interface 作为入参**；MFM 作者自己的 CustomCaskMod 正是用"本地声明 `IMailFrameworkModApi` / `ILetter` + 自建 `ApiLetter` + `GetApi<T>`"的同一模式调用 MFM。探针因此只用来确认当前 **SMAPI 4.3.2 + MFM 1.20.0 + WIA** 这个具体组合，而不是验证一个未经验证的设想。
 
-`condition` 必须恒返回 `true`：`MailRepository.GetValidatedLetters()` 直接调用它且没有 null 检查（§2.3）。
+`condition` 必须非 null 且**不能恒真**：`MailRepository.GetValidatedLetters()` 直接调用它且没有 null 检查（§2.3），而 MFM 在 API 注册路径上不做"已投递"检查，恒真会让同一封信每天重复投递（§4.2.2）。
 
-`condition` 的写法见 §4.2.2，它不是可选项。
+`callback` 同样不能是空实现，它承担 `mailReceived` 的写入（§4.2.1）。
 
 **仍然需要反射的只有立即投递与投递证据**——它们是静态方法，无接口可映射：
 
@@ -274,9 +291,32 @@ MailFrameworkMod.MailController.HasCustomMail()     投递证据
 
 定位这两个方法**不能**用 `api.GetType().Assembly`：`api` 是 Pintail 生成的映射代理，它的程序集里没有 MFM 的类型。要用非泛型的 `helper.ModRegistry.GetApi(uniqueId)` 拿到未代理的对象，再取其程序集；找不到时回退为扫描已加载程序集。
 
-#### 4.2.1 callback 必须显式写入 letter.Id
+#### 4.2.1 I18N 必须为 null，callback 必须写入 mailReceived
 
-MFM **不会**替你写入最终的 `letter.Id`。它的实际行为是：
+**`ILetter.I18N` 必须返回 `null`。** MFM 解析标题与正文的方式是：
+
+```text
+TranslatedText  => TokenParser.ParseText(I18N != null ? I18N.Get(Text)  : Text)
+TranslatedTitle => TokenParser.ParseText(I18N != null ? I18N.Get(Title) : Title)
+```
+
+一旦传入 translation helper，MFM 就把**模型生成的动态文本当成 i18n key 去查**。而 SMAPI 查不到 key 时不会原样返回，它返回自己的占位符：
+
+```text
+Translation.PlaceholderText = "(no translation:{0})"      ← 本机 SMAPI 4.3.2.0 字面量已确认
+```
+
+也就是说玩家会读到 `(no translation:GameAgent mail bridge probe...)`，而不是模型写的那段话。**本轮所有信件正文都是动态文本，不是 translation key**，因此：
+
+```csharp
+public ITranslationHelper? I18N => null;      // 恒为 null，永远不要传 helper
+```
+
+`Title` 可选这一点让问题更严重：`Title == null` 且 `I18N != null` 时，MFM 会拿 `null` 去查 key，本身就是未定义行为。
+
+> 注意这一条逃过了第一轮实机探针的检查：探针证明了注册、投递与回调都成立，**却没有证明"玩家看到的是我们传进去的文本"**。这是两件不同的事，而后者要到 §5.4 真正看一眼信件内容才算验证。
+
+**`callback` 必须显式写入最终的 `letter.Id`。** MFM **不会**替你写入。它的实际行为是：
 
 ```text
 投递时        mailReceived 临时加入 letter.Id + ValidTagSuffix
@@ -284,7 +324,7 @@ MFM **不会**替你写入最终的 `letter.Id`。它的实际行为是：
               mailReceived.Remove(letter.Id + ValidTagSuffix)
 ```
 
-临时的带后缀标记会被移除，**最终记录必须由 callback 自己写入**，否则 §5.1 的"已读"证据不成立。（`ValidTagSuffix` 已在本机 MFM 1.20.0 的符号表中确认存在。）
+临时的带后缀标记会被移除，**最终记录必须由 callback 自己写入**，否则 §5.1 的"已读"证据与 §4.2.2 的防重复投递都不成立。（`ValidTagSuffix` 已在本机 MFM 1.20.0 的符号表中确认存在。）
 
 ```csharp
 callback: letter =>
@@ -509,16 +549,19 @@ callback_fired   玩家关掉那封信之后出现，证明回调也跨过了边
 verdict          bridge_ok / bridge_ok_already_read / bridge_ok_delivery_incomplete / bridge_failed
 ```
 
-**收尾两步（验证回调与防重复投递）：**
+**收尾三步（验证文本传递、回调与防重复投递）：**
 
 ```text
-1. 走到信箱前把信读掉（关掉信件界面的那一刻才触发 callback）
-2. 确认日志出现 callback_fired，然后重新执行 gameagent_mail_probe
+1. 走到信箱前把信读掉
+2. 确认信件正文就是探针传入的原文，没有出现 "(no translation:...)"（§4.2.1）
+3. 确认日志出现 callback_fired，然后重新执行 gameagent_mail_probe
 ```
 
-预期第二次运行 `has_custom_mail` 变为 **false**、verdict 为 **`bridge_ok_already_read`**、`mail_received=true`。这同时证明 callback 的反向桥接与 §4.2.2 的 `condition` 都生效了。
+第 2 步不能用"机制通了"代替——注册成功、投递成功、回调触发都不蕴含"玩家看到的是我们传的文本"。第一轮探针正是在这一点上给了假阴性。
 
-注意探针的 id 是固定的 `wia.probe.bridge`，所以第二步必须在读完信之后做，否则测的还是上一封未读的信。
+预期第三步 `has_custom_mail` 变为 **false**、verdict 为 **`bridge_ok_already_read`**、`mail_received=true`。这同时证明 callback 的反向桥接与 §4.2.2 的 `condition` 都生效了。
+
+注意探针的 id 是固定的 `wia.probe.bridge`，所以第三步必须在读完信之后做，否则测的还是上一封未读的信。
 
 探针用固定文本、不经过 §3 校验，它验证的是机制而不是安全规则，不能当成能力调用。
 

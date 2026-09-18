@@ -12,10 +12,6 @@ namespace GameAgent.Stardew.Integrations.MailFramework;
 /// </summary>
 internal sealed class MailLetter : ILetter
 {
-    private readonly ITranslationHelper translation;
-
-    public MailLetter(ITranslationHelper translation) => this.translation = translation;
-
     public string Id { get; set; } = string.Empty;
 
     public string Text { get; set; } = string.Empty;
@@ -38,7 +34,10 @@ internal sealed class MailLetter : ILetter
 
     public bool AutoOpen { get; set; }
 
-    // MFM reads I18N when resolving translated title/text. Supplying this mod's helper keeps
-    // the probe honest: a null here would fail for a reason unrelated to interface bridging.
-    public ITranslationHelper I18N => this.translation;
+    /// <summary>
+    /// Always null: every letter here carries model-generated text, not a translation key.
+    /// Returning a helper would make MFM look the body up as a key and render SMAPI's
+    /// "(no translation:...)" placeholder instead of the text the model wrote.
+    /// </summary>
+    public ITranslationHelper? I18N => null;
 }

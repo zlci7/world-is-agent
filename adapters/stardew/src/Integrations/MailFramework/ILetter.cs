@@ -34,5 +34,9 @@ public interface ILetter
 
     bool AutoOpen { get; }
 
-    ITranslationHelper I18N { get; }
+    // Null on purpose, and the Adapter must keep it null. MFM resolves title/text as
+    // I18N != null ? I18N.Get(value) : value, so supplying a translation helper makes it treat
+    // dynamic model text as a translation key. SMAPI answers a missing key with its
+    // "(no translation:{0})" placeholder, which is what the player would then read.
+    ITranslationHelper? I18N { get; }
 }

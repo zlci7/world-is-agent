@@ -28,17 +28,15 @@ internal sealed class MailFrameworkIntegration
 
     private readonly IModHelper helper;
     private readonly IMailFrameworkModApi api;
-    private readonly ITranslationHelper translation;
 
     private MethodInfo? updateMailBox;
     private MethodInfo? hasCustomMail;
     private bool controllerProbed;
 
-    private MailFrameworkIntegration(IModHelper helper, IMailFrameworkModApi api, ITranslationHelper translation)
+    private MailFrameworkIntegration(IModHelper helper, IMailFrameworkModApi api)
     {
         this.helper = helper;
         this.api = api;
-        this.translation = translation;
     }
 
     /// <summary>Last failure detail, for logging only. Never surfaced to the model.</summary>
@@ -78,7 +76,7 @@ internal sealed class MailFrameworkIntegration
             return false;
         }
 
-        integration = new MailFrameworkIntegration(helper, api, helper.Translation);
+        integration = new MailFrameworkIntegration(helper, api);
         code = "ok";
         return true;
     }
@@ -92,7 +90,7 @@ internal sealed class MailFrameworkIntegration
         try
         {
             this.api.RegisterLetter(
-                new MailLetter(this.translation)
+                new MailLetter
                 {
                     Id = id,
                     Title = title,

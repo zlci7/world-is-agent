@@ -288,6 +288,8 @@ Require-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'Re
 Require-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'condition: letter => !Game1\.player\.mailReceived\.Contains\(letter\.Id\)' 'The mail condition must guard against re-delivery; MFM has no Repeatable check on the API path.'
 Reject-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'condition: _ => true' 'A constant-true mail condition re-delivers the same letter on every DayStarted.'
 Reject-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'MailFrameworkMod\.dll|Assembly\.LoadFrom' 'The mail integration must not load the MFM assembly by path; MFM is an optional dependency.'
+Require-Content 'src/Integrations/MailFramework/MailLetter.cs' 'ITranslationHelper\? I18N => null' 'Mail letters must keep I18N null so model text is used literally, not looked up as a translation key.'
+Reject-Content 'src/Integrations/MailFramework/MailLetter.cs' 'ITranslationHelper I18N =>' 'A non-null I18N makes MFM render SMAPI''s "(no translation:...)" placeholder instead of the model text.'
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'pathfindToNextScheduleLocation' 'Task NPC travel must use the native cross-location schedule pathfinder.'
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'ControllerOwnership.Release' 'Task NPC cleanup must use the shared controller ownership policy.'
 Require-Content 'src/Tasks/NpcNativeBehaviorRestorer.cs' 'checkSchedule\(Game1.timeOfDay\)' 'Task NPC cleanup must rejoin the current native schedule.'
