@@ -1,4 +1,4 @@
-﻿# GameAgent 阶段规划
+# GameAgent 阶段规划
 
 > **Public Documentation Note (2026-09-01):** [docs/STATUS.md](../STATUS.md) 是当前公开能力状态入口。本文保留为阶段规划、阶段验收和内部开发节奏资料。
 >
@@ -9,7 +9,9 @@
 > **Date:** 2026-09-10
 > **Architecture Baseline:** GameAgent Runtime Architecture v0.7
 > **Current Baseline:** Phase1 Accepted + Phase2 Accepted + Phase3 Accepted + Phase4 Accepted + Phase5 Accepted + Phase5.5 Accepted + Phase5.6 Accepted + Phase6 Accepted + Phase6.5 Accepted + Phase7.0 Accepted + Phase7.1 Accepted + Phase7.2 Accepted + Phase7.3 Accepted + Phase7.4 Accepted + Phase8.1 Accepted + Phase8.2 Accepted + Phase8.3 Accepted；代码基线 `main` @ `daf4f98`，保留各阶段验收限制
-> **Revision Source:** 评审意见（Roadmap Review，2026-08-18）；Phase3 评估（Protocol v1alpha2 Decision，2026-08-20）；[多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[Stardew Adapter 方案对比](../adapter/Stardew Adapter 方案对比.md)（2026-08-27）；[Phase6 Async Action Protocol Strategy ADR](../phase06/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[Phase6.5 Stardew Dialogue Interaction Convergence](../phase06/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）；GameAgent 阶段规划 v1.1 评审意见（2026-09-02）；Phase7 Context Subsystem Replan（2026-09-02）；Phase7 Contract Review（2026-09-02）；Phase7 Baseline Candidate Review（2026-09-02）；Phase7 Roadmap Baseline Freeze（2026-09-02）；Phase7.0 Contract Revision（2026-09-02）；Phase7.0 Gate Scope Correction（2026-09-02）；Phase7.0 Minor Review Correction（2026-09-02）；Phase7.0 Over-scope Guard Correction（2026-09-02）；Phase7.3 Implementation Acceptance（2026-09-04）；Phase7.4 Code Acceptance（2026-09-06，`main` @ `e50794c`）
+> **Revision Source:** 评审意见（Roadmap Review，2026-08-18）；Phase3 评估（Protocol v1alpha2 Decision，2026-08-20）；[多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[Stardew Adapter 方案对比](../adapter/Stardew Adapter 方案对比.md)（2026-08-27）；[Phase6 Async Action Protocol Strategy ADR](../phase06/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[Phase6.5 Stardew Dialogue Interaction Convergence](../phase06/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）；GameAgent 阶段规划 v1.1 评审意见（2026-09-02）；Phase7 Context Subsystem Replan（2026-09-02）；Phase7 Contract Review（2026-09-02）；Phase7 Baseline Candidate Review（2026-09-02）；Phase7 Roadmap Baseline Freeze（2026-09-02）；Phase7.0 Contract Revision（2026-09-02）；Phase7.0 Gate Scope Correction（2026-09-02）；Phase7.0 Minor Review Correction（2026-09-02）；Phase7.0 Over-scope Guard Correction（2026-09-02）；Phase7.3 Implementation Acceptance（2026-09-04）；Phase7.4 Code Acceptance（2026-09-06，`main` @ `e50794c`）；**Phase10 范围重排（2026-09-18）：Phase10 改为 Ecosystem & Productization，原 Phase10 Environment Reconnect 顺延为 Phase11，原 Phase11 Evaluation/DX/产品化 顺延为 Phase12**
+>
+> **Phase Numbering Change (2026-09-18):** 原 Phase10（Environment Reconnect and Capability Recovery）与 Phase11（Evaluation、Developer Experience 与产品化）均未开工，因此顺延为 Phase11 与 Phase12，范围与完成条件不变。新的 Phase10 承载 Ecosystem & Productization（第三方 mod 能力接入、桌面客户端产品化、第二个真实 Adapter），技术方案见 [Phase10 技术开发与验收总方案](../phase10/GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)。本文件第 17、18 节即顺延后的原 Phase10、Phase11。
 
 ---
 
@@ -108,7 +110,8 @@ Phase8.1：用 SQLite Recent Memory 验证持久身份、幂等与近期记忆�
 Phase8.2：用终态 History 与有界 Summary 验证跨 Turn、跨 Runtime 的历史连续性。
 Phase8.3：用历史原文检索与可选留存清理验证细节召回和删除后的能力边界。
 Phase9：用 Runtime TaskService、Runtime Tools、跨天唤醒与最小检查点，完成预约、赴约、见面或超时离开及结果记忆的闭环。
-Phase10：用 reconnect、capability replacement 和 pending operation 收敛验证 Environment Recovery。
+Phase10：用第三方 mod 能力接入、桌面客户端与第二个真实 Adapter 验证生态扩展与产品化。
+Phase11：用 reconnect、capability replacement 和 pending operation 收敛验证 Environment Recovery。
 ```
 
 ## 3.3 每阶段结束后重新规划
@@ -141,8 +144,9 @@ Phase7 及后续阶段属于当前可调整范围。上一阶段结束后，可�
 | Phase8.2 | Persistent Session History & Context Compaction | 完整约定终态历史、历史摘要与近期原文，恢复提交的检查点；Accepted，保留验收限制 |
 | Phase8.3 | History Retrieval & Retention | 中文字面检索、来源片段与默认关闭的原文清理；Accepted，保留验收限制 |
 | Phase9 | Runtime Durable Task & Appointment Vertical Slice | Runtime Tools 暴露持久任务意图，TaskService 驱动跨天唤醒与结果收敛；真实游戏效果、结果记忆和检查点构成最小闭环 |
-| Phase10 | Environment Reconnect and Capability Recovery | Adapter reconnect、EnvironmentSession 重建、capability replacement 和 pending operation 收敛 |
-| Phase11 | Evaluation、Developer Experience 与产品化 | 系统可重复评估、定位、交付，并支持新 Adapter 接入 |
+| Phase10 | Ecosystem & Productization | 第三方 mod 能力可被 agent 自主调用；桌面客户端让外部用户能装起来用并看见过程；第二个真实 Adapter 验证跨游戏泛化 |
+| Phase11 | Environment Reconnect and Capability Recovery | Adapter reconnect、EnvironmentSession 重建、capability replacement 和 pending operation 收敛 |
+| Phase12 | Evaluation、Developer Experience 与产品化 | 系统可重复评估、定位、交付，并支持新 Adapter 接入 |
 
 ---
 
@@ -231,7 +235,7 @@ P0 还必须包含 AgentSessionResolver 的最小实现或等价可测试解析�
 长期 Memory
 Multi-step ReAct
 复杂异步 movement
-自动 reconnect（保持 Phase10 的 Environment Recovery 范围）
+自动 reconnect（保持 Phase11 的 Environment Recovery 范围）
 Event replay
 复杂 Permission
 大量 Stardew 功能覆盖
@@ -273,7 +277,7 @@ Event replay
 - 为 context loaded / context updated 增加必要观测；
 - 将现有 fake adapter / fake Environment 收敛为可复用的确定性测试夹具，用于验证多 Entity、多 Turn、Memory 隔离和失败路径。
 
-第一版默认使用 In-Memory Store；如为开发调试使用简单本地文件实现，不承诺跨进程恢复、版本兼容或 Environment Recovery；正式 Persistent Recent Memory 属于 Phase8，Environment Recovery 属于 Phase10。
+第一版默认使用 In-Memory Store；如为开发调试使用简单本地文件实现，不承诺跨进程恢复、版本兼容或 Environment Recovery；正式 Persistent Recent Memory 属于 Phase8，Environment Recovery 属于 Phase11。
 
 ## 非目标
 
@@ -1323,7 +1327,7 @@ TaskService 是 Runtime 进程内模块。模型通过统一 Tool View 中的 `K
 
 Runtime 断线时游戏照常运行和保存，当前临时控制权安全释放；保存中的任务检查点标记为 unconfirmed，加载后暂停任务恢复并提示。Phase9 不提供 Adapter 离线任务镜像，也不把 Runtime 数据库的最新状态冒充该存档的任务状态。
 
-单次会面窗口位于目标日内，任务创建和唤醒可跨天、跨季、跨年。自动重连、跨连接事件恢复及完整 pending operation 协调归 Phase10；复杂工作流、循环任务和分布式调度不在本阶段范围。
+单次会面窗口位于目标日内，任务创建和唤醒可跨天、跨季、跨年。自动重连、跨连接事件恢复及完整 pending operation 协调归 Phase11；复杂工作流、循环任务和分布式调度不在本阶段范围。
 
 ## 开发子阶段
 
@@ -1358,11 +1362,66 @@ Runtime 断线时游戏照常运行和保存，当前临时控制权安全释放
 
 ## 阶段结束 Review
 
-确认跨天最小闭环可以稳定演示，Task、世界操作、UI、检查点与 Memory 的权威边界清楚，失败路径能够收敛，并以此作为 Phase10 连接恢复的真实场景输入。
+确认跨天最小闭环可以稳定演示，Task、世界操作、UI、检查点与 Memory 的权威边界清楚，失败路径能够收敛，并以此作为 Phase11 连接恢复的真实场景输入。
 
 ---
 
-# 16. Phase10：Environment Reconnect and Capability Recovery
+# 16. Phase10：Ecosystem & Productization
+
+## 阶段目标
+
+把 WIA 从"单一游戏 + 自有能力 + 本地开发可跑"扩展到"能力来自外部、外部用户能用、Runtime 能承载第二个游戏"。
+
+本阶段回答：
+
+> **WIA 是一个能跑 demo 的项目，还是一个可以长大的 Runtime + Adapter 生态？**
+
+## 子阶段划分
+
+| 子阶段 | 主题 | 一句话验证目标 |
+| --- | --- | --- |
+| 10.1 | Mod 能力接入与自治调用验证 | 能力来自第三方 mod 时，模型能自主选择、正确执行、失败可收敛 |
+| 10.2 | 桌面客户端与产品化 | 外部用户能在不读源码的前提下装起来、跑起来、看见 agent 在做什么 |
+| 10.3 | 第二款真实游戏接入 | 同一 Runtime 不改核心即可承载第二个 Adapter，且接入有可复用检查表 |
+
+## 主要范围
+
+- 第三方 mod 能力作为可选依赖接入（首个：MailFrameworkMod 邮件能力），遵守跨 Mod 集成边界。
+- 模型自主调用的完整证据链：能力进入 Tool View、模型主动产生 ToolCall、真实执行、结果回灌。
+- 读类与写类能力各至少一项，并覆盖"能力不适用时不应调用"的负向用例。
+- Runtime 脱离 cwd 依赖：数据目录、端口、配置路径可配置，可作为独立产物运行。
+- Wails v2 + Vue 3 + TypeScript + Vite + Go 桌面客户端：首次运行向导、依赖体检、Turn 时间线可视化。
+- 第二个真实游戏 Adapter，并完成 Stardew Adapter 的物理拆仓（Phase B，见下）。
+
+## 本阶段触发的结构性动作
+
+```text
+Phase B（物理拆仓，本阶段授权）
+    Adapter 迁往独立仓库 wia-adapter-<game>。
+    原触发条件是"出现第二个真实 Adapter"，Phase10.3 即该条件。
+    Phase A 已完成逻辑分离，拆仓应为低风险目录搬迁 + 建仓。
+```
+
+## 非目标
+
+```text
+完全自主 agent（自主目标生成、长时程规划、多 Agent 协作）
+发物品 / recipe 等高风险 mod 能力（需单独授权）
+玩家确认交互字段（当前没有执行机制）
+与 Stardew 功能对等的第二个 Adapter
+Adapter 之间的能力共享抽象框架
+多用户 / 远程访问 / 云端托管
+```
+
+## 阶段结束 Review
+
+重点确认：第三方能力接入是否已形成可复用边界；产品化是否真的降低了外部使用门槛；第二款游戏是否证明 Runtime Core 无需游戏专属分支；拆仓后两个仓库能否独立构建与发布。
+
+详细技术方案见 [GameAgent MVP0 Phase10 技术开发与验收总方案](../phase10/GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)。
+
+---
+
+# 17. Phase11：Environment Reconnect and Capability Recovery
 
 ## 阶段目标
 
@@ -1412,7 +1471,7 @@ Resume Token
 - capability 变化后，新 Turn 只看到新 EnvironmentSession 的 Tool View；
 - Stardew waiting UI、conversation state 和 interaction context 在断线后收敛；
 - reconnect 后 Agent identity 与 Persistent Recent Memory scope 不变；
-- reconnect 后的跨 Session / 跨 Runtime exactly-once 不属于 Phase10 保证；
+- reconnect 后的跨 Session / 跨 Runtime exactly-once 不属于 Phase11 保证；
 - Adapter 不自动 replay 已经 `ACCEPTED` 的旧 Event；
 - disconnected / late result / retry 的处理结果有明确 trace 与 Adapter log；
 - 完成一次真实 Stardew 断线重连 smoke test。
@@ -1423,7 +1482,7 @@ Resume Token
 
 ---
 
-# 17. Phase11：Evaluation、Developer Experience 与产品化
+# 18. Phase12：Evaluation、Developer Experience 与产品化
 
 ## 阶段目标
 
@@ -1469,7 +1528,7 @@ Multi-Agent 社会模拟平台
 
 ---
 
-# 18. 跨阶段不变量
+# 19. 跨阶段不变量
 
 无论处于哪个 Phase，都必须保持：
 
@@ -1503,7 +1562,7 @@ Runtime tool policy != hardcoded game-specific capability name
 
 ---
 
-# 19. 每阶段固定交付物
+# 20. 每阶段固定交付物
 
 从 Phase3 开始，每阶段至少应形成：
 
@@ -1599,18 +1658,22 @@ Phase7.0–Phase7.5 可以共享一份 Phase7 Context Subsystem 总纲，但不�
 
 进入 Phase10 implementation 前
     Phase9 必须 Accepted 或 Accepted with Known Limitations。
-    Phase8.1 的持久身份与按 AgentSession scope 读取能力可用。
-    在线请求收尾、Runtime Task 与 Adapter 当前世界操作的生命周期边界明确。
-    复用已 Accepted 的 Memory 基线，不增加新的摘要、检索或留存开发前置。
+    持久来源必须可按 AgentSession scope 读取，不增加新的 Memory 功能前置。
+    跨 Mod 集成边界已确立，首个第三方 mod 能力的验收口径明确。
+    Runtime 运行形态（数据目录、端口、配置路径）可配置，不依赖 cwd。
 
 进入 Phase11 implementation 前
     Phase10 必须 Accepted。
+    Runtime 与 Adapter 行为、产品化入口和第二个 Adapter 均已稳定，具备真实运行场景作为恢复验证输入。
+
+进入 Phase12 implementation 前
+    Phase11 必须 Accepted。
     Evaluation / DX / 产品化目标必须基于已稳定的 Runtime、Adapter 和 Recovery 行为。
 ```
 
 ---
 
-# 20. 暂不绑定固定 Phase 的候选能力
+# 21. 暂不绑定固定 Phase 的候选能力
 
 以下能力保留为未来候选，等核心 Harness 出现真实需求后再进入阶段规划：
 
@@ -1639,7 +1702,7 @@ Cloud deployment
 
 ---
 
-# 21. 一句话 Roadmap
+# 22. 一句话 Roadmap
 
 ```text
 Phase1
@@ -1708,9 +1771,12 @@ Phase9
 以 Runtime 持久 Task、跨天唤醒和最小检查点完成赴约、见面或超时离开及结果记忆的闭环
 
 Phase10
-让 Environment 可以重连、恢复，并让 pending operation 收敛到明确状态
+让能力可以来自第三方 mod，让外部用户能装起来用，并让第二个游戏验证跨游戏泛化
 
 Phase11
+让 Environment 可以重连、恢复，并让 pending operation 收敛到明确状态
+
+Phase12
 让系统可以被重复评估、可靠交付和持续扩展
 ```
 
