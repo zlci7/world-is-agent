@@ -291,6 +291,8 @@ callback: letter =>
 
 退路的每一步都已在 §2.1 核实可行，只是复杂。先试契约方案，是因为它能一次消掉整块运行时委托构造。
 
+**已实现**：契约声明在 `src/Integrations/MailFramework/`（`IMailFrameworkModApi` / `ILetter` / `MailLetter` / `MailFrameworkIntegration`，前两者必须是 `public`，否则 SMAPI 生成的映射代理无法实现内部接口），探针在 `src/Diagnostics/StardewMailProbe.cs`。启用方式与判读见 §5.4。
+
 **必须满足**：
 
 - MFM 未安装时，adapter 正常加载，`send_mail` 不进入 Tool View；调用侧另有 `mail_framework_unavailable` 防御分支。
@@ -405,6 +407,29 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 ```
 
 ### 5.4 实机步骤
+
+**探针先跑（§4.2.2）。** 在 `Mods/GameAgentStardew/config.json` 里把 `EnableMailBridgeProbe` 设为 `true`，启动游戏并加载存档，然后执行控制台命令：
+
+```text
+gameagent_mail_probe
+```
+
+SMAPI 日志会按步骤输出 `wia_mail_bridge_probe` 前缀的行：
+
+```text
+resolve          API 是否映射成功（mapped / mail_framework_unavailable / mail_framework_api_failed）
+register         我方 letter 与委托能否跨过接口边界
+deliver          反射 UpdateMailBox() 是否成功
+has_custom_mail  MFM 是否认为有自定义信待投递
+callback_fired   玩家关掉那封信之后出现，证明 callback 也跨过了边界
+verdict          bridge_ok / bridge_incomplete / bridge_failed
+```
+
+`verdict=bridge_ok` 且玩家读信后出现 `callback_fired` = 契约方案成立，可以继续。**只有 `resolve` 成功而 `register` 失败，才说明桥接不成立**，按 §4.2.2 退回反射方案。
+
+探针用固定文本、不经过 §3 校验，它验证的是机制而不是安全规则，不能当成能力调用。
+
+**然后才是能力链路：**
 
 1. 确认 `Mods/MailFrameworkMod` 与 `Mods/GameAgentStardew` 均加载，SMAPI 日志无报错。
 2. 确认 SMAPI 日志中的 CapabilityList **包含 `send_mail`**（条件发布生效）。

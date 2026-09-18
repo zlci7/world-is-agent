@@ -21,6 +21,8 @@ public sealed class AdapterConfig
 
     public bool EnablePhase9SaveProbe { get; set; } = false;
 
+    public bool EnableMailBridgeProbe { get; set; } = false;
+
     public int Phase9SaveProbeTimeoutSeconds { get; set; } = 5;
 
     public string Phase9TestSaveSlot { get; set; } = "";

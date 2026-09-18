@@ -49,6 +49,7 @@ public sealed class ModEntry : Mod
             helper.Events.GameLoop.DayStarted += (_, _) => this.phase9RouteProbe.WorldChanged("day_started");
         }
         this.dispatcher = new MainThreadDispatcher(this.Monitor);
+        StardewMailProbe.Install(helper, this.Monitor, this.config);
         this.conversationStore = new ConversationStateStore(new ConversationIdGenerator());
         this.dialogueController = new DialogueInteractionController();
         this.observationBuilder = new ObservationBuilder(this.conversationStore);

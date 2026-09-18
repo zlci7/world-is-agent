@@ -281,8 +281,11 @@ $phase9EntrySource = Get-Content -LiteralPath (Join-Path $Root 'src/ModEntry.cs'
 if ($phase9EntrySource -notmatch 'if \(this.config.EnablePhase9RouteProbe\)\s*\{\s*this.phase9RouteProbe = new StardewRouteProbe') {
     $failures.Add('Phase9 diagnostic commands and update wiring must be opt-in.') | Out-Null
 }
-Reject-Content 'src/Runtime/CapabilityCatalog.cs' 'phase9|route_probe|load_test_save' 'Phase9 diagnostic entry points must remain outside the model-visible capability list.'
-Reject-Content 'src/Runtime/RuntimeClient.cs' 'Diagnostics|phase9_route|load_test_save' 'Runtime must not dispatch the feasibility probe.'
+Reject-Content 'src/Runtime/CapabilityCatalog.cs' 'phase9|route_probe|load_test_save|mail_probe|MailBridgeProbe' 'Diagnostic entry points must remain outside the model-visible capability list.'
+Reject-Content 'src/Runtime/RuntimeClient.cs' 'Diagnostics|phase9_route|load_test_save|MailBridgeProbe' 'Runtime must not dispatch the feasibility probe.'
+Require-Content 'src/Diagnostics/StardewMailProbe.cs' 'if \(!config\.EnableMailBridgeProbe\)' 'The mail bridge probe must stay opt-in.'
+Require-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'RegisterLetter' 'The mail integration must register through the MFM API contract.'
+Reject-Content 'src/Integrations/MailFramework/MailFrameworkIntegration.cs' 'MailFrameworkMod\.dll|Assembly\.LoadFrom' 'The mail integration must not load the MFM assembly by path; MFM is an optional dependency.'
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'pathfindToNextScheduleLocation' 'Task NPC travel must use the native cross-location schedule pathfinder.'
 Require-Content 'src/Tasks/GameNpcDriver.cs' 'ControllerOwnership.Release' 'Task NPC cleanup must use the shared controller ownership policy.'
 Require-Content 'src/Tasks/NpcNativeBehaviorRestorer.cs' 'checkSchedule\(Game1.timeOfDay\)' 'Task NPC cleanup must rejoin the current native schedule.'

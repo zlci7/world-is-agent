@@ -1,0 +1,121 @@
+using System.Text.Json;
+using GameAgent.Stardew.Integrations.MailFramework;
+using GameAgent.Stardew.Runtime;
+using StardewModdingAPI;
+using StardewValley;
+
+namespace GameAgent.Stardew.Diagnostics;
+
+/// <summary>
+/// Opt-in probe for the Mail Framework Mod integration boundary (Phase10.1 §4.2.2).
+/// <para>
+/// It answers one question and nothing else: can SMAPI map MFM's API onto the Adapter's locally
+/// declared contract, and can the Adapter's own letter object and delegates cross that boundary?
+/// Until this passes, every other 10.1 decision rests on an assumption.
+/// </para>
+/// <para>
+/// The probe deliberately uses fixed text and no model input: it exercises the mechanism, not
+/// the validation rules, and must not be confused with a real capability call.
+/// </para>
+/// </summary>
+internal static class StardewMailProbe
+{
+    public const string CommandName = "gameagent_mail_probe";
+
+    // Stable id so repeated probe runs replace the previous letter instead of accumulating in
+    // MFM's repository. MFM strips spaces from ids, so this must contain none.
+    private const string ProbeMailId = "wia.probe.bridge";
+
+    private const string ProbeTitle = "GameAgent bridge probe";
+    private const string ProbeBody = "GameAgent mail bridge probe. If you can read this, the Adapter reached Mail Framework Mod.";
+
+    private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    public static void Install(IModHelper helper, IMonitor monitor, AdapterConfig config)
+    {
+        if (!config.EnableMailBridgeProbe)
+            return;
+
+        helper.ConsoleCommands.Add(
+            CommandName,
+            "Probe the Mail Framework Mod integration boundary. Requires MailFrameworkMod and a loaded save. " +
+            "Usage: gameagent_mail_probe",
+            (_, args) => Run(helper, monitor, args));
+
+        helper.Events.GameLoop.GameLaunched += (_, _) => LogResolution(helper, monitor);
+
+        monitor.Log(
+            "GameAgent mail bridge probe armed. Load a save and run " + CommandName + ".",
+            LogLevel.Info);
+    }
+
+    /// <summary>Resolve only: proves API mapping without touching the world.</summary>
+    private static void LogResolution(IModHelper helper, IMonitor monitor)
+    {
+        bool resolved = MailFrameworkIntegration.TryResolve(helper, monitor, out _, out string code);
+        Emit(monitor, "resolve", code, detail: resolved ? "mapped" : "not mapped");
+    }
+
+    private static void Run(IModHelper helper, IMonitor monitor, string[] args)
+    {
+        if (args.Length != 0)
+        {
+            Emit(monitor, "aborted", "invalid_arguments");
+            return;
+        }
+
+        if (!Context.IsWorldReady)
+        {
+            Emit(monitor, "aborted", "world_not_ready");
+            return;
+        }
+
+        if (!MailFrameworkIntegration.TryResolve(helper, monitor, out MailFrameworkIntegration? integration, out string resolveCode))
+        {
+            Emit(monitor, "resolve", resolveCode);
+            Emit(monitor, "verdict", "bridge_failed", detail: "contract did not map");
+            return;
+        }
+
+        Emit(monitor, "resolve", resolveCode, detail: "mapped");
+
+        string registerCode = integration!.RegisterLetter(
+            ProbeMailId,
+            ProbeTitle,
+            ProbeBody,
+            letter =>
+            {
+                // The Adapter owns this write: MFM removes its temporary "id + suffix" marker on
+                // close and does not record the final id itself (Phase10.1 §4.2.1).
+                if (!Game1.player.mailReceived.Contains(letter.Id))
+                    Game1.player.mailReceived.Add(letter.Id);
+                Emit(monitor, "callback_fired", "ok", detail: letter.Id);
+            });
+
+        Emit(monitor, "register", registerCode, detail: integration.LastError);
+        if (registerCode != "ok")
+        {
+            Emit(monitor, "verdict", "bridge_failed", detail: "RegisterLetter rejected the bridged letter");
+            return;
+        }
+
+        bool delivered = integration.RequestDelivery(out string deliveryCode);
+        Emit(monitor, "deliver", deliveryCode, detail: integration.LastError);
+
+        bool read = integration.TryHasCustomMail(out bool hasCustomMail, out string hasCode);
+        Emit(monitor, "has_custom_mail", hasCode, detail: read ? hasCustomMail.ToString() : integration.LastError);
+
+        Emit(
+            monitor,
+            "verdict",
+            delivered && read && hasCustomMail ? "bridge_ok" : "bridge_incomplete",
+            detail: $"mail_id={ProbeMailId} callback_pending=true read_letter_to_confirm_callback");
+    }
+
+    private static void Emit(IMonitor monitor, string step, string code, string detail = "")
+    {
+        monitor.Log(
+            "wia_mail_bridge_probe " + JsonSerializer.Serialize(new { step, code, detail }, Json),
+            code == "ok" || code == "bridge_ok" || code == "mapped" ? LogLevel.Info : LogLevel.Warn);
+    }
+}
