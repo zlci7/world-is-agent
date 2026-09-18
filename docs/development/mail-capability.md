@@ -282,7 +282,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 ## 7. 退出条件
 
 1. `send_mail` 进入 Tool View，且 MFM 未安装时以明确 code REJECTED、adapter 不崩溃。
-2. 模型在无点名提示下自主选择 `send_mail`（有 SMAPI 日志证据）。
+2. 在一个由玩家或游戏事件触发的 AgentTurn 内，系统 prompt 不点名 `send_mail`，模型自行从 Tool View 选中并调用它（有 SMAPI 日志证据）。这验证的是 Turn 内 Tool Selection，不要求 Background Trigger 或 NPC 自发目标。
 3. 信件成功投递，玩家可读，`mailReceived` 记录 letter.Id。
 4. 文本校验有自动化测试覆盖，注入样本被拒。
 5. 人设一致性按 §5.2 完成一轮采样与判定。

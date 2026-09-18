@@ -1386,11 +1386,12 @@ Runtime 断线时游戏照常运行和保存，当前临时控制权安全释放
 
 ## 主要范围
 
-- 第三方 mod 能力作为可选依赖接入（首个：MailFrameworkMod 邮件能力），遵守跨 Mod 集成边界。
-- 模型自主调用的完整证据链：能力进入 Tool View、模型主动产生 ToolCall、真实执行、结果回灌。
-- 读类与写类能力各至少一项，并覆盖"能力不适用时不应调用"的负向用例。
+- 第三方 mod 能力作为可选依赖接入（首个且必做：MailFrameworkMod 邮件能力），遵守跨 Mod 集成边界。
+- 模型自主调用的完整证据链：能力进入 Tool View、模型主动产生 ToolCall、真实执行、结果回灌。自主指 Turn 内 Tool Selection，不含 Background Trigger 或 NPC 自发目标。
+- 写类能力（第三方 mod 动作）与"能力不适用时不应调用"的负向用例为硬验收；读类能力接入为可选 follow-up。
 - Runtime 脱离 cwd 依赖：数据目录、端口、配置路径可配置，可作为独立产物运行。
-- Wails v2 + Vue 3 + TypeScript + Vite + Go 桌面客户端：首次运行向导、依赖体检、Turn 时间线可视化。
+- 本地 Web UI（Vue 3 + TypeScript + Vite，`//go:embed` 进 runtime 二进制）：启动后自动打开浏览器、免安装包分发、首次运行向导、依赖体检、Turn 时间线可视化。
+- 只服务同一台电脑上的本地浏览器；不做 Mobile、LAN 或远程访问。
 - 第二个真实游戏 Adapter，并完成 Stardew Adapter 的物理拆仓（Phase B，见下）。
 
 ## 本阶段触发的结构性动作
@@ -1406,11 +1407,13 @@ Phase B（物理拆仓，本阶段授权）
 
 ```text
 完全自主 agent（自主目标生成、长时程规划、多 Agent 协作）
+背景触发器 / NPC 自发任务（本阶段只验证 Turn 内 Tool Selection）
 发物品 / recipe 等高风险 mod 能力（需单独授权）
 玩家确认交互字段（当前没有执行机制）
 与 Stardew 功能对等的第二个 Adapter
 Adapter 之间的能力共享抽象框架
-多用户 / 远程访问 / 云端托管
+桌面客户端打包（Wails / Electron）与安装器
+Mobile / LAN / 远程访问 / 云端托管
 ```
 
 ## 阶段结束 Review
