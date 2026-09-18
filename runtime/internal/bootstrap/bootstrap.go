@@ -243,6 +243,10 @@ func (r *Runtime) State() State {
 	return r.state
 }
 
+// Ready reports whether the agent core can serve turns. Downstream components that
+// consume durable state, such as the task dispatcher, must not act while it is false.
+func (r *Runtime) Ready() bool { return r.State() == StateReady }
+
 // Reason explains a state that is not StateReady.
 func (r *Runtime) Reason() string {
 	r.mu.RLock()

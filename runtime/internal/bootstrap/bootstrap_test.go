@@ -78,6 +78,9 @@ func TestMissingModelConfigurationIsAStateNotAnExit(t *testing.T) {
 	if state := runtime.State(); state != bootstrap.StateNeedsConfiguration {
 		t.Fatalf("state = %q, want %q", state, bootstrap.StateNeedsConfiguration)
 	}
+	if runtime.Ready() {
+		t.Fatal("an unconfigured Runtime must not report itself ready; durable dispatch depends on this")
+	}
 	if reason := runtime.Reason(); !strings.Contains(reason, runtime.ModelConfigPath()) {
 		t.Fatalf("reason %q does not name the expected model path %q", reason, runtime.ModelConfigPath())
 	}
@@ -202,6 +205,9 @@ func TestConfigureInstallsTheAgentCoreOnce(t *testing.T) {
 	}
 	if state := runtime.State(); state != bootstrap.StateReady {
 		t.Fatalf("state = %q, want %q", state, bootstrap.StateReady)
+	}
+	if !runtime.Ready() {
+		t.Fatal("a configured Runtime must report itself ready so durable dispatch can resume")
 	}
 	if reason := runtime.Reason(); reason != "" {
 		t.Fatalf("ready runtime kept a reason: %q", reason)

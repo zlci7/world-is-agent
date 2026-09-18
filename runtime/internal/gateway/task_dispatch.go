@@ -22,6 +22,13 @@ type wakeService interface {
 }
 type WakeHandler func(context.Context, task.ExecutionContext, task.Record) error
 
+// coreReadiness is implemented by an agent core that can report whether it is able to
+// serve turns. A core that does not implement it is assumed ready, which keeps raw
+// agent loops (tests, embedders) working unchanged.
+type coreReadiness interface {
+	Ready() bool
+}
+
 func (s *Server) StartTaskDispatcher(ctx context.Context, config task.DispatcherConfig, handler, reconcile WakeHandler) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,7 +97,7 @@ func (s *Server) StartTaskDispatcher(ctx context.Context, config task.Dispatcher
 	}
 	admission := newTaskDispatch(s.worlds, s.worlds.service, config, handler, reconcile)
 	dispatcher, err := task.NewDispatcher(ctx, s.worlds.service, config, task.DispatcherCallbacks{
-		ReadyWorlds: s.worlds.ReadyWorlds, EnqueueWake: admission.EnqueueWake, PauseWorld: admission.PauseWorld, Updates: s.worlds.updates,
+		ReadyWorlds: s.readyWorldsForDispatch, EnqueueWake: admission.EnqueueWake, PauseWorld: admission.PauseWorld, Updates: s.worlds.updates,
 		Guard: func(binding task.Binding, fn func(task.Head) error) error {
 			entry, ok := s.worlds.Current(binding.World)
 			if !ok {
@@ -104,6 +111,21 @@ func (s *Server) StartTaskDispatcher(ctx context.Context, config task.Dispatcher
 	}
 	s.dispatcher = dispatcher
 	return nil
+}
+
+// readyWorldsForDispatch hides worlds from the task dispatcher while the agent core
+// cannot serve turns.
+//
+// The dispatcher claims a due wake before the handler runs, and the claim is itself a
+// durable state change: a claimed wake whose turn then fails is recorded as an attempt
+// with no progress, and repeated no-progress attempts pause the task. A Runtime that is
+// merely unconfigured must not consume wakes or move task state, so the gate belongs
+// here, ahead of ClaimDue, rather than inside the wake handler.
+func (s *Server) readyWorldsForDispatch() []task.Head {
+	if core, ok := s.agentLoop.(coreReadiness); ok && !core.Ready() {
+		return nil
+	}
+	return s.worlds.ReadyWorlds()
 }
 
 type taskDispatch struct {
