@@ -5,7 +5,7 @@
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
 > **Code Inspection Baseline:** `main` @ `ef50436`；Phase A 与 Mod 邮件能力接入已授权
-> **技术栈:** Go、SQLite、gRPC / Protobuf、C#、SMAPI、Go HTTP（新增本地控制面）
+> **技术栈:** Go、SQLite、gRPC / Protobuf、C#、SMAPI、Vue 3 + TypeScript + Vite（构建期）、Go `net/http` 与 `//go:embed`（本地控制面与 UI 分发）
 > **Roadmap:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md)
 > **Architecture:** [Runtime 整体架构设计规范](../summary/GameAgent%20Runtime%20整体架构设计规范.md)
 > **前置:** [Mod 能力接入规范](../development/mod-capability-integration.md)、[邮件能力方案](../development/mail-capability.md)、[Phase A 逻辑分离](../development/logical-separation.md)
@@ -122,53 +122,90 @@ gRPC 端口硬编码 127.0.0.1:50051
 ### 3.2 技术选型与优先级（已确认）
 
 ```text
-桌面端    Wails v2 + Vue 3 + TypeScript + Vite + Go
-优先级    Desktop 为主产品入口
-          CLI 保留为开发入口
-          本地 Web 暂不单独做
+主入口    本地 Web UI：Vue 3 + TypeScript + Vite 构建，产物用 //go:embed 打进 runtime 二进制
+分发      单个二进制同时提供 gRPC 与 HTTP；浏览器访问 127.0.0.1 即可，无需安装
+保留      CLI 作为开发与无头环境入口
+不做      桌面打包（Wails / Electron）；除非将来明确需要系统托盘、原生窗口或自动更新
 ```
 
-选型依据：
+选型依据（对比桌面端后的结论）：
 
-- Wails v3 目前仍是 beta / 预发布（最新为 `v3.0.0-beta.23`），**v2 是稳定线**——与"固定版本、优先稳定"的定位一致。
-- 采用桌面形态后，**不需要为客户端新增本地 HTTP 面**：Go 侧通过 Wails 绑定直接暴露方法，前端通过 bridge 调用。这消除了原方案里"新增对外接口需单独授权"的问题。
-- 运行时仍需要 10.2-1 的路径与端口可配置，因为嵌入式启动同样不能依赖 cwd。
+| 维度 | Web UI（选定） | Wails 桌面端（未选） |
+| --- | --- | --- |
+| 新增工作量 | HTTP 端点 + 静态资源服务 | 需把 capability 从 `package main` 抽成可导入包 + Wails 服务层 + 单例 refactor |
+| 构建链 | 前端只在开发时需要 Node，Go 单命令出产物 | 每平台分别构建，还需 Wails CLI 与前端 toolchain |
+| 跨平台 | 浏览器即可，零平台成本 | 平台各异；Linux 还要 webkit2gtk 依赖 |
+| Windows 杀软 | 无影响 | 打包 Go 二进制存在误报，对开源项目是劝退级问题 |
+| 代码签名 | 不需要 | 分发体验好就需要证书 |
+| 对外展示 | README 放截图，任何平台可见 | 别人要下载运行才能看到 |
+| 锁定 | Go 标准库 + Web 标准 | 绑在 Wails 抽象上（v3 已 beta） |
+
+两条决定性的判断：
+
+1. **桌面端要求一次真实的代码结构调整。** runtime 目前是 `package main`（`cmd/server/main.go` 在 main 内组装 Loop、Gateway、Task runtime），嵌入桌面应用必须抽包并处理单例生命周期。这与"固定版本、稳定优先"的定位冲突。Web 只是**在同一进程上多挂一个 HTTP handler**，不动现有结构。
+2. **目标用户是"装 mod 玩 Stardew 的人"。** 他们不需要安装步骤、证书和杀软白名单；打开浏览器是最低摩擦的形态。
+
+代价（明确接受）：需要自己设计 HTTP 接口，并加本地访问保护（见 §3.3）。这是标准做法，不是需要设计的新机制。
+
+已核实的代码事实：
+
+```text
+runtime 当前没有任何 HTTP 服务        （无 ListenAndServe / ServeHTTP）
+runtime 当前没有任何 embed 静态资源    （无 //go:embed）
+因此 HTTP 面与资产内嵌都是净新增，不影响现有 gRPC 链路
+```
 
 本机工具链现状（已核实）：
 
 ```text
-Go       1.25.3            ✅
-Node     24.14.1 / npm 11.11.0  ✅
-WebView2 运行时 153.0.4234.32   ✅（Windows 上 Wails 的前置依赖）
-Wails CLI                        ❌ 未安装，需要 go install
+Go       1.25.3                 ✅ 后端与 embed 所需
+Node     24.14.1 / npm 11.11.0  ✅ 仅前端开发时需要；终端用户不需要
+WebView2 运行时 153.0.4234.32   — 选 Web UI 后不再是前置依赖
 ```
 
-### 3.3 范围（按依赖顺序，不是按 UI 好看程度）
+### 3.3 本地访问边界（必须遵守）
+
+新增 HTTP 面是本子阶段唯一的安全相关改动。约束：
+
+```text
+绑定        只监听 127.0.0.1，不对外监听
+Host 校验   校验 Host 头，防 DNS rebinding——这是本地 Web 服务最真实的攻击面
+访问凭证    启动时生成一次性 token 并在控制台打印，前端请求携带
+暴露范围    只暴露定位与配置所需的最小面，不代理任意请求
+不做        多用户、远程访问、云端托管、端口转发支持
+```
+
+### 3.4 范围（按依赖顺序，不是按 UI 好看程度）
 
 | 步骤 | 内容 | 为什么在这个位置 |
 | --- | --- | --- |
-| 10.2-1 | Runtime 运行形态：数据目录、端口、配置路径可配置；可作为独立产物在任意目录运行 | 不做这个，桌面端嵌入式启动同样会写错位置 |
-| 10.2-2 | Wails 应用骨架 + Go 侧服务绑定：启动/停止 Runtime、读取状态 | 先把"能驱动 Runtime"打通，再谈界面 |
+| 10.2-1 | Runtime 运行形态：数据目录、端口、配置路径可配置；可作为独立产物在任意目录运行 | 当前 trace 路径硬编码且依赖从仓库根启动，不做这个后面都不成立 |
+| 10.2-2 | 极简本地 HTTP 面 + 资产内嵌：health / status / turn 列表；`//go:embed` 前端产物 | 客户端要有东西可连；同时它就是 10.1 与 10.3 的调试面 |
 | 10.2-3 | 首次运行向导与依赖体检：写配置与 key、检查 .NET / SMAPI / 游戏路径 / key 有效性 | 这一步做完，"外人能跑起来"才成立 |
 | 10.2-4 | 可视化：AgentTurn 时间线（复用现有 JSONL trace）、对话记录、任务与记忆查看 | 这是"好看"，前三步才是"能用" |
 
-### 3.4 明确不做
+注意 10.2-2 与 10.2-4 共用同一个 HTTP 面：**不需要为"控制面"和"UI 接口"各做一套。**
+
+### 3.5 明确不做
 
 ```text
-多用户 / 远程访问 / 云端托管        本地优先，不做账号体系
-本地 Web 独立入口                   优先桌面端；Web 形态待桌面端稳定后再评估
-配置运行时热改并立即生效           先保证"配好能跑"，不做在线调参
-完整可观测平台                     只暴露定位问题所需的最小面
-替代游戏内 UI                      游戏内交互仍由 Adapter 与游戏负责
+桌面打包（Wails / Electron）    见 §3.2；除非需要系统托盘、原生窗口或自动更新
+多用户 / 远程访问 / 云端托管     见 §3.3 本地访问边界
+把 runtime 抽成可导入包          那是桌面打包的前置；当前无此需求
+配置运行时热改并立即生效         先保证"配好能跑"，不做在线调参
+完整可观测平台                   只暴露定位问题所需的最小面
+替代游戏内 UI                    游戏内交互仍由 Adapter 与游戏负责
 ```
 
-### 3.5 退出条件
+### 3.6 退出条件
 
 1. 全新环境（无现有配置）能在**任意目录**启动 Runtime，数据落点正确、可重复。
-2. 首次运行向导能产出可用配置，并对缺失依赖给出可操作的明确提示。
-3. 用户在游戏里触发一次交互后，能在客户端看到该 Turn 的关键链路。
-4. 模型 key 无效或缺失时，错误信息指向具体原因，不表现为"agent 不说话"。
-5. 不引入对 Runtime Core 的 game-specific 依赖。
+2. 浏览器打开本地地址即可使用，**终端用户不需要安装 Node 或任何前端工具链**。
+3. 首次运行向导能产出可用配置，并对缺失依赖给出可操作的明确提示。
+4. 用户在游戏里触发一次交互后，能在 Web UI 看到该 Turn 的关键链路。
+5. 模型 key 无效或缺失时，错误信息指向具体原因，不表现为"agent 不说话"。
+6. §3.3 的四项访问约束全部生效：非 loopback 不可访问、伪造 Host 被拒、无 token 被拒。
+7. 不引入对 Runtime Core 的 game-specific 依赖。
 
 ---
 
@@ -296,7 +333,7 @@ Adapter 是事实来源                   能力、schema、description、执行
 | --- | --- | --- |
 | 1 | 阶段重排 | 旧 Phase10 → Phase11，旧 Phase11 → Phase12；Phase10 为 Ecosystem & Productization |
 | 2 | Phase B 拆仓 | 授权，包含在 10.3 |
-| 3 | 客户端形态 | Wails v2 + Vue 3 + TypeScript + Vite + Go；桌面端为主入口，CLI 保留开发入口，本地 Web 暂不单独做 |
+| 3 | 客户端形态 | 本地 Web UI：Vue 3 + TypeScript + Vite，产物 `//go:embed` 进 runtime 二进制；单二进制分发；CLI 保留开发与无头入口；不做桌面打包 |
 
 仍待确认：
 

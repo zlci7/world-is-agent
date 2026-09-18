@@ -9,7 +9,7 @@
 - 本版本不做完全自主 agent。自主目标生成、长时程自主规划、多 Agent 协作、自我改进、无人监督的长时间自主运行均不在范围内，也不为它们预留未验证的框架。
 - 新工作必须能对应到“对外可运行、可复现、可验证”或“公开事实源更准确”的收益。只有内部技术分层价值、且不影响对外结论的重构不做。
 - 稳定性优先：破坏已发布协议字段、配置格式或使用方式，必须有明确理由和用户授权，不随普通改动顺带进行。
-- 已授权的例外是 **Phase A 逻辑分离**（解除 Adapter 对 monorepo 目录布局的依赖，按 [docs/development/logical-separation.md](docs/development/logical-separation.md) 执行，不改变协议内容、仓库结构和 Mod 运行时标识）、**Mod 邮件能力接入**（按 [docs/development/mail-capability.md](docs/development/mail-capability.md) 执行，仅文本、无附件、禁止游戏命令）与 **Phase10 Ecosystem & Productization**（按 [docs/phase10/GameAgent MVP0 Phase10 技术开发与验收总方案.md](docs/phase10/GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) 执行：第三方 mod 能力接入、Wails 桌面客户端产品化、第二个真实 Adapter 与 Phase B 拆仓）。
+- 已授权的例外是 **Phase A 逻辑分离**（解除 Adapter 对 monorepo 目录布局的依赖，按 [docs/development/logical-separation.md](docs/development/logical-separation.md) 执行，不改变协议内容、仓库结构和 Mod 运行时标识）、**Mod 邮件能力接入**（按 [docs/development/mail-capability.md](docs/development/mail-capability.md) 执行，仅文本、无附件、禁止游戏命令）与 **Phase10 Ecosystem & Productization**（按 [docs/phase10/GameAgent MVP0 Phase10 技术开发与验收总方案.md](docs/phase10/GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) 执行：第三方 mod 能力接入、本地 Web UI 产品化、第二个真实 Adapter 与 Phase B 拆仓）。
 
 ## 跨 Mod 集成边界
 
