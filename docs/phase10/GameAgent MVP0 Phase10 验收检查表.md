@@ -313,7 +313,7 @@ Do not use it while the player is standing here and the answer can simply be spo
 | 无 `(no translation:…)` | 通过 | 全篇为正常中文 |
 | 无 token 被解析 | 通过 | 纯文本，`——`、`：`、`、` 均在白名单内，无游戏效果 |
 | 标题合理 | 通过 | 用玩家人名署名收信人，未泄露路径/存档内容 |
-| `mailReceived` 写入 | **待做** | 同会话内读完信后敲 `player_debug_updatemailbox`，该信不应再现 |
+| `mailReceived` 写入 | 通过 | 同会话内读完信后执行 `player_debug_updatemailbox`，MFM 回复 `Updating mailbox with debug command.`，该信未再现 |
 
 内容质量（供 C3 参考，不替代 C3 的 6 封采样）：署名与身份一致、语气贴合 Linus（山中隐者、四季采集意象）、无机械承诺。
 
@@ -332,6 +332,10 @@ status=Failed code=max_steps_exceeded message=max steps exceeded: max 3
 影响面：turn 在 trace 与 history 中记为 failed；成功动作仍进入 memory 投影（`ProjectionKindPriorSuccessfulActions`）。对 C1 的退出条件（自主选中 + 成功执行 + 可读）**不构成阻塞**，但会让 10.2-4 的时间线上出现"游戏里明明正常、却显示失败"的回合。
 
 候选处置（待定，属产品行为）：把 Stardew 的 `max_steps` 从 3 调到 4（仅配置改动，重启 Runtime 生效），或保持现状并记为已知限制。
+
+**处置：已改为 5**（`runtime/config/games/stardew-valley/agent.json`，重启 Runtime 生效）。选 5 而不是 4，是因为这个回合用了 3 步且每步只调用一个工具，需要留出 settle 余量；`max_tool_calls_per_step` 仍是 4，模型可以自行合并动作。
+
+> **与 TurnTimeout 的相互作用**（Phase5 评审已指出过同一问题）该保持留意：`llm_timeout_ms = 60000`、`turn_timeout_ms = 270000`，5 步全部命中 LLM 超时的极端值是 300s，会先被 TurnTimeout 截断。实测这一步约 3s/步（3 步回合共 9s），因此本轮不改 TurnTimeout；若实机出现 `turn_cancelled`/超时，再同步上调。
 
 
 ### C2 负向：不该发信时不调用（总纲硬验收）
