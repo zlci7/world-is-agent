@@ -66,7 +66,7 @@ MVP0 已经证明了"单一游戏 + 自有能力 + 本地开发"的闭环。Phas
 
 ```text
 写类    让 agent 触发 mod 的动作（首个且必做：send_mail）
-判定类  能力不适用时模型不调用（负向用例，必做）
+判定类  能力不适用时模型不调用（证据由普通动机回合提供，见 10.1 §5.6）
 读类    把 mod 的状态变成 Observation 事实（可选 / follow-up）
 ```
 
@@ -100,7 +100,7 @@ content pack 写入用户 Mods 目录        修改用户环境，超出能力�
 2. 在一个由玩家或游戏事件触发的 AgentTurn 内，系统 prompt 不点名 `send_mail`，模型自行从 Tool View 选中并调用它（有 SMAPI 日志证据）。动机由玩家台词制造，见 [10.1 方案](GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md) §5.5。
 3. 信件成功投递，玩家可读，`mailReceived` 记录 letter.Id。
 4. 白名单文本校验有自动化测试覆盖，超范围字符与注入样本被拒。
-5. 负向用例通过：能力不适用时模型不调用。
+5. 负向结论成立：普通动机回合中模型未调用 `send_mail`（证据见 [10.1 方案](GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md) §5.6）。
 6. [mod-capability-integration.md](../development/mod-capability-integration.md) §7 检查清单全部满足。
 7. （可选）读类能力接入并进入 Observation。
 
