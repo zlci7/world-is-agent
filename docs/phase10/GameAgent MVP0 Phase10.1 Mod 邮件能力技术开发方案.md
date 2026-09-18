@@ -345,15 +345,28 @@ callback:  letter => { if (!Game1.player.mailReceived.Contains(letter.Id))
 具体实现由探针的失败结果决定——提前设计容易把 Letter 与 ILetter 又混一次。
 ```
 
-**已实现并已跑过第一轮**（`src/Integrations/MailFramework/` + `src/Diagnostics/StardewMailProbe.cs`）：
+**已实现并通过实机验证**（`src/Integrations/MailFramework/` + `src/Diagnostics/StardewMailProbe.cs`）。实机日志：
 
 ```text
-接口映射成立   GetApi<IMailFrameworkModApi> 返回了非 null，没有报 mail_framework_unavailable
-契约已核对     本地两个接口与 MFM 1.20.0 逐成员一致（ILetter 12 项、API 4 项）
-首轮暴露的问题 api.GetType() 是 Pintail 代理，不是 MFM 的程序集 → 已改用非泛型 GetApi 定位
+resolve          ok    mapped
+register         ok                              ← 我方 DTO 与委托成功跨过接口边界
+deliver          ok    controller=MailFrameworkMod
+has_custom_mail  ok    True
+verdict          bridge_ok
 ```
 
-前两者说明契约方案的技术前提成立，退路大概率用不上。契约接口必须是 `public`，否则映射代理无法实现它。启用方式与判读见 §5.4。
+**契约方案成立，退路作废。** 最初担心的"必须在运行时用 `System.Linq.Expressions` 构造泛型委托"整块复杂度因此消失，反射只剩 `MailController` 的两个静态方法。
+
+另外两点已被独立核实：
+
+```text
+契约逐成员一致   本地 ILetter（12 项）与 IMailFrameworkModApi（4 项）与 MFM 1.20.0 完全相同
+接口必须 public  否则映射代理无法实现它
+```
+
+首轮曾失败一次并已修复：`api.GetType()` 是 Pintail 生成的代理，其程序集里没有 MFM 的类型，所以 `MailController` 必须用非泛型 `helper.ModRegistry.GetApi(uniqueId)` 定位。
+
+**尚有一项待验证**：`callback_fired` 只在玩家真正关掉那封信之后出现，它验证回调委托的反向桥接与 §4.2.1 的 `mailReceived` 写入。步骤与预期见 §5.4。
 
 **必须满足**：
 
@@ -479,15 +492,24 @@ gameagent_mail_probe
 SMAPI 日志会按步骤输出 `wia_mail_bridge_probe` 前缀的行：
 
 ```text
-resolve          API 是否映射成功（mapped / mail_framework_unavailable / mail_framework_api_failed）
-register         我方 letter 与委托能否跨过接口边界
-deliver          反射 UpdateMailBox() 是否成功
+resolve          API 是否映射成功
+register         我方 letter 与委托能否跨过接口边界   ← 这条失败才是"桥接不成立"
+deliver          反射定位 MailController 并调用 UpdateMailBox()
 has_custom_mail  MFM 是否认为有自定义信待投递
-callback_fired   玩家关掉那封信之后出现，证明 callback 也跨过了边界
-verdict          bridge_ok / bridge_incomplete / bridge_failed
+callback_fired   玩家关掉那封信之后出现，证明回调也跨过了边界
+verdict          bridge_ok / bridge_ok_delivery_incomplete / bridge_failed
 ```
 
-`verdict=bridge_ok` 且玩家读信后出现 `callback_fired` = 契约方案成立，可以继续。**只有 `resolve` 成功而 `register` 失败，才说明桥接不成立**，按 §4.2.3 设计退路。
+**收尾两步（验证回调与防重复投递）：**
+
+```text
+1. 走到信箱前把信读掉
+2. 确认日志出现 callback_fired，然后重新执行 gameagent_mail_probe
+```
+
+预期第二次运行时 `has_custom_mail` 变为 **false**。这同时证明两件事：callback 的反向桥接成立，且 §4.2.2 的 `condition` 真的阻止了重复投递——因为 callback 写入的 `letter.Id` 让 condition 转成了 false。
+
+注意探针的 id 是固定的 `wia.probe.bridge`，所以第二步必须在读完信之后做，否则测的还是上一封未读的信。
 
 探针用固定文本、不经过 §3 校验，它验证的是机制而不是安全规则，不能当成能力调用。
 
@@ -548,12 +570,11 @@ verdict          bridge_ok / bridge_incomplete / bridge_failed
 
 | # | 未知 | 影响 | 计划 |
 | --- | --- | --- | --- |
-| 1 | `GetApi<T>` 能否把本地声明的 `ILetter` 实参桥接到 MFM 的 `ILetter` | 决定用契约方案还是退回全反射 | 接口映射已实证成立；参数桥接由第一个提交的探针确认，不通过则按 §4.2.3 设计退路 |
-| 2 | 运行时 `RegisterLetter` 在存档加载后是否立即可投递 | 决定立即投递是否成立 | 第 1 个模块就用日志验证 |
-| 3 | 原版 mail 的 `%` 前缀命令是否也在 `Text` 解析链上 | 只影响"为什么拒绝 `%`"的解释，不影响校验本身 | 白名单已一律拒绝 `%`，不必先验证 |
-| 4 | `TokenParser` 的确切语法 | 无——白名单不依赖它 | 不验证。只有黑名单才需要先摸清语法，本轮已弃用黑名单 |
+| 1 | 回调委托能否反向桥接（MFM 以它的 `ILetter` 调用我方 `Action<ILetter>`） | 决定 §4.2.1 的 `mailReceived` 写入是否成立 | 探针读信后应出现 `callback_fired`；接口映射与参数桥接已实证成立 |
+| 2 | 原版 mail 的 `%` 前缀命令是否也在 `Text` 解析链上 | 只影响"为什么拒绝 `%`"的解释，不影响校验本身 | 白名单已一律拒绝 `%`，不必先验证 |
+| 3 | `TokenParser` 的确切语法 | 无——白名单不依赖它 | 不验证。只有黑名单才需要先摸清语法，本轮已弃用黑名单 |
 
-**已解决，不再是未知项**：`RegisterLetter` 的真实签名（`Func<ILetter,bool>` / `Action<ILetter>`）与 `Letter` / `ApiLetter` 的关系已由反射核实（§2.1）；立即投递入口已确定为 `MailController.UpdateMailBox()`（§2.2、§4.4）；`player_debug_updatemailbox` 能否触发已有确定答案（不能，§2.2）；`mailReceived` 的写入方已确定为 callback 自身（§4.2.1，`ValidTagSuffix` 已在本机 1.20.0 符号表中确认）。
+**已解决，不再是未知项**：`GetApi<T>` 的接口映射与参数桥接已由实机探针确认成立（§4.2.3）；**运行时 `RegisterLetter` 在存档加载后立即可投递**（探针 `deliver=ok`、`has_custom_mail=True`，同一提交内注册即投递）；`RegisterLetter` 的真实签名（`Func<ILetter,bool>` / `Action<ILetter>`）与 `Letter` / `ApiLetter` 的关系已由反射核实（§2.1）；立即投递入口已确定为 `MailController.UpdateMailBox()`（§2.2、§4.4）；`player_debug_updatemailbox` 能否触发已有确定答案（不能，§2.2）；`mailReceived` 的写入方已确定为 callback 自身（§4.2.1，`ValidTagSuffix` 已在本机 1.20.0 符号表中确认）；重复投递的守卫已确定为 `condition`（§4.2.2，`Letter` 无 `Repeatable`）。
 
 `AutoOpen=false` + 无附件 + 无 recipe + 非 null condition：这四点使信件走标准 UI 路径，是本轮设计的基础。
 
