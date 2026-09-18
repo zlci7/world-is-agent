@@ -439,6 +439,24 @@ public static partial class ProtocolMapper
         return new SendMailInput(title, bodyValue.StringValue);
     }
 
+    /// <summary>
+    /// Read the required schedule_mail intent. Shape only: length belongs to the capability, so a
+    /// malformed call reports invalid_action_arguments while a bad intent reports
+    /// schedule_mail_intent_invalid.
+    /// </summary>
+    public static string RequireScheduleMailIntent(ActionRequest request)
+    {
+        if (request.Arguments is null)
+            throw new ArgumentException("missing required schedule_mail arguments");
+
+        if (!request.Arguments.Fields.TryGetValue("intent", out Value? intentValue))
+            throw new ArgumentException("missing required schedule_mail argument: intent");
+        if (intentValue.KindCase != Value.KindOneofCase.StringValue)
+            throw new ArgumentException("schedule_mail intent must be a string");
+
+        return intentValue.StringValue;
+    }
+
     public static MoveToInput RequireMoveToArgument(ActionRequest request)
     {
         if (request.Arguments is null)

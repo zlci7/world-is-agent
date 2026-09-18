@@ -74,4 +74,32 @@ public sealed class GameClockTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => GameClock.ToClockText(-1));
     }
+
+    [Theory]
+    [InlineData(1, 0, 1, 600)]
+    [InlineData(1, 0, 1, 2350)]
+    [InlineData(1, 0, 2, 600)]
+    [InlineData(1, 2, 28, 2400)]
+    [InlineData(1, 3, 28, 2600)]
+    [InlineData(3, 1, 14, 1200)]
+    public void AbsoluteDayInvertsTheTickEncoding(int year, int season, int day, int hhmm)
+    {
+        long tick = GameClock.ToTick(year, season, day, hhmm);
+
+        Assert.Equal(((long)year - 1) * 112 + season * 28L + day - 1, GameClock.ToAbsoluteDay(tick));
+    }
+
+    [Fact]
+    public void AbsoluteDayDoesNotRollOverAfterMidnight()
+    {
+        // The trap: a date runs 06:00 to 26:00, so 01:30 already carries a minute value above
+        // MinutesPerDay. Dividing the tick by the day length would report the following date.
+        long lateNight = GameClock.ToTick(1, 0, 2, 2530);
+        long nextMorning = GameClock.ToTick(1, 0, 3, 600);
+
+        Assert.Equal(1, GameClock.ToAbsoluteDay(lateNight));
+        Assert.NotEqual(lateNight / GameClock.MinutesPerDay, GameClock.ToAbsoluteDay(lateNight));
+        Assert.Equal(2, GameClock.ToAbsoluteDay(nextMorning));
+        Assert.Equal(GameClock.ToAbsoluteDay(lateNight) + 1, GameClock.ToAbsoluteDay(nextMorning));
+    }
 }

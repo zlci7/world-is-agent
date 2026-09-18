@@ -108,6 +108,10 @@ content pack 写入用户 Mods 目录        修改用户环境，超出能力�
 
 ### 2.6 后续：自主触发（已选路线，不在本阶段）
 
+> **本节路线已落地为一个独立小阶段：[延迟执行实机闭环技术开发方案](GameAgent%20MVP0%20Phase10%20延迟执行实机闭环技术开发方案.md)** —— 新增薄能力 `schedule_mail`（只产生 `TaskProposal`，不写信、不碰 SQLite），`create_task` 保持 proposal-gated，`send_mail` 语义不变，Runtime 侧零改动。截至该方案落笔，代码与自动化测试已完成，实机闭环待验证。
+>
+> 落地时收敛的一个决定：`when` 只支持 `tomorrow`（下一个游戏日 06:00），不提供 `later_today`。
+
 本阶段只验证"回合内工具选择"，因此 **agent 不会主动起意写第一封信**。这是已知且有意接受的范围边界：Runtime 今天只有两条开门路径。
 
 ```text

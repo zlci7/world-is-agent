@@ -6,6 +6,14 @@ public static class GameClock
 {
     public const string ClockId = "stardew.game_time.v1";
 
+    public const int MinutesPerDay = 1440;
+
+    /// <summary>
+    /// Minute of day a Stardew day starts on. A day runs 06:00 to 26:00, so one date reports minute
+    /// values from 360 up to 1560, and the last two hours are already past <see cref="MinutesPerDay"/>.
+    /// </summary>
+    public const int DayStartMinute = 360;
+
     public static long ToTick(int year, int seasonIndex, int dayOfMonth, int hhmm)
     {
         if (year < 1)
@@ -18,6 +26,17 @@ public static class GameClock
         long absoluteDay = checked(((long)year - 1) * 112 + seasonIndex * 28L + dayOfMonth - 1);
         return checked(absoluteDay * 1440 + ToMinute(hhmm));
     }
+
+    /// <summary>
+    /// The absolute day index a tick belongs to, inverting <see cref="ToTick"/>.
+    /// <para>
+    /// Not <c>tick / MinutesPerDay</c>. Because a date spans 06:00 to 26:00, the final two hours of
+    /// a day carry minute values above 1440: tick 2970 is 01:30 on absolute day 1, not 02:03 on day
+    /// 2. Shifting by the day start recovers the date the tick was built from exactly, for every
+    /// time the clock can report. A tick below the day start is not a time this clock produces.
+    /// </para>
+    /// </summary>
+    public static long ToAbsoluteDay(long tick) => (tick - DayStartMinute) / MinutesPerDay;
 
     public static int ToMinute(int hhmm)
     {

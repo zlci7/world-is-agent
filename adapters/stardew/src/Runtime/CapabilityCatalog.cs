@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using GameAgent.Protocol.V1Alpha2;
+using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Integrations.MailFramework;
 using GameAgent.Stardew.Tasks;
 using Google.Protobuf.WellKnownTypes;
@@ -35,6 +36,23 @@ public static class CapabilityCatalog
         "Use it when the NPC has something to tell the player that cannot be said face to face in " +
         "this conversation, such as a farewell, or a reply the player asked to receive later. " +
         "Do not use it while the player is standing here and the answer can simply be spoken.";
+
+    // Length limit comes from the capability so the advertised schema cannot drift from what the
+    // Adapter actually accepts.
+    private static readonly string ScheduleMailInputSchemaJson =
+        "{\"type\":\"object\",\"properties\":{" +
+        "\"intent\":{\"type\":\"string\",\"maxLength\":" + ScheduleMailCapability.MaxIntentLength + "}}," +
+        "\"required\":[\"intent\"],\"additionalProperties\":false}";
+
+    private const string ScheduleMailDescription =
+        "Plans one letter from this NPC to the player for the next in-game morning: it is delivered " +
+        "at 06:00 tomorrow, not now. Use it when the player asks to be told something later, or " +
+        "when there is something the NPC cannot say while the player is still standing here. " +
+        "intent is what the NPC means to tell the player, not the finished letter: the letter is " +
+        "written in the morning, from what the NPC knows then. Use send_mail instead when the " +
+        "letter should go out right now, and do not use either while the answer can simply be " +
+        "spoken. On success, confirm the plan in the next step by calling create_task with the " +
+        "returned proposal_ref; the letter is only planned once create_task succeeds.";
 
     public static bool RequiresTaskReady(string capability) =>
         capability is "resolve_meeting" or "move_to_landmark" or "wait_for_player";
@@ -101,6 +119,10 @@ public static class CapabilityCatalog
         // Published only when Mail Framework Mod actually resolved at GameLaunched. The model
         // should not see a tool this environment cannot execute; a rejection path still exists in
         // the handler as a defensive branch.
+        //
+        // schedule_mail ships with send_mail, never without it: planning a letter this
+        // environment cannot deliver would produce a durable task whose only consumer capability
+        // is missing, and it would fail at its deadline instead of at the call.
         if (includeMailCapability)
         {
             result.Capabilities.Add(new Capability
@@ -109,6 +131,15 @@ public static class CapabilityCatalog
                 Version = "0.1.0",
                 Description = SendMailDescription,
                 InputSchemaJson = SendMailInputSchemaJson,
+                ExecutionMode = ExecutionMode.Sync,
+                ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
+            });
+            result.Capabilities.Add(new Capability
+            {
+                Name = "schedule_mail",
+                Version = "0.1.0",
+                Description = ScheduleMailDescription,
+                InputSchemaJson = ScheduleMailInputSchemaJson,
                 ExecutionMode = ExecutionMode.Sync,
                 ConcurrencyMode = CapabilityConcurrencyMode.Sequential,
             });
