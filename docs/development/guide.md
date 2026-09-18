@@ -22,6 +22,10 @@ docs/        Status, guides, ADRs, phase plans, acceptance records
 scripts/     Local validation and helper scripts
 ```
 
+## Repository Model
+
+WIA is organized as Runtime + Protocol + Adapter. Adapters are logically independent of this repository's directory layout: they depend on a versioned protocol instead of on `adapters/stardew` sitting at a known path. See [logical-separation.md](logical-separation.md) for the work that removes the remaining layout coupling.
+
 ## Documentation Expectations
 
 Update docs in the same change when behavior changes:

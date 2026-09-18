@@ -9,6 +9,26 @@
 - 本版本不做完全自主 agent。自主目标生成、长时程自主规划、多 Agent 协作、自我改进、无人监督的长时间自主运行均不在范围内，也不为它们预留未验证的框架。
 - 新工作必须能对应到“对外可运行、可复现、可验证”或“公开事实源更准确”的收益。只有内部技术分层价值、且不影响对外结论的重构不做。
 - 稳定性优先：破坏已发布协议字段、配置格式或使用方式，必须有明确理由和用户授权，不随普通改动顺带进行。
+- 已授权的唯一例外是 **Phase A 逻辑分离**：解除 Adapter 对 monorepo 目录布局的依赖。该工作按 [docs/development/logical-separation.md](docs/development/logical-separation.md) 执行，不改变协议内容、仓库结构和 Mod 运行时标识。
+
+## 仓库模型
+
+WIA 按 Runtime + Protocol + Adapter 组织，分两阶段演进：
+
+```text
+Phase A（逻辑分离，已授权）
+    消除 Adapter 对仓库目录布局的依赖：显式协议依赖点、协议版本契约、脚本与布局解耦、脱离仓库构建验证。
+    物理上仍在同一仓库。
+
+Phase B（物理拆仓，未授权）
+    Adapter 迁往独立仓库 wia-adapter-<game>。
+    触发条件：出现第二个真实 Adapter 时优先拆；“Runtime 开始正式 Release”是强信号，但不是必须拆仓的条件。
+```
+
+- Runtime 主仓库保留 `world-is-agent`，不改名为 `wia-runtime`。
+- 独立 Adapter 仓库统一使用 `wia-adapter-<game>` 命名，例如 `wia-adapter-stardew-valley`。
+- 协议定义暂留在主仓库 `protocol/`，不单独拆仓；Adapter 通过版本化契约依赖它。
+- Mod 的 `UniqueID`、`EntryDll`、`AssemblyName` 等运行时标识与本条命名规范无关，属已发布契约，改动需单独授权。
 
 ## 基本工作方式
 
