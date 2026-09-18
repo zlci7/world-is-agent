@@ -244,6 +244,33 @@ B 段过程中出现过一次 `Runtime stream failed: StatusCode="Cancelled", De
 
 **边界：** 这里放宽的是玩家台词，不是系统 prompt。不得改 prompt 提示写信来凑通过；应先修 `description` / schema 再重采。
 
+### C1 第 1 次采样结果（2026-09-18，NPC=Linus，3/3 未选中）
+
+本次游戏会话共 6 个回合，其中 3 个是玩家台词回合（其余为纯交互回合）。模型在**每一个**回合都把 `send_mail` 放进了 Tool View（`accepted_tool_count: 9`、`turn_tool_names` 含 `send_mail`），但**一次都没有选它**：
+
+| 时间 | 回合 | 事件 | 模型选择 |
+| --- | --- | --- | --- |
+| 20:32:21 | C1-1 关系疏远期 | `player_said_to_npc` | `present_dialogue` |
+| 20:32:52 | C1-2 临别期 | `player_said_to_npc` | `present_dialogue` |
+| 20:33:06 | C1-3 未说出口期 | `player_said_to_npc` | `present_dialogue` |
+
+两次可见的输出（C1-2 与 C1-3）都当面把话说完，且内容与场景吻合：
+
+```text
+C1-2 → "路远就多带口水。山不挪窝，我一直在这儿。等你回来，露水还凉。"
+C1-3 → "还真有一句。谢谢你不拿我当怪人。每次你上山，我都当是好收成。"
+```
+
+`ActionResult status=Succeeded`、`TurnCompletion status=Completed`，**链路本身没有故障**——失败点在模型选择，不在能力发布或执行。
+
+**归因：能力描述与验收场景互斥。** `CapabilityCatalog.SendMailDescription` 的末句是：
+
+```text
+Do not use it while the player is standing here and the answer can simply be spoken.
+```
+
+而 C1 的三个场景里玩家**就站在 NPC 面前**、话可以当面说完——描述正在明确要求模型**不要**在这种情形下用信。C1-3 尤其说明问题：玩家已经给出"当面不好意思说"的框架（描述恰好把这类列为用信场景），模型仍然选择当面说出来。因此这不是"能力没发布"或"模型没看见"，而是**场景与描述不自洽**。
+
 ### C2 负向：不该发信时不调用（总纲硬验收）
 
 流程同 C1，期望相反。
