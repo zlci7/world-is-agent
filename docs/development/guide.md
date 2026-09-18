@@ -1,6 +1,8 @@
-# Contributing
+# Development Guide
 
 World Is Agent is experimental. Contributions should keep the Runtime / Protocol / Adapter boundary clear and keep public documentation aligned with implementation.
+
+Run commands from the repository root unless noted otherwise. Check commands live in [testing.md](testing.md).
 
 ## Development Principles
 
@@ -22,13 +24,13 @@ scripts/     Local validation and helper scripts
 
 ## Documentation Expectations
 
-Update docs in the same PR when behavior changes:
+Update docs in the same change when behavior changes:
 
-- User-facing capability or limit: update [docs/STATUS.md](docs/STATUS.md).
-- Public direction or positioning: update [README.md](README.md) and [docs/STATUS.md](docs/STATUS.md).
-- Architecture boundary or lifecycle concept: update [ARCHITECTURE.md](ARCHITECTURE.md) or the relevant ADR.
-- Setup or validation command: update [docs/development/testing.md](docs/development/testing.md).
-- Stardew-specific behavior: update [adapters/stardew/README.md](adapters/stardew/README.md).
+- User-facing capability or limit: update [../STATUS.md](../STATUS.md).
+- Public direction or positioning: update [../../README.md](../../README.md) and [../STATUS.md](../STATUS.md).
+- Architecture boundary or lifecycle concept: update [../../ARCHITECTURE.md](../../ARCHITECTURE.md) or the relevant ADR.
+- Setup or validation command: update [testing.md](testing.md).
+- Stardew-specific behavior: update [../../adapters/stardew/README.md](../../adapters/stardew/README.md).
 
 ## Naming
 
@@ -43,7 +45,7 @@ When editing `protocol/proto/gameagent.proto`:
 - Regenerate Go and C# bindings.
 - Run protocol static and generation checks.
 - Update docs that describe message semantics.
-- Keep Runtime and Adapter changes in the same feature PR when both sides must move together.
+- Keep Runtime and Adapter changes in the same change when both sides must move together.
 
 ## Adapter Changes
 
@@ -56,13 +58,7 @@ For Stardew changes:
 - Update adapter tests when protocol mapping, capability behavior, or dialogue UX changes.
 - Keep manual smoke test notes current.
 
-## Testing
-
-Use [docs/development/testing.md](docs/development/testing.md) for the current check list.
-
-At minimum, a PR should run the tests that cover the modified area and document any check that could not be run locally.
-
-## Pull Request Checklist
+## Checklist
 
 - Scope is clear and focused.
 - Runtime remains game-agnostic.
