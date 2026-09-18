@@ -142,17 +142,41 @@ StoreOptions.MaxTasksPerWorld   单世界任务上限
 
 当前配置面完全是手工的：`runtime/config/model.json`、`runtime/config/agent.json`、环境变量 `GAMEAGENT_MODEL_CONFIG` / `GAMEAGENT_AGENT_CONFIG`，且 runtime **没有任何 HTTP 面**。这既是"对外可运行"的最大缺口，也是本子阶段的起点。
 
-### 3.2 关键前置：Runtime 必须脱离 cwd
+### 3.2 关键前置：Runtime Bootstrap 与统一 Data Root
 
-已核实的事实（`runtime/cmd/server/main.go`）：
+三件已核实的事实（`runtime/cmd/server/main.go`）：
 
 ```text
-trace 路径硬编码 "runtime/.local/traces.jsonl"，依赖从仓库根目录启动
-gRPC 端口硬编码 127.0.0.1:50051
-数据目录与配置路径没有统一的定位规则
+启动顺序     main 先加载 model provider，失败即 log.Fatalf，此时还没有任何 server
+             → 一个什么都没配置的新用户，会在 Web UI 出现之前直接退出
+凭证来源     API Key 只接受 "env:VAR" 形式，不接受直接写入的 key
+路径         trace 硬编码 "runtime/.local/traces.jsonl"，依赖从仓库根目录启动
+             gRPC 端口硬编码 127.0.0.1:50051
 ```
 
-**下载一个二进制、在任意目录启动，当前会写错位置或直接失败。** 这是 10.2 的入场券，不是可选项。
+因此这里有**两个**必须解决的入口问题，不是一个：
+
+**① 控制面必须先于模型就绪。** Runtime 必须能在"尚未配置模型"的状态下启动本地 HTTP 面，让首次运行向导完成配置与密钥写入，之后 Agent Core 才进入 Ready。把模型加载失败当成致命错误，等于让向导永远没有机会出现。
+
+```text
+Bootstrap / Control Plane
+        ↓  即使尚未配置 Model 也能启动 HTTP UI
+用户完成配置与 Secret
+        ↓
+Runtime Agent Core 进入 Ready
+```
+
+**② 所有路径必须从统一的 App/Data Root 解析。** 需要脱离 cwd 的不止 trace：
+
+```text
+model.json / agent.json / trace / memory SQLite / task SQLite / definition root / 未来的 secrets
+```
+
+先定义 App/Data Root（含默认位置与可覆盖方式），再让上述每一项都从它解析。逐项打补丁会在 10.2 的后续工作中反复返工。
+
+**下载一个二进制、在任意目录启动，当前会写错位置或直接失败。** 这两条是 10.2 的入场券，不是可选项。
+
+> 本子阶段的第一项工作从"Runtime 脱离 cwd"改名为 **Runtime Bootstrap & Data Root**——它同时覆盖启动顺序与路径解析，原名只说了后一半。
 
 ### 3.3 技术选型与优先级（已确认）
 
@@ -273,8 +297,8 @@ DeepSeek API Key      Configured ✓      [ Replace ]
 
 | 步骤 | 内容 | 为什么在这个位置 |
 | --- | --- | --- |
-| 10.2-1 | Runtime 运行形态：数据目录、端口、配置路径可配置；可作为独立产物在任意目录运行 | 当前 trace 路径硬编码且依赖从仓库根启动，不做这个后面都不成立 |
-| 10.2-2 | 极简本地 HTTP 面 + 资产内嵌：health / status / turn 列表；`//go:embed` 前端产物 | 客户端要有东西可连；同时它就是 10.1 与 10.3 的调试面 |
+| 10.2-1 | Runtime Bootstrap & Data Root：控制面先于模型就绪（未配置也能启动 HTTP）；统一 App/Data Root，数据目录、端口、配置路径、trace、SQLite、definition root 全部从它解析 | 当前未配置模型会在任何 server 之前 `log.Fatalf`，且 trace 路径硬编码依赖从仓库根启动；不做这个后面都不成立 |
+| 10.2-2 | 极简本地 HTTP 面 + 资产内嵌：health / status / turn 列表；`//go:embed` 前端产物 | 客户端要有东西可连；同时它就是 10.1 与 10.3 的调试面。**它同时是 10.2-1 控制面的载体，不是两套 HTTP 面** |
 | 10.2-3 | 首次运行向导与依赖体检：写配置与 key、检查 .NET / SMAPI / 游戏路径 / key 有效性 | 这一步做完，"外人能跑起来"才成立 |
 | 10.2-4 | 可视化：AgentTurn 时间线（复用现有 JSONL trace）、对话记录、任务与记忆查看 | 这是"好看"，前三步才是"能用" |
 
@@ -387,11 +411,16 @@ Runtime-facing 执行策略当前承载在 `Capability.extensions.gameagent.tool
 测试覆盖有限           现有断言只覆盖 Stardew present_dialogue 这一个使用点，不能替未来的 Adapter 挡住拼写错误
 ```
 
-**判定时机就是本子阶段。** 第二个 Adapter 是第一个非 Stardew 的 policy 消费者，只有它能回答"key 集合是否已经稳定"：
+**判定时机就是本子阶段。** 第二个 Adapter 是第一个非 Stardew 的 policy 消费者，只有它能回答"key 集合是否已经稳定"。但要注意**复用不等于成熟**：第二个 Adapter 复用现有 key 只能证明"这不是 Stardew-only"，不能证明"字段集合已经定型"。因此判据分三段，而不是二值判断：
 
 ```text
-第二个 Adapter 需要 Stardew 没有的 policy key   → key 集合仍在演化，继续留在 extensions
-第二个 Adapter 需要的正好是现有那两个 key       → 集合已稳定，提升为 Capability.tool_policy 一等字段
+第二个 Adapter 需要 Stardew 没有的新 key
+    → key 集合仍在演化，继续留在 extensions
+
+第二个 Adapter 需要的正好是现有那两个 key
+    → 进入"可以提升"的候选状态，但不自动提升
+    → 再判断：语义是否已稳定、字符串 key 解析是否已产生真实维护成本
+    → 两项都成立才提升
 ```
 
 判据依据的是可观察事实，不是"感觉稳定了"。若判定为提升，必须满足：
@@ -452,7 +481,7 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 
 以下工作**可以**与前一子阶段并行，因为它们不依赖前者的结论：
 
-- 10.2-1（Runtime 脱离 cwd）是纯参数化，不依赖任何 UI 决策，建议在 10.1 期间顺手完成——10.1 会反复重启 Runtime，受益直接。
+- 10.2-1（Runtime Bootstrap & Data Root）不依赖任何 UI 决策，建议在 10.1 期间顺手完成——10.1 会反复重启 Runtime，受益直接。注意 10.2-1 的"未配置也能启动 HTTP"与 10.2-2 是同一套 HTTP 面，先做 10.2-1 时可以只做最小 control plane，界面留到 10.2-2。
 - 10.3 的游戏选型调研可以提前开展，但**接入实现**必须等 10.1 的 Adapter 接入边界稳定。
 - 10.1 的实机验证与 10.2-3 的环境体检共用"检查依赖是否就绪"的逻辑，避免重复实现。
 

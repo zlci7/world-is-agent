@@ -1389,7 +1389,7 @@ Runtime 断线时游戏照常运行和保存，当前临时控制权安全释放
 - 第三方 mod 能力作为可选依赖接入（首个且必做：MailFrameworkMod 邮件能力），遵守跨 Mod 集成边界。
 - 模型自主调用的完整证据链：能力进入 Tool View、模型主动产生 ToolCall、真实执行、结果回灌。自主指 Turn 内 Tool Selection，不含 Background Trigger 或 NPC 自发目标。因此 10.1 **不会**出现 agent 主动起意写第一封信；自主触发已选定复用 Phase 9 durable task + wake 作为后续独立小阶段，路线与前置见 [Phase10 总方案](../phase10/GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) §2.6。
 - 写类能力（第三方 mod 动作）与"能力不适用时不应调用"的负向用例为硬验收；读类能力接入为可选 follow-up。
-- Runtime 脱离 cwd 依赖：数据目录、端口、配置路径可配置，可作为独立产物运行。
+- Runtime Bootstrap & Data Root：控制面可先于模型就绪（未配置也能启动本地 HTTP 面），数据目录、端口、配置路径、trace、SQLite、definition root 统一从一个 App/Data Root 解析，可作为独立产物在任意目录运行。
 - 本地 Web UI（Vue 3 + TypeScript + Vite，`//go:embed` 进 runtime 二进制）：启动后自动打开浏览器、免安装包分发、首次运行向导、依赖体检、Turn 时间线可视化。
 - 只服务同一台电脑上的本地浏览器；不做 Mobile、LAN 或远程访问。
 - 第二个真实游戏 Adapter，并完成 Stardew Adapter 的物理拆仓（Phase B，见下）。
