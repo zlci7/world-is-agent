@@ -29,8 +29,10 @@ coverage.out
 # Local private config overrides
 runtime/config/*.local.json
 
-# Agent local instructions
-AGENTS.md
+# AGENTS.md is tracked: it is the repository's standing agent instructions.
+
+# Local-only agent instructions
+AGENTS.local.md
 
 docs/roadmap/
 

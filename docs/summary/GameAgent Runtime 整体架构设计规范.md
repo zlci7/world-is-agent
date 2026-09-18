@@ -1,23 +1,25 @@
-# GameAgent Runtime 整体架构设计规范
+# World Is Agent (WIA) Runtime 整体架构设计规范
 
-> **Public Documentation Note (2026-09-01):** 根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md)、[ROADMAP.md](../../ROADMAP.md) 和 [docs/STATUS.md](../STATUS.md) 是 GitHub 首次读者的公开事实源。本文保留为详细架构基线和设计约束资料。
+> **Public Documentation Note (2026-09-01):** 根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md) 和 [docs/STATUS.md](../STATUS.md) 是 GitHub 首次读者的公开事实源。本文保留为详细架构基线和设计约束资料。
 >
 > **Version:** v0.7
 > **Status:** Architecture Baseline
 > **Baseline Evidence:** Phase1 Accepted + Phase2 Accepted + Phase3 Accepted + Phase4 Accepted + Phase5 Accepted + Phase5.5 Accepted + Phase5.6 Accepted + Phase6 Accepted + Phase6.5 Accepted
 > **Revision Source:** [GameAgent 多游戏兼容性与 Agent Binding 决策](./GameAgent 多游戏兼容性与 Agent Binding 决策.md)（2026-08-22）；[GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR](../phase6/GameAgent MVP0 Phase6 Async Action Protocol Strategy ADR.md)（2026-08-31）；[GameAgent MVP0 Phase6.5 技术开发与验收方案](../phase6.5/GameAgent MVP0 Phase6.5 技术开发与验收方案.md)（2026-09-02 Accepted）
-> **Purpose:** 定义 GameAgent 的长期架构边界、核心运行模型、模块职责、依赖方向和演进约束。
+> **Purpose:** 定义 WIA 的长期架构边界、核心运行模型、模块职责、依赖方向和演进约束。
 > 本文中的 `MUST / MUST NOT / SHOULD / MAY` 为规范性关键词。
+>
+> **Current Positioning Note (2026-09-18):** WIA MVP0 已定型，当前工作方向是固定该版本并完成开源产品化，见仓库根目录 `AGENTS.md`。本文的架构边界继续有效；文中以 Phase 划分承载的工作组织方式属于当时的开发模型，不代表当前交付节奏。
 
 ------
 
 # 1. 文档定位
 
-本文档是 GameAgent 后续所有 Runtime / Protocol / Adapter 开发阶段的上位架构约束。
+本文档是 WIA 后续所有 Runtime / Protocol / Adapter 开发的上位架构约束。
 
 它回答：
 
-> **GameAgent 长期应该保持什么结构，以及后续加入 Memory、Multi-step、异步 Action、Scheduler、Reconnect 或更多 Game Adapter 时，哪些核心边界不能被破坏。**
+> **WIA 长期应该保持什么结构，以及后续加入 Memory、Multi-step、异步 Action、Scheduler、Reconnect 或更多 Game Adapter 时，哪些核心边界不能被破坏。**
 
 本文档不负责规定：
 
@@ -35,12 +37,12 @@
 
 ```text
 Protocol 设计规范
-Roadmap / 阶段规划
+阶段规划（历史阶段划分与验收范围）
 Phase N 技术开发与验收方案
 具体模块设计文档
 ```
 
-负责。
+负责；当前版本的迭代与交付流程见根目录 `AGENTS.md`。
 
 架构层级关系：
 
@@ -49,9 +51,7 @@ Architecture Baseline
         ↓
 Protocol / Runtime Contracts
         ↓
-Roadmap / Phase Scope
-        ↓
-Phase N Technical Plan
+Iteration Scope
         ↓
 Implementation
         ↓

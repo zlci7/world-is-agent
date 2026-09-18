@@ -5,7 +5,7 @@
 > **Phase:** Phase7.0 Context Contract Entry Gate
 > **Roadmap Baseline:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md) v1.9
 > **Architecture Baseline:** [GameAgent Runtime 整体架构设计规范](../summary/GameAgent%20Runtime%20整体架构设计规范.md) v0.7
-> **Context Design Input:** [Context架构设计](../Context架构设计.md) v0.3 Architecture Draft
+> **Context Design Input:** [Context架构设计](../summary/Context/Context架构设计.md) v0.3 Architecture Draft
 > **Code Baseline:** `main` @ `e4f3490`
 > **Review Result:** Accepted
 > **Reviewer:** zlc7
@@ -74,8 +74,8 @@ Phase7.0 按以下文档分工执行：
 | --- | --- |
 | `docs/summary/GameAgent 阶段规划.md` | 承载 Phase7 阶段拆分、依赖、主流程交接和阶段范围。 |
 | `docs/phase7/GameAgent MVP0 Phase7.0 技术开发与验收方案.md` | 承载 Phase7.0 单阶段方案，只做入口检查、文档对齐、代码事实核对和进入 Phase7.1 的放行条件。 |
-| `docs/Context架构设计.md` | 继续作为长期 Context 语义、Scope、Authority 和演进边界草案，只标注 Phase7 当前采用的规范子集。 |
-| `ROADMAP.md` / `docs/STATUS.md` / `docs/README.md` | 对外说明当前开发重心、已支持能力、未支持能力和阶段文档入口。 |
+| `docs/summary/Context/Context架构设计.md` | 继续作为长期 Context 语义、Scope、Authority 和演进边界草案，只标注 Phase7 当前采用的规范子集。 |
+| `docs/STATUS.md` / `docs/README.md` | 对外说明当前开发重心、已支持能力、未支持能力和阶段文档入口。 |
 
 Phase7.0 不新增阶段文件夹，不新增单独的 Phase7 Context 总纲文件。Phase7.0 到 Phase7.5 的阶段方案继续放在 `docs/phase7/`。
 
@@ -226,7 +226,7 @@ docs/STATUS.md
 docs/summary/GameAgent 阶段规划.md
     Phase7 总体规划和跨阶段共享边界
 
-docs/Context架构设计.md
+docs/summary/Context/Context架构设计.md
     长期 Context 架构草案
 ```
 
@@ -505,7 +505,7 @@ Phase7.0 可以提交 review 的最低条件：
 5. 非目标清单明确，不把后续代码实现混进 Phase7.0。
 6. `ROADMAP.md` 的 Now 指向 Phase7 Context Subsystem。
 7. `docs/STATUS.md` 没有提前声称 Definition-backed context 已实现。
-8. `docs/Context架构设计.md` 保持 Draft，并明确 Phase7 Normative Subset。
+8. `docs/summary/Context/Context架构设计.md` 保持 Draft，并明确 Phase7 Normative Subset。
 9. Canonical / Validated Target EntityRef、Tool diagnostics、Definition fallback 和 Transcript 语义没有责任空洞。
 10. 用户 review 通过后再标记 `Accepted`。
 

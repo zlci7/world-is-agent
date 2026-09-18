@@ -25,10 +25,14 @@ scripts/     Local validation and helper scripts
 Update docs in the same PR when behavior changes:
 
 - User-facing capability or limit: update [docs/STATUS.md](docs/STATUS.md).
-- Public direction: update [ROADMAP.md](ROADMAP.md).
+- Public direction or positioning: update [README.md](README.md) and [docs/STATUS.md](docs/STATUS.md).
 - Architecture boundary or lifecycle concept: update [ARCHITECTURE.md](ARCHITECTURE.md) or the relevant ADR.
 - Setup or validation command: update [docs/development/testing.md](docs/development/testing.md).
 - Stardew-specific behavior: update [adapters/stardew/README.md](adapters/stardew/README.md).
+
+## Naming
+
+Use `World Is Agent` and `WIA` in public-facing text. Identifier namespaces (`gameagent`, `GameAgent.Protocol`, `GameAgent.Stardew`, `GameAgentStardew`) are published compatibility and build contracts: keep them as they are, and do not rename them as part of a documentation or branding change. Historical phase records under `docs/` keep their original wording.
 
 ## Protocol Changes
 

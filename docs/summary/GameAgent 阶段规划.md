@@ -1,6 +1,8 @@
 # GameAgent 阶段规划
 
-> **Public Documentation Note (2026-09-01):** 根目录 [ROADMAP.md](../../ROADMAP.md) 和 [docs/STATUS.md](../STATUS.md) 是当前公开 Roadmap 与能力状态入口。本文保留为阶段规划、阶段验收和内部开发节奏资料。
+> **Public Documentation Note (2026-09-01):** [docs/STATUS.md](../STATUS.md) 是当前公开能力状态入口。本文保留为阶段规划、阶段验收和内部开发节奏资料。
+>
+> **Positioning Note (2026-09-18):** WIA MVP0 已定型，当前工作方向是固定该版本并完成开源产品化，见根目录 `AGENTS.md`。本文作为阶段基线与内部排期记录保留；Phase9 是最后一个已完成阶段，后续阶段划分不构成继续开发的授权，当前迭代与交付流程以 `AGENTS.md` 为准。
 >
 > **Version:** v1.15
 > **Status:** Roadmap Baseline

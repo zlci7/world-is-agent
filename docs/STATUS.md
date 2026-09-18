@@ -2,9 +2,11 @@
 
 World Is Agent is in experimental MVP0 development.
 
+MVP0 is now frozen for release: the current version is stabilized and documented for external use, and the project is not pursuing a fully autonomous agent (self-directed goals, long-horizon autonomous planning, or multi-agent orchestration) in this version. See `AGENTS.md` for the current working boundaries.
+
 This document is the public source of truth for current repository capabilities, validation scope, and known limits.
 
-Last updated: 2026-09-08.
+Last updated: 2026-09-18.
 
 ## Validation Scope
 

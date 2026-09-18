@@ -9,7 +9,6 @@ Start here when you want the current repository state:
 - [Project README](../README.md)
 - [Architecture](../ARCHITECTURE.md)
 - [Status](STATUS.md)
-- [Roadmap](../ROADMAP.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Testing Guide](development/testing.md)
 
@@ -36,14 +35,13 @@ Phase documents are implementation planning and validation records:
 - [Phase6.5](phase6.5/)
 - [Phase7](phase7/)
 
-The root [ROADMAP.md](../ROADMAP.md) is the public roadmap. Phase documents can contain internal terminology, temporary implementation plans, and historical acceptance details.
+[docs/STATUS.md](STATUS.md) is the public source of truth for current capability status and known limits. Phase documents can contain internal terminology, temporary implementation plans, and historical acceptance details, including references to documents that no longer exist in the repository; those records are kept as written.
 
 ## Exploratory Notes
 
 Exploratory documents may contain older names, open questions, or draft ideas:
 
-- [Context Architecture](Context架构设计.md)
-- [Context Ideas](Context借鉴思路及亮点.md)
+- [Context Architecture](<summary/Context/Context架构设计.md>)
 - [Compatibility Discussion](兼容性探讨.md)
 - [Adapter Notes](adapter/)
 - [Archive](archive/)
