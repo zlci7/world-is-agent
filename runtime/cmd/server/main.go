@@ -34,6 +34,9 @@ func main() {
 	} else {
 		log.Printf("GameAgent agent core is not ready (%s): %s", runtime.State(), runtime.Reason())
 	}
+	if root := runtime.AgentConfig().DefinitionCatalogRoot; root != "" {
+		log.Printf("GameAgent definition catalog root: %s", root)
+	}
 
 	process, err := newGatewayRuntime(context.Background(), runtime)
 	if err != nil {

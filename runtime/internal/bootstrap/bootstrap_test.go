@@ -211,6 +211,21 @@ func TestConfigureInstallsTheAgentCoreOnce(t *testing.T) {
 	}
 }
 
+func TestCloseReleasesTheTraceRecorderOnce(t *testing.T) {
+	root := t.TempDir()
+	runtime, err := bootstrap.Open(root, stubEnv(nil))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	if err := runtime.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatalf("close must be idempotent: %v", err)
+	}
+}
+
 func TestUnusableModelConfigurationIsReported(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, "model.json", `{"provider":"not-a-provider"}`)
