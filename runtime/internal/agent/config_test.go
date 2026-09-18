@@ -337,7 +337,9 @@ func TestStardewTaskExecutionBudget(t *testing.T) {
 	if defaults.AsyncActionTimeout != 45*time.Second || defaults.TurnTimeout != 90*time.Second {
 		t.Fatalf("generic timeout defaults changed: async=%s turn=%s", defaults.AsyncActionTimeout, defaults.TurnTimeout)
 	}
-	if cfg.MaxSteps != 3 || cfg.MaxAsyncActionsPerTurn != 1 {
+	// 5 steps: a mail turn writes a letter, speaks and emotes; at 3 the model ran
+	// out of steps before it could settle, and the turn was reported as failed.
+	if cfg.MaxSteps != 5 || cfg.MaxAsyncActionsPerTurn != 1 {
 		t.Fatalf("model execution limits changed: steps=%d async=%d", cfg.MaxSteps, cfg.MaxAsyncActionsPerTurn)
 	}
 }
