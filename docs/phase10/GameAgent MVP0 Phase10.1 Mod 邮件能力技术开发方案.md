@@ -4,7 +4,7 @@
 > **Date:** 2026-09-18
 > **Phase:** Phase10.1 Mod 能力接入与自治调用验证
 > **目标:** 让模型在一个已触发的 AgentTurn 内自主从 Tool View 选中并执行由第三方 mod 提供的 `send_mail`，完成"注册信件 → 立即投递 → 玩家读信 → 状态变化"闭环
-> **Scope:** 首个第三方 mod 能力接入；仅文本、无附件、禁止游戏命令
+> **Scope:** 首个第三方 mod 能力接入；仅文本、无附件、禁止游戏命令；只验证回合内工具选择，不含自主触发
 > **Decision Record:** 立即投递（反射 `MailController.UpdateMailBox()`，无备选路径）；`send_mail` 仅在 MFM 可用时发布；安全边界由 §3 **白名单**输入校验承担，校验先于任何 MFM 调用；验收包含人设一致性；**能力默认直接执行，不引入"需确认"字段**（当前没有向玩家请求确认的交互机制，该字段没有执行点）。
 > **Protocol Baseline:** `gameagent.protocol.v1alpha2`（本方案不改协议）
 > **Parent Plan:** [Phase10 技术开发与验收总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)
@@ -41,6 +41,9 @@
 不做 AutoOpen     跳过信件 UI 会削弱证据强度
 不做回信 / ReplyConfig
 不做 content pack 不通过写 mail.json 的方式接入（见 §4.3）
+不做自主触发       只验证回合内工具选择；agent 不会主动起意写第一封信，
+                   后续路线见 Phase10 总方案 §2.6
+不做读类能力       非硬验收；MFM 若无可低成本可读状态则整体留作 follow-up
 不改协议            action capability 与 arguments 已是通用结构
 不改 Runtime       Runtime 生产代码不含任何游戏工具名分支
 ```
@@ -365,12 +368,31 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 
 1. 确认 `Mods/MailFrameworkMod` 与 `Mods/GameAgentStardew` 均加载，SMAPI 日志无报错。
 2. 确认 SMAPI 日志中的 CapabilityList **包含 `send_mail`**（条件发布生效）。
-3. 加载存档，触发一次 NPC 对话，使 agent 有自主决策机会。
+3. 加载存档，按 §5.5 的动机场景与 NPC 对话——不要随口闲聊，否则模型没有理由选择 `send_mail`。
 4. 观察 SMAPI 日志：`send_mail` 是否被模型自主选择（不是被 prompt 点名）。
 5. 确认信件已投递（`HasCustomMail()` / 日志），且信件 id 符合 §4.1 的生成规则。
 6. 走近信箱读信，确认文本与模型输出一致、无 token 被解析。
 7. 确认 `mailReceived` 含 letter.Id。
 8. 临时移出 `Mods/MailFrameworkMod` 重进游戏，确认 adapter 正常加载、`send_mail` 不在 CapabilityList 中、不报错（负向验证）。
+
+---
+
+### 5.5 写信动机场景设计（本轮的验收风险）
+
+退出条件 §7 第 2 条要求模型在系统 prompt 不点名 `send_mail` 的情况下自行选中它。**这条有真实的失败风险**：一次普通对话里，模型没有任何理由去写信，它可能连这个工具都不会看一眼。不做场景设计，实机很可能反复出现"跑了很多次都没选中"。
+
+因此实机采样必须使用**能产生写信动机的玩家台词**，而不是随便聊两句：
+
+```text
+动机类型      玩家台词示例（均不出现"写信""发邮件"等工具语义）
+关系疏远期    你最近是不是很忙？我好久没收到你的消息了。
+临别期        我明天要出远门，可能好些天见不到你。
+未说出口期    有什么想跟我说、但当面不好意思说的吗？
+```
+
+**边界：这里放宽的是玩家台词，不是系统 prompt。** 第 2 条的"不点名"指的是系统 prompt 不写工具名；玩家表达自己的需求属于正常对话，不是点名。两者不能混为一谈——把系统 prompt 改成提示写信，等于放弃了这条验收。
+
+**若仍不选中**：记录实际对话、模型输出与工具选择，作为失败证据分析，**不放宽"不点名"条件来凑通过**。若确认问题出在能力描述或工具清单，先修 `description` / schema 再重采。
 
 ---
 
@@ -393,7 +415,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
 ## 7. 退出条件
 
 1. MFM 可用时 `send_mail` 进入 Tool View；MFM 未安装时该能力不发布、adapter 正常加载，调用侧防御分支以明确 code REJECTED。
-2. 在一个由玩家或游戏事件触发的 AgentTurn 内，系统 prompt 不点名 `send_mail`，模型自行从 Tool View 选中并调用它（有 SMAPI 日志证据）。这验证的是 Turn 内 Tool Selection，不要求 Background Trigger 或 NPC 自发目标。
+2. 在一个由玩家或游戏事件触发的 AgentTurn 内，系统 prompt 不点名 `send_mail`，模型自行从 Tool View 选中并调用它（有 SMAPI 日志证据）。动机由玩家台词制造，场景见 §5.5。这验证的是 Turn 内 Tool Selection，**不要求 Background Trigger 或 NPC 自发目标**；自主触发的路线见 [Phase10 总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) §2.6。
 3. 信件成功投递，玩家可读，`mailReceived` 记录 letter.Id。
 4. §3 白名单校验与 §4.1 id 生成规则均有自动化测试覆盖，超范围字符与注入样本被拒。
 5. 人设一致性按 §5.2 完成一轮采样与判定。

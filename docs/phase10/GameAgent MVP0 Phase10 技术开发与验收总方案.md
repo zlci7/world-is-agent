@@ -79,8 +79,8 @@ MFM → send_mail → Capability → AgentTurn → ToolCall → 真实信件
 ### 2.3 范围
 
 - `send_mail(title?, body)`：仅文本、无附件、无 recipe、无 AutoOpen，立即投递。
-- Adapter 侧输入校验（信件正文进入游戏 `TokenParser`，文本即命令通道）。
-- MFM 通过 SMAPI `GetApi` 作为**可选依赖**接入；未安装时 adapter 正常加载、能力不发布或以明确 code 拒绝。
+- Adapter 侧**白名单**输入校验（信件正文进入游戏 `TokenParser`，文本即命令通道）。
+- MFM 通过 SMAPI `GetApi` 作为**可选依赖**接入；未安装时 adapter 正常加载，且 `send_mail` 不进入 Tool View。
 - 模型自主调用的证据链：能力进入 Tool View → 模型主动产生 ToolCall → 真实执行 → 结果回灌 → 影响下一步决策。
 - 读类能力接入为可选 follow-up，不作为本阶段硬验收（理由见 §2.2）。
 
@@ -96,15 +96,39 @@ content pack 写入用户 Mods 目录        修改用户环境，超出能力�
 
 ### 2.5 退出条件
 
-1. `send_mail` 进入 Tool View；MFM 未安装时以明确 code 拒绝且 adapter 不崩溃。
-2. 在一个由玩家或游戏事件触发的 AgentTurn 内，系统 prompt 不点名 `send_mail`，模型自行从 Tool View 选中并调用它（有 SMAPI 日志证据）。
+1. MFM 可用时 `send_mail` 进入 Tool View；MFM 未安装时该能力不发布且 adapter 正常加载。
+2. 在一个由玩家或游戏事件触发的 AgentTurn 内，系统 prompt 不点名 `send_mail`，模型自行从 Tool View 选中并调用它（有 SMAPI 日志证据）。动机由玩家台词制造，见 [10.1 方案](GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md) §5.5。
 3. 信件成功投递，玩家可读，`mailReceived` 记录 letter.Id。
-4. 文本注入有自动化测试覆盖，注入样本被拒。
+4. 白名单文本校验有自动化测试覆盖，超范围字符与注入样本被拒。
 5. 负向用例通过：能力不适用时模型不调用。
 6. [mod-capability-integration.md](../development/mod-capability-integration.md) §7 检查清单全部满足。
 7. （可选）读类能力接入并进入 Observation。
 
 不要求任何形式的 Background Trigger、Autonomous Goal 或 NPC 自发任务。
+
+### 2.6 后续：自主触发（已选路线，不在本阶段）
+
+本阶段只验证"回合内工具选择"，因此 **agent 不会主动起意写第一封信**。这是已知且有意接受的范围边界：Runtime 今天只有两条开门路径。
+
+```text
+Loop.HandleEvent      由 adapter GameEvent 驱动；adapter 目前只发玩家交互类事件
+Loop.HandleTaskWake   由 Runtime 内的任务调度器按游戏时钟驱动，只对已存在的任务生效
+```
+
+自主触发留作 10.1 之后的**独立小阶段**，已选定路线为**复用 Phase 9 的 durable task + wake**，理由是频控全部白送：
+
+```text
+TaskSpec.WakeAt / NextWakeAt    何时唤醒（游戏时钟）
+TaskSpec.DeadlineAt             硬截止，NextWakeAt 超过即非法 → 有界循环，不会变成无限自主运行
+Admission.MaxActivePerOwner     单 owner 活跃任务上限
+StoreOptions.MaxTasksPerWorld   单世界任务上限
+```
+
+唤醒回合的 tool view 由 environment catalog 构建（`runtime/internal/agent/task_wake.go`），`send_mail` 在唤醒回合本来就可用，因此不需要为它改 Runtime 核心。
+
+**该阶段开工前必须先查清一件事**：新建一个能产出 `TaskProposal` 的能力，是纯 Adapter 改动，还是也要动 Runtime 的 proposal 注册路径。`create_task` 要求 `Source.Kind == SourceKindInteraction` 且本回合已有成功 proposal（`runtime/internal/tool/task_tools.go`），而今天唯一产出 proposal 的是 `resolve_meeting`；`proposals` map 由谁填充尚未查清。
+
+**频控判定必须放 Adapter 的确定性闸门，不能交给模型。** 模型没有可靠的"我这周已发过几封"的时间感；正确分层是 Adapter 决定"该不该发"，模型只决定"写什么"。
 
 ---
 
@@ -483,6 +507,7 @@ Adapter 是事实来源                   能力、schema、description、执行
 | 9 | 静态加密是否用 OS 密钥库（DPAPI 等） | 纵深防御增强项，不改变 §3.4.2 的硬约束；由 10.2 子方案决定 |
 | 10 | 10.1 读类 follow-up 是否本轮做 | 非硬验收；若 MFM 有低成本可读状态可顺带验证 |
 | 11 | `tool_policy` 是否提升为 `Capability.tool_policy` 一等字段 | 由第二个 Adapter 的实际 policy 需求判定，判据见 §4.5；这是 10.3 的退出条件之一，不是可选项 |
+| 12 | 自主触发的实现路线 | 已选定：复用 Phase 9 durable task + wake，作为 10.1 之后的独立小阶段。10.1 不含 Background Trigger，前置待查项见 §2.6 |
 
 ---
 
