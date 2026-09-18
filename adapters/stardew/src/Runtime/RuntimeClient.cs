@@ -42,10 +42,6 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
     private readonly MeetingWaitMonitor meetingWaitMonitor;
     private readonly NpcInteractionLifecycle taskInteractionLifecycle;
     private readonly Dictionary<OperationKey, ActiveTaskOperation> activeTaskActions = new();
-    // The in-game day each NPC last planned a letter on. In memory only: losing it across a
-    // restart can admit one duplicate plan for the same day, which is a refused duplicate rather
-    // than a lost letter, and the Runtime still bounds active tasks per owner on its own side.
-    private readonly Dictionary<string, long> lastScheduledMailDay = new(StringComparer.Ordinal);
     private readonly TaskInteractionConversationIndex taskInteractionConversations = new();
     private readonly TaskEvidenceInbox deferredTaskEvidence = new();
     private readonly ActionCancellationRegistry actionCancellationRegistry = new();
@@ -1036,12 +1032,6 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
                     return;
                 }
 
-                if (request.Capability == "schedule_mail")
-                {
-                    this.HandleScheduleMailAction(request);
-                    return;
-                }
-
                 result = request.Capability switch
                 {
                     "emote" => this.HandleEmoteAction(request),
@@ -1444,63 +1434,6 @@ public sealed class RuntimeClient : IDisposable, ICheckpointTransport
                 ProtocolMapper.BuildRejectedActionResult(request, outcome.Code, outcome.Message),
             _ => ProtocolMapper.BuildFailedActionResult(request, outcome.Code, outcome.Message),
         };
-    }
-
-    /// <summary>
-    /// schedule_mail: decide whether this NPC may plan a letter for tomorrow morning, and hand the
-    /// Runtime the game-clock window. Nothing is written to the mailbox here — the letter does not
-    /// exist yet, and its text is written in the wake turn from what the NPC knows then.
-    /// <para>
-    /// The gate is the Adapter's, not the model's: the model cannot see Runtime tasks, and it has
-    /// no reliable sense of how many letters it already planned today. The Runtime bounds a second
-    /// dimension on its own side through one-active-task-per-owner admission.
-    /// </para>
-    /// </summary>
-    private void HandleScheduleMailAction(ActionRequest request)
-    {
-        try
-        {
-            // Planning is an agreement made to the player who is here, so it belongs to an
-            // interaction turn exactly like resolve_meeting does. A wake turn carrying task scope
-            // cannot plan the next one.
-            if (request.TaskSource is not null)
-            {
-                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_task_source", "schedule_mail requires a current player interaction"), request.Capability);
-                return;
-            }
-            if (!this.TryGuardInteractionContext(request, requireProximity: true, out NPC? npc, out InteractionContextSnapshot? interaction, out ActionResult? rejected))
-            {
-                this.SendActionResult(rejected ?? throw new InvalidOperationException("interaction guard rejected without ActionResult"), request.Capability);
-                return;
-            }
-
-            string npcEntityId = interaction?.NpcEntityId ?? ProtocolMapper.ToNpcEntityId(npc ?? throw new InvalidOperationException("interaction guard passed without NPC"));
-            RuntimeWorldSnapshot world = this.worldContext.Current ?? throw new InvalidOperationException("world context is unavailable");
-            string intent = ProtocolMapper.RequireScheduleMailIntent(request);
-            long? lastScheduledDay = this.lastScheduledMailDay.TryGetValue(npcEntityId, out long scheduledDay)
-                ? scheduledDay
-                : null;
-            ScheduleMailOutcome outcome = ScheduleMailCapability.Decide(this.MailIntegration is not null, intent, world.NowTick, lastScheduledDay);
-
-            if (outcome.Disposition != ScheduleMailDisposition.Succeeded)
-            {
-                this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, outcome.Code, outcome.Message), request.Capability);
-                return;
-            }
-
-            this.lastScheduledMailDay[npcEntityId] = GameClock.ToAbsoluteDay(world.NowTick);
-            this.SendActionResult(
-                ProtocolMapper.BuildScheduleMailResult(request, world, outcome.Intent, outcome.Window, npcEntityId, ProtocolMapper.PlayerEntityId),
-                request.Capability);
-        }
-        catch (ArgumentException ex)
-        {
-            this.SendActionResult(ProtocolMapper.BuildRejectedActionResult(request, "invalid_action_arguments", ex.Message), request.Capability);
-        }
-        catch (Exception ex)
-        {
-            this.SendActionResult(ProtocolMapper.BuildFailedActionResult(request, "schedule_mail_failed", ex), request.Capability);
-        }
     }
 
     private ActionResult HandleEmoteAction(ActionRequest request)

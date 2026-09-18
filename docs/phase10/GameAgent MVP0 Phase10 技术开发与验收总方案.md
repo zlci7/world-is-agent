@@ -106,11 +106,7 @@ content pack 写入用户 Mods 目录        修改用户环境，超出能力�
 
 不要求任何形式的 Background Trigger、Autonomous Goal 或 NPC 自发任务。
 
-### 2.6 后续：自主触发（已选路线，不在本阶段）
-
-> **本节路线已落地为一个独立小阶段：[延迟执行实机闭环技术开发方案](GameAgent%20MVP0%20Phase10%20延迟执行实机闭环技术开发方案.md)** —— 新增薄能力 `schedule_mail`（只产生 `TaskProposal`，不写信、不碰 SQLite），`create_task` 保持 proposal-gated，`send_mail` 语义不变，Runtime 侧零改动。截至该方案落笔，代码与自动化测试已完成，实机闭环待验证。
->
-> 落地时收敛的一个决定：`when` 只支持 `tomorrow`（下一个游戏日 06:00），不提供 `later_today`。
+### 2.6 已评估但不纳入 MVP0：延迟邮件
 
 本阶段只验证"回合内工具选择"，因此 **agent 不会主动起意写第一封信**。这是已知且有意接受的范围边界：Runtime 今天只有两条开门路径。
 
@@ -119,24 +115,39 @@ Loop.HandleEvent      由 adapter GameEvent 驱动；adapter 目前只发玩家�
 Loop.HandleTaskWake   由 Runtime 内的任务调度器按游戏时钟驱动，只对已存在的任务生效
 ```
 
-自主触发留作 10.1 之后的**独立小阶段**，已选定路线为**复用 Phase 9 的 durable task + wake**，理由是频控全部白送：
+#### 2.6.1 durable task + 唤醒已由 Phase9 实机验证，不需要用邮件重复证明
+
+结论：**不要把这条描述成"为 WIA 建立 durable/deferred 实机证据"——该主张在 Phase9 已经成立，且场景比邮件更强。** 见 [Phase9 开发与验收记录](../phase09/GameAgent%20MVP0%20Phase9%20开发与验收记录.md) §9.1 的两条真实游戏闭环：
 
 ```text
-TaskSpec.WakeAt / NextWakeAt    何时唤醒（游戏时钟）
-TaskSpec.DeadlineAt             硬截止，NextWakeAt 超过即非法 → 有界循环，不会变成无限自主运行
-Admission.MaxActivePerOwner     单 owner 活跃任务上限
-StoreOptions.MaxTasksPerWorld   单世界任务上限
+met      task_1789450222152318800_2038  07:00 出发 → 08:40 到达 → 08:50 登记等待 → 11:00 met
+expired  task_1789453595087640500_2070  07:00 出发 → 07:40 到达 → 07:50 登记等待 → 09:00 expired
+         记录原文：「玩家全程未靠近，NPC 自行赴约并按时收口。」
 ```
 
-唤醒回合的 tool view 由 environment catalog 构建（`runtime/internal/agent/task_wake.go`），`send_mail` 在唤醒回合本来就可用，因此不需要为它改 Runtime 核心。
+两条都跑在真实 Stardew、真实 Runtime、真实 SQLite 与真实模型上：玩家交互产生任务后，在无后续玩家交互的情况下，Runtime 于未来游戏时间自行唤醒 Agent，完成跨地图行动并进入确定性终态。
 
-**proposal 注册路径已查清，结论是纯 Adapter 改动。** `runtime/internal/tool/proposal.go` 的 `CaptureProposal` 不按 capability 名称分支，只读 `ActionResult.TaskProposal`；它由 `runtime/internal/agent/loop.go` 在每一个存在 taskContext 的回合调用，而普通玩家交互回合同样会建立 taskContext。因此 Adapter 只要在自己的 ActionResult 里带上 `TaskProposal`，同一回合 `proposals` 即非空，`create_task` 随之进入 Tool View（`runtime/internal/tool/task_tools.go`）——与今天 `resolve_meeting` 走同一条路径，没有特权分支。
+#### 2.6.2 延迟邮件：实现过，评估后撤回
 
-这条路径有几个静默失败点，实机时必须先确认：`task` 必须 enabled；事件必须带 interaction source 且 `kind=player`、scope 与世界 binding 一致；`proposal.clock.id` 必须等于世界时钟 id，且 `clock.tick ≤ 当前 tick < wake_at ≤ deadline_at`。其中**构造失败只跳过 capture 而不报错**，表现为"能力调用成功、但 `create_task` 始终不出现"，是该阶段最难排查的失败形态。
+延迟邮件（Adapter 的 `TaskProposal` → `create_task` → durable task → 唤醒回合由模型重新写信）曾被完整实现并测试，结论是**撤回**：它不是设计问题，而是收益太窄。相比 `send_mail` 的"现在生成、现在投递"，它唯一新增的价值是"在唤醒时刻结合当时的上下文重新生成内容"。
 
-**频控判定必须放 Adapter 的确定性闸门，不能交给模型。** 模型没有可靠的"我这周已发过几封"的时间感；正确分层是 Adapter 决定"该不该发"，模型只决定"写什么"。
+而 MVP0 既没有自然产生这类需求的后台触发（§2.1 明确不做 Background Trigger），主要入口仍是玩家面对面交互，公开 Demo 也不需要它。为这点收益增加一个 model-visible capability、一套 Adapter 侧特殊闸门与一组行为边界，与 [AGENTS.md](../../AGENTS.md) 的"能力暴露什么，模型就会尝试什么"相冲突。
 
-**10.1 验收的实机观测：** 普通对话里模型不会写信——3 次"关系疏远 / 临别 / 未说出口"动机采样全部未选中；换成玩家明确要求"现在别说、之后再告诉我"的延迟动机后，1 次即选中。这不是模型或描述的问题，而是**阶段边界的结构性结果**：本阶段的回合只在玩家与 NPC 面对面时产生，而描述禁止在"话可以当面说完"时用信；两个条件同时成立时，信只有在玩家主动要求延迟时才成为唯一合理选择。因此"写信频率过低"不能靠放宽描述解决（那会打穿负向用例），只能靠引入异步场景——即本节的 durable task + wake，或把信接到已有异步结果上。
+MVP0 保持：
+
+```text
+send_mail 语义不变          现在把这封信投出去
+不引入 Background Trigger    适配器自行开回合属于产品能力扩张，不只是机制问题
+不新增 mail-specific durable task capability
+```
+
+撤回发生在同一交付周期内，没有形成历史验收价值，因此不留实现或评估文档。唯一保留的产物与邮件无关：`GameClock.ToAbsoluteDay` 及对应测试。
+
+#### 2.6.3 仍然成立的经验观测
+
+**10.1 验收的实机观测：** 普通对话里模型不会写信——3 次"关系疏远 / 临别 / 未说出口"动机采样全部未选中；换成玩家明确要求"现在别说、之后再告诉我"的延迟动机后，1 次即选中。这不是模型或描述的问题，而是**阶段边界的结构性结果**：本阶段的回合只在玩家与 NPC 面对面时产生，而描述禁止在"话可以当面说完"时用信；两个条件同时成立时，信只有在玩家主动要求延迟时才成为唯一合理选择。
+
+因此"写信频率过低"不能靠放宽描述解决（那会打穿负向用例），也不值得为此打开新的触发治理体系。本版本接受这个频率：`send_mail` 已经被实机验证可用，它的发现路径是玩家自然提出"以后/等我走后告诉我"。
 
 ---
 

@@ -301,14 +301,6 @@ Require-Content 'src/Runtime/RuntimeClient.cs' 'wia\.' 'The mail id must derive 
 Require-Content 'src/Runtime/ProtocolMapper.Core.cs' 'RequireSendMailArgument' 'ProtocolMapper must parse send_mail arguments.'
 Require-Content 'src/Capabilities/SendMailCapability.cs' 'delivery\.IsRegistered' 'send_mail must consult registration bookkeeping before registering again.'
 Require-Content 'src/Capabilities/SendMailCapability.cs' 'delivery\.RequestDelivery' 'send_mail must attempt delivery even when the letter is already registered.'
-Require-Content 'src/Runtime/CapabilityCatalog.cs' 'Name = "schedule_mail"' 'CapabilityCatalog must register schedule_mail.'
-Require-Content 'src/Runtime/RuntimeClient.cs' 'request\.Capability == "schedule_mail"' 'schedule_mail must dispatch through the shared ActionResult path, not send its own.'
-Require-Content 'src/Runtime/RuntimeClient.cs' 'ScheduleMailCapability\.Decide\(this\.MailIntegration is not null' 'schedule_mail must keep the unavailable branch of the gate reachable.'
-Reject-Content 'src/Runtime/CapabilityCatalog.cs' 'send_at' 'schedule_mail must not accept a send time: the Adapter owns the window, and one capability must not mix an environment action with a plan.'
-Require-Content 'src/Runtime/ProtocolMapper.Core.cs' 'RequireScheduleMailIntent' 'ProtocolMapper must parse the schedule_mail intent.'
-Require-Content 'src/Capabilities/ScheduleMailCapability.cs' 'GameClock\.ToAbsoluteDay' 'The delivery day must come from the clock inverse, not from dividing the tick by the day length.'
-Require-Content 'src/Capabilities/ScheduleMailCapability.cs' 'AlreadyScheduledCode' 'schedule_mail must gate repeated planning deterministically rather than leaving frequency to the model.'
-Reject-Content 'src/Capabilities/ScheduleMailCapability.cs' 'tick / GameClock\.MinutesPerDay|tick / 1440' 'A tick divided by the day length is the wrong day after midnight: a Stardew date runs 06:00 to 26:00.'
 $mailEntrySource = Get-Content -LiteralPath (Join-Path $Root 'src/ModEntry.cs') -Raw
 if ($mailEntrySource -notmatch 'this\.ResolveMailIntegration\(\);\s*this\.StartRuntimeClient\(\);') {
     $failures.Add('MFM must resolve before the runtime starts, because the capability list is built when the stream connects.') | Out-Null

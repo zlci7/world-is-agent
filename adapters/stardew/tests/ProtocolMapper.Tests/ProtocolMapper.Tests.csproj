@@ -44,7 +44,6 @@
     <Compile Include="..\..\src\Capabilities\MoveToInput.cs" Link="MoveToInput.cs" />
     <Compile Include="..\..\src\Capabilities\SendMailInput.cs" Link="SendMailInput.cs" />
     <Compile Include="..\..\src\Capabilities\SendMailCapability.cs" Link="SendMailCapability.cs" />
-    <Compile Include="..\..\src\Capabilities\ScheduleMailCapability.cs" Link="ScheduleMailCapability.cs" />
     <Compile Include="..\..\src\Integrations\MailFramework\IMailDelivery.cs" Link="IMailDelivery.cs" />
     <Compile Include="..\..\src\Integrations\MailFramework\MailDeliveryCodes.cs" Link="MailDeliveryCodes.cs" />
     <Compile Include="..\..\src\Integrations\MailFramework\MailDeliveryGuard.cs" Link="MailDeliveryGuard.cs" />

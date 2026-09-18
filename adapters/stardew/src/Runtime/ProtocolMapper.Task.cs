@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using GameAgent.Protocol.V1Alpha2;
-using GameAgent.Stardew.Capabilities;
 using GameAgent.Stardew.Tasks;
 using Google.Protobuf.WellKnownTypes;
 
@@ -259,52 +258,6 @@ public static partial class ProtocolMapper
                     ["departure_at"] = Value.ForNumber(agreement.DepartureAt),
                     ["start_at"] = Value.ForNumber(agreement.StartAt),
                     ["end_at"] = Value.ForNumber(agreement.EndAt),
-                },
-            },
-            TaskProposal = proposal,
-        };
-    }
-
-    /// <summary>
-    /// Build the schedule_mail result. The proposal carries the game-clock window the Adapter
-    /// computed; the intent travels in the payload, which the Runtime stores opaquely and
-    /// publishes back verbatim in the wake turn's Task Context.
-    /// </summary>
-    public static ActionResult BuildScheduleMailResult(
-        ActionRequest request,
-        RuntimeWorldSnapshot snapshot,
-        string intent,
-        ScheduleMailWindow window,
-        string npcEntityId,
-        string playerEntityId)
-    {
-        Struct payload = new()
-        {
-            Fields =
-            {
-                ["schema_version"] = Value.ForNumber(ScheduleMailContract.SchemaVersion),
-                ["intent"] = Value.ForString(intent),
-            },
-        };
-        TaskProposal proposal = new()
-        {
-            Clock = BuildWorldClock(snapshot),
-            WakeAt = window.WakeAt,
-            DeadlineAt = window.DeadlineAt,
-            Payload = payload,
-        };
-        proposal.ParticipantEntityIds.Add(npcEntityId);
-        proposal.ParticipantEntityIds.Add(playerEntityId);
-        return new ActionResult
-        {
-            ActionId = request.ActionId,
-            Status = ActionStatus.Succeeded,
-            Output = new Struct
-            {
-                Fields =
-                {
-                    ["delivery"] = Value.ForString("next_morning"),
-                    ["wake_at"] = Value.ForNumber(window.WakeAt),
                 },
             },
             TaskProposal = proposal,
