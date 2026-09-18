@@ -180,7 +180,11 @@ title  换行归一为单个空格（标题是单行），再按白名单校验
 
 这不增加攻击面：`^` 本来就在允许集内、本来就有次数上限，规范化只是把同一种语义的另一种写法映射过去。规范化之后，**任何残留的控制字符都直接拒绝**。
 
-> 这一条是实机验证收口时才发现的：方案早先写的是"拒绝裸换行字节"，那会与"模型写正文"这件事直接冲突。宁可让 Adapter 做翻译，也不要让模型去猜 MFM 的换行语法。
+**Unicode 先折叠为组合形式（FormC），再做白名单判定。** `café` 可以写成预组合的 `é`（U+00E9），也可以写成 `e` + 组合重音（U+0301）。组合重音既不是字母也不是允许的标点，若不先折叠，同一段文本会因为编码形式不同而出现一个通过、一个被拒。
+
+完整顺序固定为：**FormC 折叠 → 去首尾空白 → 换行规范化 → 长度与计数上限 → 白名单判定**。判定与输出使用同一份规范化结果，避免"校验的是一种形式、写进去的是另一种"。
+
+> 换行这一条是实机验证收口时才发现的：方案早先写的是"拒绝裸换行字节"，那会与"模型写正文"这件事直接冲突。宁可让 Adapter 做翻译，也不要让模型去猜 MFM 的换行语法。
 
 **为什么 `^` 和 `@` 是允许而不是拒绝**：两者都是排版能力，不是副作用通道（一个换行、一个替换玩家名）。全部拒绝会让每封信挤成一行，直接损害 §5.2 的人设一致性验收。允许并限次，而不是拒绝。
 
@@ -216,7 +220,20 @@ wia.{action_id}
 
 `action_id` 本身已是形如 `act_<UnixNano>_<counter>` 的 ASCII 稳定字符串，天然适合做 MFM 的 Id。**不要再拼 `npc_entity_id`**：它是 `"npc:" + npcName`，而 NPC 名可以含空格（例如 `Mr. Qi`），MFM 的 `Letter.Id` setter 会执行 `value.Replace(" ", "")`，于是存进去的 id 与我们用来查的 id 不一致，Action 级幂等就被 MFM 自己的 Id 规范化绕过去了。NPC 归属关系本来就在 `ActionRequest.entity_id`、trace 和 turn 里，不需要塞进信件 id。
 
-同一个 Action 重放必须复用同一个 mail id；**且注册前先判断该 id 是否已注册或已投递，已存在则不再注册**。不使用随机数，也不使用会在重试时漂移的序号。
+同一个 Action 重放必须复用同一个 mail id；**且注册前先判断该 id 是否已注册，已存在则不再注册**。不使用随机数，也不使用会在重试时漂移的序号。
+
+**注册判据不能依赖 `api.GetLetter(id) != null`。** MFM 的 `GetLetter` 是 `new ApiLetter(MailRepository.FindLetter(id))`，即使 `FindLetter` 返回 null，它仍然给出一个非 null 的 `ApiLetter` 包装（属性访问时才会失败）。所以这个判据在信件不存在时也恒为真。改为由 `MailFrameworkIntegration` 自己维护**已注册 id 的簿记**，对外只暴露 `IsRegistered(mailId)`：MFM 的仓库是它的实现细节，Adapter 不该依赖它的空值语义，RuntimeClient 更不该理解它。
+
+**"已注册"不等于"已完成"，投递必须每次都尝试。** 两者的失败是独立的：
+
+```text
+已注册？
+    yes → 跳过 RegisterLetter
+    no  → RegisterLetter
+无论哪一支，都要执行 RequestDelivery()
+```
+
+否则一次 `mail_delivery_failed` 的 Action 重试会因为"仓库里已经有了"而直接返回 succeeded，Action 就永久卡在未投递状态。**幂等只应消除重复注册，不应消除投递重试。**
 
 **分派位置（选错会重复发送 ActionResult）**：
 
@@ -569,19 +586,28 @@ callback_fired   玩家关掉那封信之后出现，证明回调也跨过了边
 verdict          bridge_ok / bridge_ok_already_read / bridge_ok_delivery_incomplete / bridge_failed
 ```
 
-**收尾三步（验证文本传递、回调与防重复投递）：**
+**探针有两个模式，用途不同（不要揉在一起）：**
+
+```text
+gameagent_mail_probe          默认。不动 mailReceived，因此能观察"已读"状态
+gameagent_mail_probe reset    先清掉探针自己那个 id 的标记，再跑完整流程
+```
+
+**验证"防重复投递"用默认模式三步：**
 
 ```text
 1. 走到信箱前把信读掉
 2. 确认信件正文就是探针传入的原文，没有出现 "(no translation:...)"（§4.2.1）
-3. 确认日志出现 callback_fired，然后重新执行 gameagent_mail_probe
+3. 确认日志出现 callback_fired，再执行一次 gameagent_mail_probe
 ```
 
 第 2 步不能用"机制通了"代替——注册成功、投递成功、回调触发都不蕴含"玩家看到的是我们传的文本"。第一轮探针正是在这一点上给了假阴性。探针会把 `title` 与 `body` 原文打进 `register` 那一行，直接对照即可。
 
-预期第三步 `has_custom_mail` 变为 **false**、verdict 为 **`bridge_ok_already_read`**、`mail_received=true`。这同时证明 callback 的反向桥接与 §4.2.2 的 `condition` 都生效了。
+预期第 3 步 `has_custom_mail=false`、verdict 为 **`bridge_ok_already_read`**、`mail_received=true`。这同时证明 callback 的反向桥接与 §4.2.2 的 `condition` 都生效了。
 
-探针 id 固定为 `wia.probe.bridge`，而固定 id 加防重复投递的 `condition` 会让它变成"每个存档一次"。因此每次运行前，探针会先清掉**自己这个 id** 在 `mailReceived` 里的标记，并记一行 `reset`。它只动探针自己的命名空间，不涉及任何玩家进度，这样探针可以反复运行。
+**要重看信件内容则用 `reset` 模式**：固定 id 加防重复投递的 `condition` 会让默认模式在读完信后不再投递，`reset` 显式清掉标记即可重新走完整流程。它只动探针自己的命名空间 `wia.probe.bridge`，不涉及任何玩家进度。
+
+> 早期版本把 reset 做成了每次运行都执行，结果是 `bridge_ok_already_read` 这条路径**再也跑不到**，而文档还在描述它。默认不 reset、reset 显式，是分开这两个用途的最小代价。
 
 探针用固定文本、不经过 §3 校验，它验证的是机制而不是安全规则，不能当成能力调用。
 

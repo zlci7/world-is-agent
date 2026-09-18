@@ -41,7 +41,8 @@ internal static class StardewMailProbe
         helper.ConsoleCommands.Add(
             CommandName,
             "Probe the Mail Framework Mod integration boundary. Requires MailFrameworkMod and a loaded save. " +
-            "Usage: gameagent_mail_probe",
+            "Usage: gameagent_mail_probe [reset]  — reset clears the probe's own already-read marker so the " +
+            "letter can be delivered again; omit it to observe the delivered state.",
             (_, args) => Run(helper, monitor, args));
 
         helper.Events.GameLoop.GameLaunched += (_, _) => LogResolution(helper, monitor);
@@ -60,9 +61,12 @@ internal static class StardewMailProbe
 
     private static void Run(IModHelper helper, IMonitor monitor, string[] args)
     {
-        if (args.Length != 0)
+        // Reset is explicit so the default run stays able to observe the delivered state. An
+        // unconditional reset would erase the very marker that proves the re-delivery guard.
+        bool reset = args.Length == 1 && args[0] == "reset";
+        if (args.Length > 1 || (args.Length == 1 && !reset))
         {
-            Emit(monitor, "aborted", "invalid_arguments");
+            Emit(monitor, "aborted", "invalid_arguments", detail: "usage: " + CommandName + " [reset]");
             return;
         }
 
@@ -82,12 +86,16 @@ internal static class StardewMailProbe
 
         Emit(monitor, "resolve", resolveCode, detail: "mapped");
 
-        // The probe owns this id, so it may clear its own delivered marker. Without this the
-        // guarded condition makes it single-shot per save: once the letter has been read,
-        // mailReceived holds the id and UpdateMailBox will never queue it again. Only the probe's
-        // own namespaced id is touched; no player progress is involved.
-        if (Game1.player.mailReceived.Remove(ProbeMailId))
-            Emit(monitor, "reset", "ok", detail: "cleared the probe's own mailReceived marker");
+        if (reset)
+        {
+            // Only the probe's own namespaced id is touched; no player progress is involved.
+            bool cleared = Game1.player.mailReceived.Remove(ProbeMailId);
+            Emit(
+                monitor,
+                "reset",
+                "ok",
+                detail: cleared ? "cleared the probe's own mailReceived marker" : "nothing to clear");
+        }
 
         // Step 2: bridging. Our letter object and our delegates crossing the mapped boundary.
         string registerCode = integration!.RegisterLetter(

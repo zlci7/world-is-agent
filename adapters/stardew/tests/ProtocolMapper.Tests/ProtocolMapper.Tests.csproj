@@ -42,6 +42,7 @@
     <Compile Include="..\..\src\Tasks\ApproachPlayerContracts.cs" Link="ApproachPlayerContracts.cs" />
     <Compile Include="..\..\src\Capabilities\FacePlayerDirection.cs" Link="FacePlayerDirection.cs" />
     <Compile Include="..\..\src\Capabilities\MoveToInput.cs" Link="MoveToInput.cs" />
+    <Compile Include="..\..\src\Integrations\MailFramework\MailTextValidator.cs" Link="MailTextValidator.cs" />
     <Compile Include="..\..\src\Dialogue\DialoguePresentationFlow.cs" Link="DialoguePresentationFlow.cs" />
     <Compile Include="..\..\src\Dialogue\DialogueResponseMenuLayout.cs" Link="DialogueResponseMenuLayout.cs" />
     <Compile Include="..\..\src\Dialogue\DialogueReplyChoice.cs" Link="DialogueReplyChoice.cs" />
