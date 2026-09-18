@@ -26,6 +26,15 @@ The adapter is the first real validation adapter for WIA.
 - Sending free text sends `player_said_to_npc` with `input_kind=free_text`.
 - Closing the input row exits without sending a player dialogue event.
 
+## Protocol Dependency
+
+```text
+Requires WIA Protocol v1alpha2
+Tested against protocol-v1alpha2.0
+```
+
+The protocol source is an external dependency, not a repository-relative one. The build locates `gameagent.proto` through the `WIA_PROTOCOL_DIR` MSBuild property; see [Protocol Release](../../protocol/README.md) for the versioning contract.
+
 ## Build
 
 Use a machine with .NET SDK, Stardew Valley, and SMAPI installed.
@@ -39,13 +48,31 @@ dotnet build adapters/stardew/GameAgent.Stardew.csproj `
   -p:GamePath="$gamePath"
 ```
 
-The helper script can build and install the adapter when the project default `GamePath` resolves:
+Pass `-p:WIA_PROTOCOL_DIR=<protocol directory>` when the protocol is not at the repository-relative default. The default only exists for local development inside this repository; a standalone build must pass the path explicitly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 -GamePath "$gamePath"
+dotnet build adapters/stardew/GameAgent.Stardew.csproj `
+  --configuration Debug `
+  -p:GamePath="$gamePath" `
+  -p:WIA_PROTOCOL_DIR="D:\src\protocol"
+```
+
+The helper script can build and install the adapter:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
+  -GamePath "$gamePath" `
+  -ProjectPath adapters/stardew/GameAgent.Stardew.csproj
 ```
 
 The script's `-GamePath` argument controls the install target and the project file still owns its build-time `GamePath` property. For custom install paths, run the explicit `dotnet build -p:GamePath=...` command above and install that build output into `$gamePath\Mods\GameAgentStardew`.
+
+To verify that the adapter builds without this repository's directory layout, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-standalone-build.ps1 `
+  -GamePath "$gamePath"
+```
 
 ## Manual Smoke Test
 
