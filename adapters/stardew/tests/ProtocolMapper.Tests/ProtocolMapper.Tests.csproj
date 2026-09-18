@@ -46,6 +46,7 @@
     <Compile Include="..\..\src\Capabilities\SendMailCapability.cs" Link="SendMailCapability.cs" />
     <Compile Include="..\..\src\Integrations\MailFramework\IMailDelivery.cs" Link="IMailDelivery.cs" />
     <Compile Include="..\..\src\Integrations\MailFramework\MailDeliveryCodes.cs" Link="MailDeliveryCodes.cs" />
+    <Compile Include="..\..\src\Integrations\MailFramework\MailDeliveryGuard.cs" Link="MailDeliveryGuard.cs" />
     <Compile Include="..\..\src\Integrations\MailFramework\MailTextValidator.cs" Link="MailTextValidator.cs" />
     <Compile Include="..\..\src\Dialogue\DialoguePresentationFlow.cs" Link="DialoguePresentationFlow.cs" />
     <Compile Include="..\..\src\Dialogue\DialogueResponseMenuLayout.cs" Link="DialogueResponseMenuLayout.cs" />

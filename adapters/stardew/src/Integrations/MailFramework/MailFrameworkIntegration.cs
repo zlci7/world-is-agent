@@ -100,6 +100,10 @@ internal sealed class MailFrameworkIntegration : IMailDelivery
     public string Register(string mailId, string? title, string body, Action<string>? onRead)
     {
         this.LastError = string.Empty;
+        // The letter belongs to the save that is loaded now. This is captured per registration and
+        // closed over by the condition below, so each letter keeps its own save identity even after
+        // the player loads a different save.
+        ulong registeredSaveId = Game1.uniqueIDForThisGame;
         try
         {
             this.api.RegisterLetter(
@@ -121,7 +125,13 @@ internal sealed class MailFrameworkIntegration : IMailDelivery
                 // constant true the letter stays in the repository and every DayStarted ->
                 // UpdateMailBox hands the player the same letter again. The callback below writes
                 // the final id, and that is what turns this condition false.
-                condition: letter => !Game1.player.mailReceived.Contains(letter.Id),
+                //
+                // The save identity covers the other half: MFM's repository outlives the save, so
+                // without it a letter written in one save would be delivered into the next one.
+                condition: letter => MailDeliveryGuard.ShouldDeliver(
+                    registeredSaveId,
+                    Game1.uniqueIDForThisGame,
+                    Game1.player.mailReceived.Contains(letter.Id)),
                 callback: letter =>
                 {
                     // The Adapter owns this write: MFM removes its temporary "id + suffix" marker
