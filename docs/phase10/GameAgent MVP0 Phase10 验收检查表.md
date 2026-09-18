@@ -148,14 +148,28 @@ Pop-Location
 
 需要：`Mods/MailFrameworkMod` 与 `Mods/GameAgentStardew`。参考 [10.1 方案 §5.4](GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md)。
 
-- [ ] Runtime 以开发数据根启动：`.\scripts\start-runtime.ps1`（或 `$env:WIA_DATA_ROOT="$PWD/runtime"`）
-- [ ] SMAPI 日志显示两个 Mod 均加载，且无报错
-- [ ] SMAPI 日志的 CapabilityList **包含 `send_mail`**
-- [ ] Runtime 日志出现 `GameAgent send_mail enabled: Mail Framework Mod resolved.`
-- [ ] 临时移出 `Mods/MailFrameworkMod` 重进游戏：adapter 正常加载、`send_mail` **不在** CapabilityList 中、不报错
-- [ ] 把 MFM 放回，正常对话一次，能力重新发布且 Runtime 无报错
+- [x] Runtime 以开发数据根启动：`.\scripts\start-runtime.ps1`（或 `$env:WIA_DATA_ROOT="$PWD/runtime"`）
+- [x] SMAPI 日志显示两个 Mod 均加载，且无报错
+- [x] SMAPI 日志的 CapabilityList **包含 `send_mail`**（该行形如 `GameAgent CapabilityList sent: …, send_mail, …`）
+- [x] SMAPI 日志出现 `GameAgent send_mail enabled: Mail Framework Mod resolved.`
+- [x] 临时移出 `Mods/MailFrameworkMod` 重进游戏：adapter 正常加载、`send_mail` **不在** CapabilityList 中、不报错
+- [x] 把 MFM 放回重进游戏，能力重新发布且 Runtime 无报错
 
 > 这一段不产生写信动机，也不构成验收结论；它只排除"能力根本没发布"。
+
+### B 区验证结果（实机，2026-09-18）
+
+| 条目 | 结果 | 证据（SMAPI 日志） |
+| --- | --- | --- |
+| B1 两个 Mod 加载 | 通过 | `[Mail Framework Mod] Updating mailbox for the day.` + adapter 日志完整 |
+| B2 MFM 可用时发布 | 通过 | `resolve ok/mapped`、`send_mail enabled: Mail Framework Mod resolved.`、CapabilityList 含 `send_mail` |
+| B3 世界绑定 | 通过 | `WorldBindingReady received: status=ready code=` |
+| B4 MFM 缺失时不发布 | 通过 | `resolve mail_framework_unavailable / not mapped`、`send_mail disabled: mail_framework_unavailable.`、CapabilityList **不含** `send_mail`，且 adapter 正常完成 AdapterHello → EnvironmentReady → CapabilityList |
+| B5 MFM 恢复后重新发布 | 通过 | `resolve ok/mapped`、`send_mail enabled`、CapabilityList 再次含 `send_mail` |
+
+**B3 与 B4 一起构成"第三方 mod 是可选依赖"的实机证据**：缺失时能力以明确 code `mail_framework_unavailable` 缺席，不是静默消失，也不影响 adapter 加载。此前这条边界只有自动化测试证据。
+
+B 段过程中出现过一次 `Runtime stream failed: StatusCode="Cancelled", Detail="Call canceled by the client."`，随后同一 `session_id` 自动重连并补齐 `AdapterHello → CapabilityList → WorldBinding → WorldBindingReady`。这是 `RuntimeClient.StartAfterDisconnectAsync` 的重连路径，触发原因是 Runtime 当时被重启，自行恢复，不影响上述结论。
 
 ---
 

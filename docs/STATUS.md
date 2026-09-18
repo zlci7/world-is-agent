@@ -57,6 +57,7 @@ Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and
 | Stardew interaction events | NPC interaction and player dialogue input events. |
 | Stardew dialogue | Native NPC dialogue line followed by generated reply choices and optional free-text input. |
 | Stardew actions | `speak`, `emote`, `present_dialogue`, `face_player`, and same-location `move_to`. |
+| Stardew mail capability | `send_mail` wraps MailFrameworkMod as an optional dependency: published only while that mod is installed, absent with an explicit `mail_framework_unavailable` code otherwise, and never a hard dependency. Text is validated against a closed character set before it reaches the game, because letter text is parsed as game tokens. Real-machine publication and the missing-mod path are verified; model selection acceptance (whether the model chooses it unprompted) is still pending. |
 | Model providers | DeepSeek and OpenAI providers work through local config and external API keys. |
 | Architecture checks | Local scripts exist for protocol and architecture checks. CI enforcement is still evolving. |
 
