@@ -1,6 +1,6 @@
 # Phase A：逻辑分离（Logical Separation）开发流程说明
 
-> **Status:** In Progress — A1/A2 已完成并验证；A3/A4/A5 见 §3
+> **Status:** Complete — 5 项范围全部完成并验证；待用户创建 tag `protocol-v1alpha2.0`
 > **Date:** 2026-09-18
 > **Scope:** 解除 Stardew Adapter 对 monorepo 目录布局的依赖；不拆仓
 > **Predecessor:** 拆仓讨论（`wia-adapter-*` 命名、Phase A / Phase B 划分）
@@ -53,6 +53,27 @@ MSBuild 属性名大小写不敏感，`-p:WIAProtocolDir=...` 与 `-p:WIA_PROTOC
 | 1 | `WIA_PROTOCOL_DIR` 环境变量未生效，构建落回仓库相对 fallback | 临时目录构建报 `adapter\..\..\protocol\proto ... directory does not exist` | A5 校验脚本改为在构建前于当前进程设置环境变量，并保留负向探针断言属性被真实使用 |
 | 2 | `GamePath` 在 csproj 中是**无条件赋值**，会覆盖显式传入与环境变量 | 临时目录构建出现 204 个 `CS0246`（找不到 `NPC` / `IMonitor` / `GameTime` 等游戏类型） | `GamePath` 改为条件赋值，与 `WIA_PROTOCOL_DIR` 相同的分级顺序 |
 | 3 | 测试宿主在本环境崩溃（`Win32Exception (5)` 于 `SetParentProcessExitCallback`） | 基线同样失败，非本次改动引入 | 属环境限制；`dotnet test` 需要放开文件沙箱，否则如实记为未执行 |
+
+### 0.3 收口回归结果（2026-09-18）
+
+| 检查 | 结果 |
+| --- | --- |
+| `check-standalone-build.ps1` | 通过（正向构建 0 警告 0 错误 + 负向探针按预期失败） |
+| Stardew Adapter Debug 构建 | 0 警告 0 错误 |
+| `ProtocolMapper.Tests` | 109 / 109 通过 |
+| `ActionCancellationRegistry.Tests` | 5 / 5 通过 |
+| `PlayerInteractProbe.Tests` | 15 / 15 通过 |
+| `TaskExecution.Tests` | 159 / 159 通过 |
+| `Phase9Feasibility.Tests` | 108 / 108 通过 |
+| `RuntimeClient.Tests` | 14 / 14 通过 |
+| `check-context-static.ps1` | 通过 |
+| `check-architecture.ps1` | 通过 |
+| `check-protocol-static.ps1` | 通过 |
+| `check-go-generation.ps1` | 通过 |
+| `go test ./... -count=1` | ⚠️ `runtime/internal/memory` 的 `TestSummaryCapacitySourceBoundaries` 失败；已在 `5d0b166` 基线复现同样失败，属**既有失败**，与 Phase A 无关；其余包通过 |
+| `git diff --check` | 通过 |
+| 协议内容（`protocol/proto`、`protocol/gen`） | 未改动 |
+| Mod 运行时标识（`manifest.json`） | 未改动 |
 
 ---
 
