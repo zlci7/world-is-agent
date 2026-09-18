@@ -4,6 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- Explicit protocol dependency point; see GameAgent.Stardew.csproj. -->
+    <WIA_PROTOCOL_DIR Condition="'$(WIA_PROTOCOL_DIR)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\protocol</WIA_PROTOCOL_DIR>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="..\..\..\..\protocol\proto\gameagent.proto" GrpcServices="Client" />
+    <Protobuf Include="$(WIA_PROTOCOL_DIR)\proto\gameagent.proto" GrpcServices="Client" />
     <None Include="..\fixtures\player-*.json" Link="fixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="..\..\src\Runtime\CapabilityCatalog.cs" Link="CapabilityCatalog.cs" />
     <Compile Include="..\..\src\Runtime\InteractionContextStore.cs" Link="InteractionContextStore.cs" />

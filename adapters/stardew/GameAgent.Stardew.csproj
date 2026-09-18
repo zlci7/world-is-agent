@@ -14,6 +14,15 @@
     <GamePath>$(MSBuildThisFileDirectory)..\..\..\Stardew Valley</GamePath>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Explicit protocol dependency point. Resolution order:
+         1. -p:WIA_PROTOCOL_DIR=<dir> or the WIA_PROTOCOL_DIR environment variable
+            (MSBuild reads a property name from the environment when no parameter sets it)
+         2. monorepo-relative convenience fallback: local development only.
+         The fallback is not a dependency. Standalone verification must pass the path explicitly. -->
+    <WIA_PROTOCOL_DIR Condition="'$(WIA_PROTOCOL_DIR)' == ''">$(MSBuildThisFileDirectory)..\..\protocol</WIA_PROTOCOL_DIR>
+  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="MonoGame.Framework" HintPath="$(GamePath)\MonoGame.Framework.dll" Private="False" />
     <Reference Include="Stardew Valley" HintPath="$(GamePath)\Stardew Valley.dll" Private="False" />
@@ -29,7 +38,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="..\..\protocol\proto\gameagent.proto" GrpcServices="Client" />
+    <Protobuf Include="$(WIA_PROTOCOL_DIR)\proto\gameagent.proto" GrpcServices="Client" />
   </ItemGroup>
 
   <ItemGroup>
