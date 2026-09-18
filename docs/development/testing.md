@@ -57,10 +57,23 @@ dotnet build adapters/stardew/GameAgent.Stardew.csproj `
 The install helper can build and install when the project default `GamePath` resolves:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 -GamePath "$gamePath"
+powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
+  -GamePath "$gamePath" `
+  -ProjectPath adapters/stardew/GameAgent.Stardew.csproj
 ```
 
-The helper's `-GamePath` argument controls the install target and the project file still owns its build-time `GamePath` property. Use the explicit `dotnet build -p:GamePath=...` command when the default project path differs from your Stardew install.
+The helper takes `-ProjectPath`, `-GamePath`, `-OutputPath`, and `-ModsPath`; it assumes nothing about the surrounding repository layout. `-GamePath` controls both the build-time game references and the install target.
+
+Both `GamePath` and `WIA_PROTOCOL_DIR` resolve from an explicit `-p:` parameter or the environment variable of the same name, and fall back to a repository-relative path for local development only. A machine whose Stardew install or protocol checkout is elsewhere must set them explicitly.
+
+To verify the adapter builds without this repository's layout:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-standalone-build.ps1 `
+  -GamePath "$gamePath"
+```
+
+The script copies the adapter and protocol into a temporary directory outside the repository, builds there with an explicitly supplied protocol path, and then runs a negative probe that must fail. See [logical-separation.md](logical-separation.md).
 
 ## Manual Stardew Smoke Test
 

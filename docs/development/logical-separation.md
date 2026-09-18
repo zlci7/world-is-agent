@@ -1,12 +1,61 @@
 # Phase A：逻辑分离（Logical Separation）开发流程说明
 
-> **Status:** Proposed — 等待用户确认后开工
+> **Status:** In Progress — A1/A2 已完成并验证；A3/A4/A5 见 §3
 > **Date:** 2026-09-18
 > **Scope:** 解除 Stardew Adapter 对 monorepo 目录布局的依赖；不拆仓
 > **Predecessor:** 拆仓讨论（`wia-adapter-*` 命名、Phase A / Phase B 划分）
 > **Related:** [guide.md](guide.md)、[testing.md](testing.md)
 
+## 0. 已确认的范围与决策（2026-09-18）
+
+用户已锁定本轮范围，共 5 项，不引入 GitHub Actions：
+
+```text
+1. WIA_PROTOCOL_DIR 外部依赖点
+2. protocol-v1alpha2.0 版本契约与文档
+3. install-stardew-adapter.ps1 的 -ProjectPath / -GamePath 参数化
+4. check-standalone-build.ps1 独立构建验收
+5. 暂不引入 GitHub Actions
+```
+
+| 决策 | 结论 |
+| --- | --- |
+| CI | 选 (a)：只做本地 `check-standalone-build.ps1`，作为唯一验收入口；以后加 CI 直接调用同一脚本 |
+| Protocol tag | 选 (a)：`protocol-v1alpha2.0`，文档同时写“协议族”（v1alpha2）与“已测发布版本”（protocol-v1alpha2.0） |
+| `WIA_PROTOCOL_DIR` 默认值 | 选 (a)：保留本地便利默认值，但仅为 convenience fallback，不构成正式依赖；独立构建验证必须显式指定协议路径 |
+
+依赖解析优先级：
+
+```text
+显式 MSBuild 参数 / 环境变量 WIA_PROTOCOL_DIR
+        ↓
+monorepo 相对路径 fallback（仅本地开发便利）
+```
+
+MSBuild 属性名大小写不敏感，`-p:WIAProtocolDir=...` 与 `-p:WIA_PROTOCOL_DIR=...` 等价；文档统一写作 `WIA_PROTOCOL_DIR`。
+
+### 0.1 实施状态
+
+| 模块 | 状态 | 验证证据 |
+| --- | --- | --- |
+| A1 Protocol 显式依赖点（主项目） | ✅ 完成 | 默认 fallback 构建 0 警告 0 错误；反证：`WIA_PROTOCOL_DIR` 指向不存在目录时构建失败 |
+| A2 Protocol 显式依赖点（测试项目） | ✅ 完成 | `ProtocolMapper.Tests` 109 通过 / 0 失败；同样通过反证 |
+| A3 协议版本契约 | ✅ 完成（tag 待用户创建） | `protocol/README.md` 新增；`check-protocol-static.ps1` 通过 |
+| A4 安装脚本参数化 | ✅ 完成 | 以临时 `-ModsPath` 运行成功，安装产物落在临时目录 |
+| A5 脱离仓库构建验证 | ✅ 完成 | `check-standalone-build.ps1` 通过：临时目录正向构建成功 + 负向探针失败 |
+
+### 0.2 实施中发现并修复的问题
+
+前两项由 A5 验证脚本在实施过程中暴露，属“默认值掩盖显式依赖”的同类缺陷：
+
+| # | 问题 | 证据 | 修复 |
+| --- | --- | --- | --- |
+| 1 | `WIA_PROTOCOL_DIR` 环境变量未生效，构建落回仓库相对 fallback | 临时目录构建报 `adapter\..\..\protocol\proto ... directory does not exist` | A5 校验脚本改为在构建前于当前进程设置环境变量，并保留负向探针断言属性被真实使用 |
+| 2 | `GamePath` 在 csproj 中是**无条件赋值**，会覆盖显式传入与环境变量 | 临时目录构建出现 204 个 `CS0246`（找不到 `NPC` / `IMonitor` / `GameTime` 等游戏类型） | `GamePath` 改为条件赋值，与 `WIA_PROTOCOL_DIR` 相同的分级顺序 |
+| 3 | 测试宿主在本环境崩溃（`Win32Exception (5)` 于 `SetParentProcessExitCallback`） | 基线同样失败，非本次改动引入 | 属环境限制；`dotnet test` 需要放开文件沙箱，否则如实记为未执行 |
+
 ---
+
 
 ## 1. 目标与不做什么
 
@@ -25,7 +74,7 @@
 不改协议内容              proto 字段、包名、csharp_namespace 全部不动
 不改 Mod 运行时标识       UniqueID / EntryDll / AssemblyName / AssemblyTitle 不动
 不重命名目录              adapters/stardew 路径保持
-不新增 CI 系统            是否引入 GitHub Actions 见 §7 决策点
+不新增 CI 系统            只做本地验证脚本，不引入 GitHub Actions（见 §0）
 不重构 Runtime            runtime/ 与 protocol/ 的 Go 侧不属于本阶段
 ```
 
@@ -117,7 +166,7 @@ Requires WIA Protocol v1alpha2 (tag: protocol-v1alpha2.0)
 - `protocol/tests/check-protocol-static.ps1` 通过（不改断言，仅确认未被破坏）。
 - README 声明的版本与 `gameagent.proto` 中 `package gameagent.protocol.v1alpha2;` 一致。
 
-**不做**：不创建 git tag、不推送 tag（见 §7 决策点）。
+**不做**：不创建 git tag、不推送 tag（见 §0 决策与 §7 待办）。
 
 ### A4 — 安装脚本去仓库布局依赖
 
@@ -205,7 +254,8 @@ powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-context-st
 powershell -ExecutionPolicy Bypass -File scripts/check-architecture.ps1
 
 # 本阶段新增
-powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-standalone-build.ps1
+powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-standalone-build.ps1 `
+  -GamePath "$game"
 
 # 通用
 git diff --check
@@ -221,21 +271,22 @@ git diff --check
 | --- | --- | --- |
 | .NET SDK | 6.0.x（`net6.0` 目标） | ✅ `6.0.428` |
 | Stardew DLL | `Stardew Valley.dll`、`StardewModdingAPI.dll`、`MonoGame.Framework.dll`、`StardewValley.GameData.dll`、`xTile.dll` | ✅ `E:\SteamLibrary\steamapps\common\Stardew Valley` |
-| 游戏路径传参 | 必须显式 `-p:GamePath=...`，`.csproj` 默认值在本机不存在 | ⚠️ 需每次传入 |
+| 游戏路径传参 | 通过 `-p:GamePath=...` 或 `GamePath` 环境变量指定；仓库相对默认值在本机不存在 | ⚠️ 必须显式传入 |
+| `dotnet test` 运行环境 | 测试宿主需要打开父进程句柄（`OpenProcess`）；文件沙箱拒绝时会以 `Win32Exception (5)` 崩溃 | ⚠️ 需放开文件沙箱后执行 |
 | Go | 用于 Runtime 回归与协议生成检查 | 需确认 |
 | 实机验证 | 本阶段不要求；A5 为构建级验证，非运行级 | — |
 
 ---
 
-## 7. 需要用户确认的决策点
+## 7. 决策记录
 
-| # | 决策 | 选项 |
-| --- | --- | --- |
-| 1 | 是否引入 CI | (a) 暂不引入，只交付可本地运行的 `check-standalone-build.ps1`；(b) 同时新增 `.github/workflows/standalone-build.yml` 调用同一脚本 |
-| 2 | 协议 tag 命名与创建时机 | (a) `protocol-v1alpha2.0`，由用户创建并推送；(b) 改用 `protocol/v1alpha2`；(c) 暂不建 tag，仅文档声明版本 |
-| 3 | `WIA_PROTOCOL_DIR` 默认值 | (a) 保留本地便利默认值（推荐，兼容现有开发）；(b) 移除默认值，强制显式传入 |
+三项决策均已由用户确认，结论见 §0，此处不再重复。仍待用户执行的一项：
 
-第 2 项涉及 git tag，属推送类操作，按仓库规则由用户执行；本阶段只产出命名建议。
+| 项 | 状态 |
+| --- | --- |
+| 创建并推送 tag `protocol-v1alpha2.0` | 待用户执行（tag 属推送类操作，按仓库规则由用户完成） |
+
+协议文档已按“协议族 / 已测发布版本”区分表述；tag 创建后该版本号才真正成为可依赖的发布物。
 
 ---
 

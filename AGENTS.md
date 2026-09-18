@@ -163,7 +163,7 @@ game-specific Observation.state
 
 ```text
 公开事实源
-    README.md、ARCHITECTURE.md、docs/README.md、docs/STATUS.md、docs/development/guide.md、docs/development/testing.md
+    README.md、ARCHITECTURE.md、docs/README.md、docs/STATUS.md、protocol/README.md、docs/development/guide.md、docs/development/testing.md
     必须与当前实现一致，是对外读者的准确入口。
 
 详细基线与规范
