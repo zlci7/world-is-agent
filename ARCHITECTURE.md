@@ -74,7 +74,7 @@ AgentSession identity
 AgentTurn lifecycle
 bounded multi-step execution
 tool scheduling
-short-term memory
+bounded recent memory, session history, and summaries
 context projection
 trace and observability
 timeouts and cancellation
@@ -88,7 +88,7 @@ The Runtime communicates through protocol contracts and provider-neutral model t
 These are the core cognitive layers of WIA.
 
 - Identity decides which agent a world event belongs to.
-- Memory stores agent state under that identity. The current MVP0 backend is process-local short-term memory.
+- Memory stores agent state under that identity. The default MVP0 backend is SQLite, physically separated by game and world and scoped by entity, with an in-memory backend available for tests and local runs.
 - Context builds the model input from current observation, recent memory, transcript, tools, and runtime policy.
 
 ### Agent
@@ -149,7 +149,8 @@ The current MVP0 implementation includes:
 - Protocol v1alpha2.
 - Stardew Valley SMAPI adapter.
 - Stable agent identity by game, world, and entity.
-- Short-term in-process memory and context projection.
+- SQLite-backed memory, physically separated by game and world and scoped by entity, with bounded recent memory, session history, summaries, and history retrieval; an in-memory backend remains for tests and local runs.
+- Context projection with a deterministic estimated-token budget.
 - Bounded multi-step AgentTurn.
 - Dynamic capability-driven tools.
 - Sync and async action lifecycle.
@@ -158,10 +159,10 @@ The current MVP0 implementation includes:
 
 Current architecture limits:
 
-- Memory is process-local short-term state.
 - Async action waiting is process-local.
 - Same-agent FIFO scheduling is validated within one live EnvironmentSession.
 - Cross-stream recovery and durable continuation are future work.
+- Memory is independent of the game save: records from an abandoned branch can become visible again when comparable game time catches up.
 - Stardew is the first real adapter and validation world.
 
 ## Further Reading
