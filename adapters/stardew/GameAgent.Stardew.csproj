@@ -11,7 +11,11 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <GamePath>$(MSBuildThisFileDirectory)..\..\..\Stardew Valley</GamePath>
+    <!-- Stardew install location. Resolution order:
+         1. -p:GamePath=<dir> or the GamePath environment variable
+         2. repository-relative convenience fallback: local development only.
+         A machine whose install path differs from the fallback must set it explicitly. -->
+    <GamePath Condition="'$(GamePath)' == ''">$(MSBuildThisFileDirectory)..\..\..\Stardew Valley</GamePath>
   </PropertyGroup>
 
   <PropertyGroup>
