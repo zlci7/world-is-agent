@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10.3 RimWorld 对话接入与世界实例实体技术方案
 
-> 状态：**已定稿（Accepted for Implementation）；10.3-1 已实现并实机验收**（见 [Phase10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)）。
+> 状态：**已定稿（Accepted for Implementation）**。10.3-1 已实现并实机验收（见 [10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)）；10.3-2 的身份与时钟部分已取得实机证据（同文档 §7、§8）；10.3-3 与 10.3-4 已实现，**实机验收尚未执行**，证据状态见 [10.3-3/10.3-4 实现与证据记录](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)。
 > 本文只描述确认后的范围与验收条件；实现进度与实机结论另行记录。
 > 上位文档：[Phase10 技术开发与验收总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) §4。
 
@@ -570,7 +570,11 @@ Pawn    Map    JobTracker    Find.*    Messages    任何 Def 数据库
                 System.Memory.dll  System.Buffers.dll  System.Numerics.Vectors.dll
                 System.Runtime.CompilerServices.Unsafe.dll
   Native\       grpc_csharp_ext.dll
+  Patches\      WiaEntryPoint.xml（§10 的 XML patch：给 Human 的 comps 挂 WiaDialogueCompProperties）
 ```
+
+`Patches/` 与 `Assemblies/`、`Native/` 一样属于白名单 stage 的范围：安装脚本会先清空再写入。
+少了这个目录，适配器能加载、能握手，但 gizmo 永远不会出现——表现像"mod 坏了"而不是"少了一个文件"。
 
 两条布局规则已在实机确认，必须写进安装脚本：
 
