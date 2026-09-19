@@ -359,7 +359,9 @@ DeepSeek API Key      Configured ✓      [ Replace ]
 必须做   secret 文件权限收紧：POSIX 0700 / 0600
          Windows 不重写 DACL。该平台没有等价于 POSIX mode 的东西，而以当前用户身份运行
          的进程本来就能读到这个文件；那里的保护来自数据根所在的用户目录已有的权限。
-         所以"只有属主可读，否则不保存"是一条 POSIX 保证，Windows 依赖目录本身
+         所以"只有属主可读，否则不保存"是一条 POSIX 保证，Windows 依赖目录本身。
+         这条依赖数据根位于用户私有目录：用 --data-root / WIA_DATA_ROOT 指向共享目录时，
+         WIA 不保证该目录的 ACL
 必须做   不回传明文、不落浏览器
 建议做   用 OS 用户绑定的密钥库加密静态存储（DPAPI 等），作为纵深防御
 不要做   自己发明加密方案；不要用与密文同权限存放的密钥"加密"

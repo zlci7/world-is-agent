@@ -172,8 +172,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleTurns(w, r)
 	case "/api/setup/model":
 		s.handleSetupModel(w, r)
-	case "/api/setup/test":
-		s.handleSetupTest(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "no such route")
 	}
@@ -192,10 +190,6 @@ type statusResponse struct {
 
 	GRPCAddr string `json:"grpc_addr,omitempty"`
 	Version  string `json:"version,omitempty"`
-
-	// Seeded reports whether this start wrote the shipped configuration into an
-	// unconfigured data root.
-	Seeded bool `json:"seeded"`
 
 	// Model describes the configuration without its credential. ModelError
 	// explains why there is nothing to describe.
@@ -217,7 +211,6 @@ func (s *Server) statusPayload() statusResponse {
 		TracePath:       s.tracePath,
 		GRPCAddr:        s.options.GRPCAddr,
 		Version:         s.options.Version,
-		Seeded:          runtime.Seeded(),
 	}
 	// A missing or broken model configuration is exactly what the client has to
 	// report, so it is a field rather than a failed request.
@@ -258,27 +251,6 @@ func (b setupModelRequest) candidate() llm.ProbeCandidate {
 	}
 }
 
-// handleSetupTest answers one question: does this candidate work? It never writes
-// anything, and the answer is not remembered -- the form shows it for as long as
-// it is looking at those fields, and no part of the Runtime claims a model was
-// verified after a restart.
-func (s *Server) handleSetupTest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "a connection test is made with POST")
-		return
-	}
-	if origin := r.Header.Get("Origin"); origin != "" && origin != s.url {
-		writeError(w, http.StatusForbidden, "origin_not_allowed", fmt.Sprintf("unexpected origin %q", origin))
-		return
-	}
-
-	body, ok := decodeSetupRequest(w, r)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, llm.ProbeConnection(r.Context(), body.candidate()))
-}
-
 // handleSetupModel is the authoritative commit for the model configuration.
 //
 // It probes the parameters it is about to write rather than trusting a test the
@@ -286,6 +258,10 @@ func (s *Server) handleSetupTest(w http.ResponseWriter, r *http.Request) {
 // and writing an unverified configuration is the one outcome the first-run flow
 // exists to prevent. A failed probe writes nothing, so the user can correct the
 // form and try again.
+//
+// There is no separate "test without saving" route. The probe is the same work
+// either way, so a page that only saves is simpler and costs one fewer model call
+// than a page that tests and then saves.
 func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "the model configuration is written with POST")

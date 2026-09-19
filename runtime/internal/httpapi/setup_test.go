@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"gameagent/runtime/internal/llm"
 )
 
 // providerStub answers one model request. The first-run flow only needs to know
@@ -42,54 +40,6 @@ func setupBody(fields map[string]any) string {
 		panic(err)
 	}
 	return string(encoded)
-}
-
-func TestSetupTestRequiresASession(t *testing.T) {
-	f := newFixture(t, nil)
-
-	recorder := f.do(t, http.MethodPost, "/api/setup/test", setupBody(map[string]any{
-		"provider": "deepseek", "api_key": "sk-probe",
-	}))
-
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", recorder.Code)
-	}
-}
-
-// The test is a question, not a commit: it reports and writes nothing.
-func TestSetupTestReportsBothOutcomes(t *testing.T) {
-	f := newFixture(t, nil)
-	cookie := f.session(t)
-
-	accepted := f.do(t, http.MethodPost, "/api/setup/test", setupBody(map[string]any{
-		"provider": "deepseek", "model": "test-model", "base_url": acceptingProvider(t).URL, "api_key": "sk-good",
-	}), cookie)
-
-	if accepted.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", accepted.Code, accepted.Body.String())
-	}
-	if outcome := decodeBody[llm.ProbeOutcome](t, accepted); !outcome.OK || outcome.Code != "ok" {
-		t.Fatalf("outcome = %+v, want ok", outcome)
-	}
-
-	rejected := f.do(t, http.MethodPost, "/api/setup/test", setupBody(map[string]any{
-		"provider": "deepseek", "model": "test-model", "base_url": rejectingProvider(t).URL, "api_key": "sk-bad",
-	}), cookie)
-
-	if rejected.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 even for a rejected credential", rejected.Code)
-	}
-	outcome := decodeBody[llm.ProbeOutcome](t, rejected)
-	if outcome.OK {
-		t.Fatal("a rejected credential was reported as working")
-	}
-	if outcome.Code != "authentication_failed" {
-		t.Fatalf("code = %q, want authentication_failed", outcome.Code)
-	}
-	if strings.Contains(rejected.Body.String(), "sk-bad") {
-		t.Fatal("the probe response echoed the credential")
-	}
-	assertNoCredentialWritten(t, f)
 }
 
 func TestSetupModelRequiresASession(t *testing.T) {
@@ -220,19 +170,6 @@ func TestSetupModelIsNotReachableWithAGet(t *testing.T) {
 
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", recorder.Code)
-	}
-}
-
-// The client is told whether the root was seeded, because that is the difference
-// between "the shipped defaults are in place" and "you are on the fallback".
-func TestStatusReportsWhetherTheRootWasSeeded(t *testing.T) {
-	f := newFixture(t, nil)
-
-	recorder := f.do(t, http.MethodGet, "/api/status", "", f.session(t))
-
-	status := decodeBody[statusResponse](t, recorder)
-	if !status.Seeded {
-		t.Fatal("seeded = false on a root that had no configuration")
 	}
 }
 

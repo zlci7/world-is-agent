@@ -135,6 +135,11 @@ func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
 	return r.Configure()
 }
 
+// seedDefaults is a variable so a test can make initialization fail. A fresh root
+// that cannot be given the shipped configuration must not reach ready, and that
+// cannot be provoked on a data root that behaves.
+var seedDefaults = config.Seed
+
 // State reports how far the Runtime got.
 type State string
 
@@ -163,7 +168,6 @@ type Runtime struct {
 	state       State
 	reason      string
 	blocked     bool
-	seeded      bool
 }
 
 // Open resolves the data root, loads what configuration exists and opens the
@@ -187,18 +191,26 @@ func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
 
 	// A fresh data root starts from the shipped configuration. This runs before
 	// anything reads the agent configuration, and does nothing once the root has
-	// one. Seeding is best-effort in the same sense as the trace recorder: a root
-	// that could not be seeded still starts, with the reason reported, rather than
-	// refusing to run.
-	seeded := false
-	if wroteSeed, err := config.Seed(layout.ConfigDir(), strings.TrimSpace(env.Getenv(agent.ConfigEnvName)) != ""); err != nil {
+	// one.
+	//
+	// A failure here blocks the core rather than being logged and forgotten. The
+	// agent configuration loader treats a missing file as "use the defaults", so a
+	// root whose shipped configuration could not be prepared would otherwise
+	// configure a key, reach ready, and run an agent with no definitions and a
+	// smaller step budget -- exactly the state seeding exists to prevent, and one
+	// nothing later in the flow would notice.
+	blocked, blockedReason := false, ""
+	if wroteSeed, err := seedDefaults(layout.ConfigDir(), strings.TrimSpace(env.Getenv(agent.ConfigEnvName)) != ""); err != nil {
+		blocked, blockedReason = true, fmt.Sprintf("the shipped configuration could not be prepared: %v", err)
 		log.Printf("seed shipped configuration failed: %v", err)
 	} else if wroteSeed {
-		seeded = true
 		log.Printf("GameAgent seeded default configuration into %s", layout.ConfigDir())
 	}
 
-	r := &Runtime{layout: layout, state: StateNeedsConfiguration, seeded: seeded}
+	r := &Runtime{layout: layout, state: StateNeedsConfiguration, blocked: blocked}
+	if blocked {
+		r.reason = blockedReason
+	}
 	agentPath := resolveConfigPath(env, agent.ConfigEnvName, root, layout.ConfigPath(agentConfigFile))
 	r.modelPath = resolveConfigPath(env, llm.ConfigEnvName, root, layout.ConfigPath(modelConfigFile))
 	r.agentPath = agentPath
@@ -356,10 +368,6 @@ func (r *Runtime) State() State {
 // Ready reports whether the agent core can serve turns. Downstream components that
 // consume durable state, such as the task dispatcher, must not act while it is false.
 func (r *Runtime) Ready() bool { return r.State() == StateReady }
-
-// Seeded reports whether this process wrote the shipped configuration into an
-// unconfigured data root. It is a fact about this start, not about the root.
-func (r *Runtime) Seeded() bool { return r.seeded }
 
 // Reason explains a state that is not StateReady.
 func (r *Runtime) Reason() string {

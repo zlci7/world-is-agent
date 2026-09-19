@@ -12,7 +12,7 @@
 
 一句话目标：
 
-> **启动 Runtime → 浏览器自动打开 → 填 Provider / Model / API Key → 测试通过 → 保存 → Runtime Ready → 去玩游戏。**
+> **启动 Runtime → 浏览器自动打开 → 填 Provider / Model / API Key → 保存（保存即验证）→ Runtime Ready → 去玩游戏。**
 
 10.2-1 解决了"没有配置也能启动"，10.2-2 解决了"能看见"。剩下的缺口只有一个：**模型配置只能手工写文件，`api_key` 只认环境变量，而且没有任何地方能让用户确认"我配对了"**。
 
@@ -42,8 +42,8 @@
 | D2 | 静态保护 | POSIX `secrets/` 0700、凭据文件 0600；**Windows 不重写 DACL**，依赖数据根所在用户目录已有的权限 |
 | D3 | 默认配置来源 | embed + **首次 seed**；锚点是 `agent.json`；不 merge / 不覆盖 / 不升级；显式 agent config override 时完全不 seed |
 | D4 | 可修改范围 | 只做首次 model 配置；不做 Ready 之后的热切换；默认 UI 不暴露 `base_url` |
-| D5 | 连接测试 | **必须先测过才允许落盘**；没有 skip 逃生口（§6.3） |
-| D6 | 状态 | 只有 Runtime 两态（`needs_configuration` / `ready`）加一次连接测试结果；测试结果不持久化 |
+| D5 | 连接测试 | **必须先测过才允许落盘**；没有 skip 逃生口，也没有单独的"只测试不保存"路由（§6.3、§6.4） |
+| D6 | 状态 | 只有 Runtime 两态（`needs_configuration` / `ready`）加原因。连接测试的结果不持久化、不进状态 |
 
 ### 2.1 D2 的准确表述
 
@@ -55,6 +55,8 @@
 ```
 
 **"只有属主可读，否则不保存"是一条 POSIX 保证。** Windows 上的保护来自数据根所在用户目录本身的权限。安全模型上也说得通：以当前用户身份运行的进程本来就能读到这个文件、这个进程的内存，以及一切该用户能读的东西。真正要防的是凭据进 git、进 `model.json`、进响应、进浏览器存储、以及被**其他** OS 用户读到——`file:` 加用户目录已经覆盖这些。
+
+**这条保护依赖数据根在用户的私有目录里。** 默认位置（`%LOCALAPPDATA%\WorldIsAgent` 等）满足这一点，但用户可以用 `--data-root` / `WIA_DATA_ROOT` 把数据根指到共享目录，**此时 WIA 不保证该目录的 ACL**——那是用户对自己选定位置的负责。这一点只在文档里说明，不重新引入 DACL 代码。
 
 **保留 `file:` 而不把 key 写进 `model.json` 的理由不是理论安全，而是真实事故：** 用户把 `model.json` 贴到 issue / Discord / GitHub 时不会连 key 一起贴出去。`model.json` 是可分享配置，凭据是私密数据。
 
@@ -117,17 +119,15 @@ Provider   [ DeepSeek ▾ ]
 Model      [ deepseek-v4-flash ]
 API Key    [ ••••••••••••••• ]
 
-[ Test connection ]
-
-✓ Connection successful
-
 [ Save and continue ]
 ```
 
-- 只有一个 card。**不显示游戏选择器**（只有 Stardew，且底层没有 profile 选择机制，见 §4.1）。
-- 测试成功前 `Save` 不可用；测试结果只对应当前表单内容，改动任一项即失效。
+- 只有一个 card、一个按钮。**不显示游戏选择器**（只有 Stardew，且底层没有 profile 选择机制，见 §4.1）。
+- **保存即验证。** 没有单独的"测试连接"按钮：后端本来就必须在落盘前自己探一次（§6.4），所以页面上再放一个测试按钮只会多花一次真实模型调用，并让"测过"和"保存了"变成两个可能不一致的状态。
+- 失败时显示分类结果（`Authentication failed` / `Network unavailable` / …），**什么都不写**，用户改完再点。
 - 保存成功后显示 `Runtime Ready ✓`，回到现有首页。
 - 页面不显示 `base_url`（D4）。协议与后端支持它，开发者可手改；将来真需要 OpenAI-compatible endpoint 再放进 Advanced。
+- 若将来用户确实要"先测不存"，再把那条路由加回来；现在为它保留接口与状态不值得。
 
 ## 6. 接口
 
@@ -135,8 +135,9 @@ API Key    [ ••••••••••••••• ]
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| POST | `/api/setup/test` | 拿候选配置做一次最小调用，返回 `{ok, code, message?}`。**永不落盘，结果不记忆** |
-| POST | `/api/setup/model` | 权威提交：先对**这次请求的同一组参数**再测一次，通过才写凭据 → 原子写 `model.json` → `Configure()` |
+| POST | `/api/setup/model` | 唯一入口：先探测**这次请求的同一组参数**，通过才写凭据 → 原子写 `model.json` → `Configure()` |
+
+**没有单独的测试路由。** 探测本身就是提交路径的第一步，所以"只测试不保存"只是同一个动作去掉落盘那半；为它单开一条路由与一套状态，换不到闭环需要的东西。将来确有需求再加。
 
 ### 6.1 未落盘凭据的瞬态路径
 
@@ -166,11 +167,11 @@ provider_error           其它非成功响应
 
 不提供"不测试直接保存"。WIA 本身需要在线 provider 才能工作，离线用户即使保存成功也用不了；为这种情况引入二次确认、Unverified 状态与后续重启说明，不值得。测试失败就**什么都不写**，用户改完再试。
 
-### 6.4 权威提交不复用前端的测试结论
+### 6.4 服务端自己探测，不信任何前端结论
 
-前端那次测试只是 UX 预检查。**服务端不信任"前端已经测过了"**，否则存在 TOCTOU：前端测 A 通过、提交时 payload 变成 B，就落盘了一个未验证的配置。
+即使将来页面加了"测试"按钮，**服务端也不复用那个结论**：前端测 A 通过、提交时 payload 变成 B，就会落盘一个未验证的配置。权威提交永远对**本次请求的参数**自己探一次。
 
-提交顺序：**测试 → 通过 → 写凭据 → 写配置 → `Configure()`**。若 `Configure()` 失败（例如 agent 配置不可用），配置已落盘但状态为 `needs_configuration` 并带原因——这是可恢复的，也是客户端能看到的信息。
+提交顺序：**探测 → 通过 → 写凭据 → 写配置 → `Configure()`**。若 `Configure()` 失败（例如 agent 配置不可用），配置已落盘但状态为 `needs_configuration` 并带原因——这是可恢复的，也是客户端能看到的信息。
 
 ### 6.5 Ready 之后拒绝再提交
 
@@ -220,16 +221,16 @@ gateway.Server            本阶段不使用其世界注册表
 
 | 项 | 期望 |
 | --- | --- |
-| 空数据根启动 | `seeded=true`，`config/agent.json` + 35 个 definition 就位，状态 `needs_configuration` |
+| 空数据根启动 | `config/agent.json` + 35 个 definition 就位，状态 `needs_configuration`，日志出现 seed 行 |
 | seed 幂等 | 第二次启动不新增/不覆盖任何文件，且无 seed 日志 |
 | 显式 override | 设 `GAMEAGENT_AGENT_CONFIG` 时一个默认文件都不写 |
 | 未通过测试不可提交 | 探测失败时返回明确 code，且凭据与配置**都没写** |
 | 配置正确 | 写出的 `model.json` 引用凭据而非包含它，带 window，`api_key` 为相对引用 |
-| 不泄露 | `/api/status`、`/api/setup/test`、`/api/setup/model` 的响应都不出现 key；进程日志不出现 key |
+| 不泄露 | `/api/status` 与 `/api/setup/model` 的响应都不出现 key；进程日志不出现 key |
 | 权限 | Unix：`secrets/` 0700、凭据 0600；权限设置失败时不落盘 |
 | Ready 后拒绝 | 再次提交被拒、配置文件未被改动，提示需要重启 |
 | 重启 | 配置与 seed 结果都保持，且不重复 seed |
-| 端到端（⑥） | 空目录 → 浏览器自动打开 → 默认配置已就位 → 填表 → 测试通过 → 保存 → `Ready` → 重启仍 Ready → 启动游戏并交互 → Turn 出现在 Console |
+| 端到端（⑥） | 空目录 → 浏览器自动打开 → 默认配置已就位 → 填表 → 保存 → `Ready` → 重启仍 Ready → 启动游戏并交互 → Turn 出现在 Console |
 
 ## 11. 明确不做
 
@@ -253,8 +254,10 @@ D1  env: 保留 + 新增 file:，相对引用基于 model.json 目录
 D2  POSIX 0700/0600 并复核；Windows 不重写 DACL，依赖用户目录权限（准确表述见 §2.1）
 D3  embed + 首次 seed；锚点 agent.json；不 merge/覆盖/升级；显式 override 时完全不 seed
 D4  只做首次 model 配置；不做 Ready 后热切换；默认 UI 不暴露 base_url
-D5  必须先测过才落盘；无 skip 逃生口
-D6  只有 Runtime 两态 + 一次连接测试结果；测试结果不持久化
+D5  必须先测过才落盘；无 skip 逃生口；也没有单独的"只测试不保存"路由
+D6  只有 Runtime 两态 + 原因；测试结果不持久化、也不进状态
 另  window 默认值保留（本仓库已在跑的值）；未知 provider 不猜
 另  api_key_problem 保留：让界面能说出"凭据为什么不可用"
+另  seed 失败必须阻断 Ready，而非只记日志：否则界面会显示 Ready 而实际跑的是通用基线
+另  不暴露 seeded 状态字段：它只说"本次启动有没有 seed"，容易被读成"当前是否运行在发行默认值上"
 ```

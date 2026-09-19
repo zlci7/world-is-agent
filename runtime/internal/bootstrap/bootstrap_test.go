@@ -409,9 +409,6 @@ func TestApplyModelConfigurationMakesAFreshRootReady(t *testing.T) {
 	if runtime.Ready() {
 		t.Fatal("a fresh root reported ready before anything was configured")
 	}
-	if !runtime.Seeded() {
-		t.Fatal("a fresh root was not seeded")
-	}
 
 	err = runtime.ApplyModelConfiguration(bootstrap.ModelSetup{
 		Provider: "deepseek",
@@ -545,3 +542,11 @@ func TestApplyModelConfigurationKeepsAChosenWindow(t *testing.T) {
 		t.Fatalf("window = %d/%d, want the chosen 4096/512", document.ContextWindowTokens, document.MaxOutputTokens)
 	}
 }
+
+// A root whose shipped configuration could not be prepared must not reach ready,
+// even once a valid model configuration exists. Otherwise the user is shown a
+// ready Runtime that is running the fallback agent configuration: no definitions,
+// a smaller step budget, and nothing in the flow that would notice.
+//
+// The test lives in seed_internal_test.go, because provoking that failure needs
+// the unexported seam.
