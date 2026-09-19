@@ -303,6 +303,10 @@ namespace Wia.RimWorld.Runtime
                         " status=" + message.TurnCompletion.Status);
                     break;
 
+                case RuntimeMessage.PayloadOneofCase.EventAck:
+                    HandleEventAck(message.EventAck);
+                    break;
+
                 case RuntimeMessage.PayloadOneofCase.CancelAction:
                     // present_dialogue answers as soon as the window is up, so by the time a cancel
                     // could arrive there is no action left to cancel. Nothing hangs: the action is
@@ -316,7 +320,43 @@ namespace Wia.RimWorld.Runtime
                     break;
 
                 default:
-                    AdapterLog.Warn($"ignoring unsupported RuntimeMessage payload: {message.PayloadCase}");
+                    // The remaining payloads - world binding ready, checkpoint prepared, task control
+                    // - belong to the durable task extension, which this adapter does not negotiate,
+                    // so the Runtime has no reason to send them.
+                    AdapterLog.Warn($"ignoring Runtime message outside this adapter's scope: {message.PayloadCase}");
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// The Runtime's answer to a GameEvent we sent. A rejection is the one outcome the player
+        /// cannot see any other way: the click produced a message, and nothing came back.
+        /// </summary>
+        private static void HandleEventAck(EventAck ack)
+        {
+            if (ack == null)
+            {
+                return;
+            }
+
+            switch (ack.Status)
+            {
+                case EventAckStatus.Accepted:
+                    AdapterLog.Info("event accepted event=" + ack.EventId);
+                    break;
+
+                case EventAckStatus.Duplicate:
+                    AdapterLog.Warn("runtime treated the event as a duplicate event=" + ack.EventId);
+                    break;
+
+                case EventAckStatus.Rejected:
+                    AdapterLog.Error(
+                        "event rejected event=" + ack.EventId +
+                        ": " + ack.Error?.Code + " " + ack.Error?.Message);
+                    break;
+
+                default:
+                    AdapterLog.Warn("event ack with status " + ack.Status + " event=" + ack.EventId);
                     break;
             }
         }
