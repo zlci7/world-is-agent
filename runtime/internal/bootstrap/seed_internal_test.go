@@ -33,9 +33,13 @@ func TestAFailedSeedBlocksTheCoreEvenWithAValidModelConfiguration(t *testing.T) 
 	defer runtime.Close()
 
 	// Blocking, not refusing to run: the client still has to be able to say what
-	// went wrong.
-	if runtime.State() != StateNeedsConfiguration {
-		t.Fatalf("state = %q, want %q", runtime.State(), StateNeedsConfiguration)
+	// went wrong, and must be able to tell this apart from a root that is merely
+	// waiting for a model configuration.
+	if runtime.State() != StateBlocked {
+		t.Fatalf("state = %q, want %q", runtime.State(), StateBlocked)
+	}
+	if !runtime.Blocked() {
+		t.Fatal("a root that could not be seeded did not report itself blocked")
 	}
 	if runtime.Ready() {
 		t.Fatal("a root that could not be seeded reported ready")

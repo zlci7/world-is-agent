@@ -145,8 +145,14 @@ type State string
 
 const (
 	// StateNeedsConfiguration means Bootstrap is running but the agent core is
-	// not. Reason says what is missing.
+	// not. Reason says what is missing, and configuring a model can resolve it.
 	StateNeedsConfiguration State = "needs_configuration"
+	// StateBlocked means the data root has a configuration problem that
+	// configuring a model cannot resolve, so the core will not become ready in
+	// this process. It is separate from StateNeedsConfiguration because the two
+	// ask the user for opposite things: one asks for a model, the other asks for
+	// a restart with the initialization problem fixed.
+	StateBlocked State = "blocked"
 	// StateReady means the agent core is serving turns.
 	StateReady State = "ready"
 )
@@ -207,9 +213,11 @@ func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
 		log.Printf("GameAgent seeded default configuration into %s", layout.ConfigDir())
 	}
 
-	r := &Runtime{layout: layout, state: StateNeedsConfiguration, blocked: blocked}
+	// Reported as a state rather than exited on: the process has to stay up so the
+	// client can show why the configuration was refused.
+	r := &Runtime{layout: layout, state: StateNeedsConfiguration}
 	if blocked {
-		r.reason = blockedReason
+		r.state, r.reason, r.blocked = StateBlocked, blockedReason, true
 	}
 	agentPath := resolveConfigPath(env, agent.ConfigEnvName, root, layout.ConfigPath(agentConfigFile))
 	r.modelPath = resolveConfigPath(env, llm.ConfigEnvName, root, layout.ConfigPath(modelConfigFile))
@@ -217,6 +225,7 @@ func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
 
 	agentConfig, err := agent.LoadConfigFile(agentPath)
 	if err != nil {
+		r.state = StateBlocked
 		r.reason = fmt.Sprintf("agent configuration at %s is unusable: %v", agentPath, err)
 		r.blocked = true
 		agentConfig = agent.DefaultConfig()
@@ -368,6 +377,16 @@ func (r *Runtime) State() State {
 // Ready reports whether the agent core can serve turns. Downstream components that
 // consume durable state, such as the task dispatcher, must not act while it is false.
 func (r *Runtime) Ready() bool { return r.State() == StateReady }
+
+// Blocked reports a configuration problem that configuring a model cannot resolve.
+// A caller about to do work whose only purpose is to make the core ready can use
+// it to fail immediately, instead of spending that work on a process that will
+// refuse the result.
+func (r *Runtime) Blocked() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.blocked
+}
 
 // Reason explains a state that is not StateReady.
 func (r *Runtime) Reason() string {

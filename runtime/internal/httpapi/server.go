@@ -276,6 +276,14 @@ func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A blocked data root cannot be made ready by any model configuration, so the
+	// submission is answered before the probe: spending a model call, and leaving a
+	// credential behind for it, would both be wasted on a process that refuses the
+	// result. The reason is the actionable part and it carries no credential.
+	if s.options.Runtime.Blocked() {
+		writeError(w, http.StatusBadRequest, "setup_blocked", s.options.Runtime.Reason())
+		return
+	}
 	candidate := body.candidate()
 	if outcome := llm.ProbeConnection(r.Context(), candidate); !outcome.OK {
 		// The code is the actionable part; the message says what to fix without

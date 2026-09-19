@@ -2,12 +2,18 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gameagent/runtime/internal/bootstrap"
+	"gameagent/runtime/internal/dataroot"
 )
 
 // providerStub answers one model request. The first-run flow only needs to know
@@ -146,8 +152,96 @@ func TestSetupModelValidatesTheBody(t *testing.T) {
 	}
 }
 
-func TestSetupModelRejectsAForeignOrigin(t *testing.T) {
-	f := newFixture(t, nil)
+// A root whose shipped configuration could not be prepared can never become ready
+// in this process, so a submission must be answered from the reason rather than
+// from a model call. The stub provider is deliberately reachable: a probe that
+// runs here would succeed, install a credential, and still be refused.
+func TestSetupModelRefusesABlockedDataRootBeforeProbing(t *testing.T) {
+	f := newBlockedFixture(t)
+	cookie := f.session(t)
+	provider := acceptingProvider(t)
+
+	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
+		"provider": "deepseek", "model": "test-model", "base_url": provider.URL, "api_key": "sk-blocked-root",
+	}), cookie)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
+	}
+	response := decodeBody[errorResponse](t, recorder)
+	if response.Error.Code != "setup_blocked" {
+		t.Fatalf("code = %q, want setup_blocked", response.Error.Code)
+	}
+	if !strings.Contains(response.Error.Message, "shipped configuration") {
+		t.Fatalf("message = %q, want it to name the initialization failure", response.Error.Message)
+	}
+	if strings.Contains(recorder.Body.String(), "sk-blocked-root") {
+		t.Fatal("the failure response echoed the credential")
+	}
+	// Refused before the probe, so nothing was written for it either.
+	assertNoCredentialWritten(t, f)
+	if state := f.runtime.State(); state != bootstrap.StateBlocked {
+		t.Fatalf("state = %q, want %q", state, bootstrap.StateBlocked)
+	}
+}
+
+// newBlockedFixture opens a data root whose shipped configuration cannot be
+// written. A plain file where the shipped tree expects a directory is a real
+// initialization failure, and it behaves the same on every platform.
+func newBlockedFixture(t *testing.T) *fixture {
+	t.Helper()
+
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "games"), nil, 0o644); err != nil {
+		t.Fatalf("occupy the shipped tree: %v", err)
+	}
+
+	env := dataroot.Env{
+		GOOS:    "linux",
+		Getenv:  func(string) string { return "" },
+		HomeDir: func() (string, error) { return root, nil },
+	}
+	runtime, err := bootstrap.Open(root, env)
+	if err != nil {
+		t.Fatalf("open runtime: %v", err)
+	}
+	t.Cleanup(func() { _ = runtime.Close() })
+	if !runtime.Blocked() {
+		t.Fatal("the fixture did not produce a blocked data root")
+	}
+
+	server, err := New(Options{
+		Addr:     "127.0.0.1:0",
+		Runtime:  runtime,
+		GRPCAddr: "127.0.0.1:50051",
+		Version:  "test",
+		Logger:   log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Shutdown() })
+
+	_, port, err := net.SplitHostPort(server.listener.Addr().String())
+	if err != nil {
+		t.Fatalf("listener address: %v", err)
+	}
+	host := "127.0.0.1:" + port
+	return &fixture{
+		server:  server,
+		runtime: runtime,
+		root:    root,
+		host:    host,
+		origin:  "http://" + host,
+		token:   server.sessions.bootstrapToken(),
+	}
+}
+
+func TestSetupModelRejectsAForeignOrigin(t *testing.T) {	f := newFixture(t, nil)
 
 	request := httptest.NewRequest(http.MethodPost, f.origin+"/api/setup/model", strings.NewReader(setupBody(map[string]any{
 		"provider": "deepseek", "api_key": "sk-foreign",
