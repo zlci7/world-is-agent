@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化与 10.3 未开工
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3-A 已定稿待实现**（见 [10.3-A 方案](GameAgent%20MVP0%20Phase10.3-A%20RimWorld%20对话接入与世界实例实体技术方案.md)）；**10.4 Game Profile 选择已立方案**，执行位置在 10.3-B 之前（见 [10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)）；10.3-B、10.3-C 未开工
 > **Date:** 2026-09-18
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
@@ -559,6 +559,8 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 ```
 
 各自独立方案、独立验收、独立提交。A 与 B 的顺序可依实际情况调整，但 C 必须在 A、B 之后——检查表应由真实经历沉淀，而不是先写规范再套用。
+
+**10.4（[Game Profile 选择](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)）插在 A 与 B 之间。** 它不在 10.3 的三个交付物里，但 B 依赖它的结论：拆仓前必须先确定游戏的 definitions 是随 Adapter 仓库走还是留在 Runtime 发布树，而 profile 选择器正是那个按游戏定位定义的机制。先拆仓会让定义归属变成事后追认。
 
 ### 4.8 退出条件
 
