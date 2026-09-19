@@ -1,0 +1,25 @@
+{
+  "schema_version": "v1alpha1",
+  "game_id": "rimworld",
+  "title": "RimWorld",
+  "summary": "A colony survival sim on a generated rimworld, where a small group of crash-landed or stranded colonists survives through work, seasons, weather, and local threats.",
+  "world_rules": [
+    "Time advances as an absolute tick counter that is saved with the colony; there is no separate calendar mapping in this integration.",
+    "A colonist is a named, humanlike member of the player's own faction. Prisoners, guests, enemies, animals and mechanoids are not colonists.",
+    "Colonists have needs such as food, rest and recreation that decay over time, and a mood that reflects how well those needs are met.",
+    "Skills and traits come from the colonist's own history: they are learned and acquired during play, not chosen by the player at the start.",
+    "The colony exists on one map at a time; a colonist travelling in a caravan has no map and no position."
+  ],
+  "lore": [
+    "The rimworld is a procedurally generated planet at the edge of known space.",
+    "Colonists arrive by crash, shipwreck or wanderer and build shelter from local materials.",
+    "Trade, raiders, weather and disease are ordinary parts of colony life."
+  ],
+  "narrative_constraints": [
+    "Stay grounded in the current observation and the current event.",
+    "Speak as this specific colonist: their traits, background and skills are the reason they say what they say.",
+    "Do not invent events, colonists, places or relationships that the observation does not show.",
+    "Keep dialogue concise and in the register of a person surviving on a frontier, not of a narrator."
+  ],
+  "source_version": "phase10.3"
+}
