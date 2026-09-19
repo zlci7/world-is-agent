@@ -69,7 +69,7 @@ func Seed(configDir string, skip bool) (bool, error) {
 	if err := seedDefinitions(configDir); err != nil {
 		return false, err
 	}
-	if err := writeFileAtomically(anchor, profile); err != nil {
+	if err := WriteFile(anchor, profile); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -123,39 +123,4 @@ func seedDefinitions(configDir string) error {
 		}
 		return nil
 	})
-}
-
-// writeFileAtomically writes next to the destination and renames, so a reader
-// never observes a half-written configuration.
-func writeFileAtomically(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
-
-	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
-	if err != nil {
-		return fmt.Errorf("create temporary file in %s: %w", dir, err)
-	}
-	temporary := file.Name()
-	defer func() { _ = os.Remove(temporary) }()
-
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return fmt.Errorf("write %s: %w", temporary, err)
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return fmt.Errorf("sync %s: %w", temporary, err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", temporary, err)
-	}
-	if err := os.Chmod(temporary, 0o644); err != nil {
-		return fmt.Errorf("chmod %s: %w", temporary, err)
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		return fmt.Errorf("rename %s to %s: %w", temporary, path, err)
-	}
-	return nil
 }

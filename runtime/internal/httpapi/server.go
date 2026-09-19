@@ -169,6 +169,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleStatus(w, r)
 	case "/api/turns":
 		s.handleTurns(w, r)
+	case "/api/setup/model":
+		s.handleSetupModel(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "no such route")
 	}
@@ -188,18 +190,17 @@ type statusResponse struct {
 	GRPCAddr string `json:"grpc_addr,omitempty"`
 	Version  string `json:"version,omitempty"`
 
+	// Seeded reports whether this start wrote the shipped configuration into an
+	// unconfigured data root.
+	Seeded bool `json:"seeded"`
+
 	// Model describes the configuration without its credential. ModelError
 	// explains why there is nothing to describe.
 	Model      *llm.ConfigSummary `json:"model,omitempty"`
 	ModelError string             `json:"model_error,omitempty"`
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "status is read with GET")
-		return
-	}
-
+func (s *Server) statusPayload() statusResponse {
 	runtime := s.options.Runtime
 	layout := runtime.Layout()
 	response := statusResponse{
@@ -213,6 +214,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		TracePath:       s.tracePath,
 		GRPCAddr:        s.options.GRPCAddr,
 		Version:         s.options.Version,
+		Seeded:          runtime.Seeded(),
 	}
 	// A missing or broken model configuration is exactly what the client has to
 	// report, so it is a field rather than a failed request.
@@ -221,8 +223,78 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	} else {
 		response.Model = &summary
 	}
-	writeJSON(w, http.StatusOK, response)
+	return response
 }
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "status is read with GET")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.statusPayload())
+}
+
+// setupModelRequest is one first-run submission. The credential travels in this
+// request and nowhere else: it is never echoed, logged or traced.
+type setupModelRequest struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	BaseURL  string `json:"base_url"`
+	APIKey   string `json:"api_key"`
+	// SkipConnectionTest commits a configuration that was not verified against the
+	// provider. It exists for a user who is offline, and it must be asked for
+	// explicitly rather than assumed.
+	SkipConnectionTest bool `json:"skip_connection_test"`
+}
+
+// handleSetupModel is the authoritative commit for the model configuration.
+//
+// Until the connection probe exists, it accepts only an explicit
+// skip_connection_test. That is not a limitation to work around: committing
+// silently here would produce exactly the configuration the first-run flow exists
+// to prevent, one that looks verified and is not.
+func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "the model configuration is written with POST")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && origin != s.url {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", fmt.Sprintf("unexpected origin %q", origin))
+		return
+	}
+
+	var body setupModelRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSetupBodyBytes)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "expected a JSON object with the model configuration")
+		return
+	}
+	if !body.SkipConnectionTest {
+		writeError(w, http.StatusConflict, "connection_test_unavailable",
+			"this build cannot verify a model connection yet, so the configuration is only written when skip_connection_test is set explicitly")
+		return
+	}
+
+	err := s.options.Runtime.ApplyModelConfiguration(bootstrap.ModelSetup{
+		Provider: body.Provider,
+		Model:    body.Model,
+		BaseURL:  body.BaseURL,
+		APIKey:   body.APIKey,
+	})
+	if err != nil {
+		// The core state carries the reason, so the client can show what is
+		// missing rather than a bare failure.
+		writeError(w, http.StatusBadRequest, "model_setup_failed", err.Error())
+		return
+	}
+
+	// The same payload the client polls, so a successful save needs no second
+	// request to learn what changed.
+	writeJSON(w, http.StatusOK, s.statusPayload())
+}
+
+// maxSetupBodyBytes bounds one setup submission. A credential is short, and a
+// large body is not one.
+const maxSetupBodyBytes = 16 << 10
 
 type turnsResponse struct {
 	TracePath string           `json:"trace_path"`

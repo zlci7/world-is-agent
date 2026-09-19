@@ -396,3 +396,152 @@ func TestFreshRootBecomesReadyWithAFileCredential(t *testing.T) {
 		}
 	}
 }
+
+// The first-run commit, end to end on a root that nothing has configured.
+func TestApplyModelConfigurationMakesAFreshRootReady(t *testing.T) {
+	root := t.TempDir()
+	runtime, err := bootstrap.Open(root, stubEnv(nil))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer runtime.Close()
+
+	if runtime.Ready() {
+		t.Fatal("a fresh root reported ready before anything was configured")
+	}
+	if !runtime.Seeded() {
+		t.Fatal("a fresh root was not seeded")
+	}
+
+	err = runtime.ApplyModelConfiguration(bootstrap.ModelSetup{
+		Provider: "deepseek",
+		Model:    "test-model",
+		APIKey:   "sk-entered-by-the-user",
+	})
+	if err != nil {
+		t.Fatalf("ApplyModelConfiguration: %v", err)
+	}
+
+	if !runtime.Ready() {
+		t.Fatalf("state = %s (%s), want ready", runtime.State(), runtime.Reason())
+	}
+
+	// The written configuration references the credential rather than containing
+	// it, and the reference is relative so the data root stays movable.
+	written, err := os.ReadFile(runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatalf("read the written configuration: %v", err)
+	}
+	if strings.Contains(string(written), "sk-entered-by-the-user") {
+		t.Fatalf("the written configuration contains the credential: %s", written)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(written, &document); err != nil {
+		t.Fatalf("parse the written configuration: %v", err)
+	}
+	if reference, _ := document["api_key"].(string); reference != "file:../secrets/model.key" {
+		t.Fatalf("api_key = %q, want a relative reference to the secret", reference)
+	}
+
+	// And it resolves: the credential is readable where the configuration says.
+	layout := runtime.Layout()
+	value, err := secret.Read(filepath.Join(layout.SecretsDir(), "model.key"))
+	if err != nil {
+		t.Fatalf("read the stored credential: %v", err)
+	}
+	if value != "sk-entered-by-the-user" {
+		t.Fatalf("stored credential = %q", value)
+	}
+
+	// A written configuration has to keep the window: without it the provider
+	// skips its own check and summarisation is switched off.
+	if document["context_window_tokens"] == nil || document["max_output_tokens"] == nil {
+		t.Fatalf("the written configuration has no window: %s", written)
+	}
+}
+
+func TestApplyModelConfigurationRefusesToReplaceARunningCore(t *testing.T) {
+	root := t.TempDir()
+	runtime, err := bootstrap.Open(root, stubEnv(nil))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "deepseek", Model: "first-model", APIKey: "sk-first"}); err != nil {
+		t.Fatalf("first ApplyModelConfiguration: %v", err)
+	}
+	before, err := os.ReadFile(runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatalf("read the configuration: %v", err)
+	}
+
+	// Configure is a no-op once a real core is installed, so writing here would
+	// leave the files and the running core disagreeing.
+	err = runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "deepseek", Model: "second-model", APIKey: "sk-second"})
+
+	if err == nil {
+		t.Fatal("a second configuration replaced a running core")
+	}
+	if !strings.Contains(err.Error(), "restart") {
+		t.Fatalf("error = %v, want it to say a restart is needed", err)
+	}
+	after, readErr := os.ReadFile(runtime.ModelConfigPath())
+	if readErr != nil {
+		t.Fatalf("re-read the configuration: %v", readErr)
+	}
+	if string(before) != string(after) {
+		t.Fatal("the refused call still changed the configuration")
+	}
+}
+
+func TestApplyModelConfigurationValidatesItsInput(t *testing.T) {
+	runtime, err := bootstrap.Open(t.TempDir(), stubEnv(nil))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer runtime.Close()
+
+	for name, setup := range map[string]bootstrap.ModelSetup{
+		"no provider": {APIKey: "sk-value"},
+		"no key":      {Provider: "deepseek"},
+		"blank key":   {Provider: "deepseek", APIKey: "   "},
+	} {
+		if err := runtime.ApplyModelConfiguration(setup); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+func TestApplyModelConfigurationKeepsAChosenWindow(t *testing.T) {
+	runtime, err := bootstrap.Open(t.TempDir(), stubEnv(nil))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer runtime.Close()
+
+	err = runtime.ApplyModelConfiguration(bootstrap.ModelSetup{
+		Provider:            "deepseek",
+		APIKey:              "sk-value",
+		ContextWindowTokens: 4096,
+		MaxOutputTokens:     512,
+	})
+	if err != nil {
+		t.Fatalf("ApplyModelConfiguration: %v", err)
+	}
+
+	written, err := os.ReadFile(runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatalf("read the configuration: %v", err)
+	}
+	var document struct {
+		ContextWindowTokens int `json:"context_window_tokens"`
+		MaxOutputTokens     int `json:"max_output_tokens"`
+	}
+	if err := json.Unmarshal(written, &document); err != nil {
+		t.Fatalf("parse the configuration: %v", err)
+	}
+	if document.ContextWindowTokens != 4096 || document.MaxOutputTokens != 512 {
+		t.Fatalf("window = %d/%d, want the chosen 4096/512", document.ContextWindowTokens, document.MaxOutputTokens)
+	}
+}

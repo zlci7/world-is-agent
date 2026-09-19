@@ -14,10 +14,12 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -29,6 +31,7 @@ import (
 	"gameagent/runtime/internal/llm"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
+	"gameagent/runtime/internal/secret"
 	"gameagent/runtime/internal/session"
 	"gameagent/runtime/internal/task"
 	"gameagent/runtime/internal/tool"
@@ -38,7 +41,99 @@ import (
 const (
 	modelConfigFile = "model.json"
 	agentConfigFile = "agent.json"
+	// modelSecretFile is where the first-run flow stores the credential. The model
+	// configuration references it relatively, so the two move together with the
+	// data root.
+	modelSecretFile = "model.key"
 )
+
+// ModelSetup is a candidate model configuration from the first-run flow. APIKey
+// is transient: it is written to the secrets directory and never returned,
+// logged or traced. A zero window means the caller did not choose one, and the
+// shipped default for the provider is written instead.
+type ModelSetup struct {
+	Provider            string
+	Model               string
+	BaseURL             string
+	APIKey              string
+	ContextWindowTokens int
+	MaxOutputTokens     int
+}
+
+// modelConfig is the written form of the model configuration. It restates the
+// fields rather than reusing llm.Config: this is what the Runtime writes for its
+// user, and a field added to the loader should not start appearing in files as a
+// side effect.
+type modelConfig struct {
+	Provider            string `json:"provider"`
+	Model               string `json:"model,omitempty"`
+	APIKey              string `json:"api_key"`
+	BaseURL             string `json:"base_url,omitempty"`
+	ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
+	MaxOutputTokens     int    `json:"max_output_tokens,omitempty"`
+}
+
+// ApplyModelConfiguration stores a model configuration and installs the agent
+// core from it.
+//
+// The credential is written first and the configuration that references it
+// second: a configuration naming a file that is not there leaves a root whose
+// credential is missing, which is a worse state to recover from than having
+// written neither.
+//
+// It refuses to run while a real core is installed, because Configure is a no-op
+// in that state: writing anyway would leave the files and the running core
+// disagreeing about which model is in use.
+func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
+	if strings.TrimSpace(setup.Provider) == "" {
+		return errors.New("a model provider is required")
+	}
+	if strings.TrimSpace(setup.APIKey) == "" {
+		return errors.New("an API key is required")
+	}
+
+	r.mu.Lock()
+	installed := r.loop != nil && !r.placeholder
+	r.mu.Unlock()
+	if installed {
+		return errors.New("the agent core is already configured; changing the model requires a restart")
+	}
+
+	secretPath := filepath.Join(r.layout.SecretsDir(), modelSecretFile)
+	if err := secret.Write(secretPath, setup.APIKey); err != nil {
+		return fmt.Errorf("store the API key: %w", err)
+	}
+
+	reference, err := filepath.Rel(r.layout.ConfigDir(), secretPath)
+	if err != nil {
+		return fmt.Errorf("reference the API key file: %w", err)
+	}
+
+	// A configuration with no window is valid, so this is about the quality of the
+	// default rather than about validity: without a window the provider skips its
+	// own check and the Runtime turns summarisation off.
+	window := model.WindowLimits{ContextTokens: setup.ContextWindowTokens, OutputTokens: setup.MaxOutputTokens}
+	if window == (model.WindowLimits{}) {
+		window = llm.DefaultWindowLimits(setup.Provider, setup.Model)
+	}
+
+	document, err := json.MarshalIndent(modelConfig{
+		Provider:            setup.Provider,
+		Model:               setup.Model,
+		BaseURL:             setup.BaseURL,
+		APIKey:              "file:" + filepath.ToSlash(reference),
+		ContextWindowTokens: window.ContextTokens,
+		MaxOutputTokens:     window.OutputTokens,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode the model configuration: %w", err)
+	}
+	if err := config.WriteFile(r.modelPath, append(document, '\n')); err != nil {
+		return fmt.Errorf("write the model configuration: %w", err)
+	}
+
+	return r.Configure()
+}
 
 // State reports how far the Runtime got.
 type State string
@@ -68,6 +163,7 @@ type Runtime struct {
 	state       State
 	reason      string
 	blocked     bool
+	seeded      bool
 }
 
 // Open resolves the data root, loads what configuration exists and opens the
@@ -94,13 +190,15 @@ func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
 	// one. Seeding is best-effort in the same sense as the trace recorder: a root
 	// that could not be seeded still starts, with the reason reported, rather than
 	// refusing to run.
-	if seeded, err := config.Seed(layout.ConfigDir(), strings.TrimSpace(env.Getenv(agent.ConfigEnvName)) != ""); err != nil {
+	seeded := false
+	if wroteSeed, err := config.Seed(layout.ConfigDir(), strings.TrimSpace(env.Getenv(agent.ConfigEnvName)) != ""); err != nil {
 		log.Printf("seed shipped configuration failed: %v", err)
-	} else if seeded {
+	} else if wroteSeed {
+		seeded = true
 		log.Printf("GameAgent seeded default configuration into %s", layout.ConfigDir())
 	}
 
-	r := &Runtime{layout: layout, state: StateNeedsConfiguration}
+	r := &Runtime{layout: layout, state: StateNeedsConfiguration, seeded: seeded}
 	agentPath := resolveConfigPath(env, agent.ConfigEnvName, root, layout.ConfigPath(agentConfigFile))
 	r.modelPath = resolveConfigPath(env, llm.ConfigEnvName, root, layout.ConfigPath(modelConfigFile))
 	r.agentPath = agentPath
@@ -258,6 +356,10 @@ func (r *Runtime) State() State {
 // Ready reports whether the agent core can serve turns. Downstream components that
 // consume durable state, such as the task dispatcher, must not act while it is false.
 func (r *Runtime) Ready() bool { return r.State() == StateReady }
+
+// Seeded reports whether this process wrote the shipped configuration into an
+// unconfigured data root. It is a fact about this start, not about the root.
+func (r *Runtime) Seeded() bool { return r.seeded }
 
 // Reason explains a state that is not StateReady.
 func (r *Runtime) Reason() string {
