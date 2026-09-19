@@ -43,7 +43,7 @@
 | D3 | 默认配置来源 | embed + **首次 seed**；锚点是 `agent.json`；不 merge / 不覆盖 / 不升级；显式 agent config override 时完全不 seed |
 | D4 | 可修改范围 | 只做首次 model 配置；不做 Ready 之后的热切换；默认 UI 不暴露 `base_url` |
 | D5 | 连接测试 | **必须先测过才允许落盘**；没有 skip 逃生口，也没有单独的"只测试不保存"路由（§6.3、§6.4） |
-| D6 | 状态 | 只有 Runtime 两态（`needs_configuration` / `ready`）加原因。连接测试的结果不持久化、不进状态 |
+| D6 | 状态 | Runtime 三态：`needs_configuration` / `blocked` / `ready`，外加原因。连接测试的结果不持久化、不进状态 |
 
 ### 2.1 D2 的准确表述
 
@@ -171,7 +171,11 @@ provider_error           其它非成功响应
 
 即使将来页面加了"测试"按钮，**服务端也不复用那个结论**：前端测 A 通过、提交时 payload 变成 B，就会落盘一个未验证的配置。权威提交永远对**本次请求的参数**自己探一次。
 
-提交顺序：**探测 → 通过 → 写凭据 → 写配置 → `Configure()`**。若 `Configure()` 失败（例如 agent 配置不可用），配置已落盘但状态为 `needs_configuration` 并带原因——这是可恢复的，也是客户端能看到的信息。
+提交顺序：**探测 → 通过 → 写凭据 → 写配置 → `Configure()`**。
+
+**`blocked` 的数据根在探测之前就被拒**（code `setup_blocked`）。这类根的问题是"默认配置没能就位"或"既有 `agent.json` 不可用"，配一个模型解决不了它，本进程内也不会变 Ready；先探测等于花一次模型调用、再为它留下一个凭据文件，然后拒绝自己刚刚验证过的结果。探测前拒绝同时也保证了这一档**一个文件都不写**。
+
+过了这道关之后 `Configure()` 仍可能失败（provider 不可用时 `NewProviderFromConfigFile` 报错，或 `definition_catalog_root` 指向的目录不可读）。这种情况下凭据与 `model.json` 已落盘，状态为 `needs_configuration` 并带原因——文件与状态是自洽的，用户修正后再次提交即可，无需重启。
 
 ### 6.5 Ready 之后拒绝再提交
 
@@ -180,9 +184,11 @@ provider_error           其它非成功响应
 ## 7. 客户端可见的状态
 
 ```text
-Runtime   needs_configuration / ready（外加 reason）
+Runtime   needs_configuration / blocked / ready（外加 reason）
 Model     provider、model、凭据是否可用（api_key_configured），以及不可用时为什么（api_key_problem）
 ```
+
+页面只需要处理这三种状态：`needs_configuration` 显示表单；`blocked` 显示原因并说明要修正后重启（本轮没有其它出路）；`ready` 说明已配置完成。
 
 `api_key_problem` 让界面能说"你引用的文件不存在"，而不是笼统的"未配置"——后者会把用户指向错误的下一步。它只包含用户写下的引用，不含解析后的路径。
 
@@ -193,8 +199,10 @@ Model     provider、model、凭据是否可用（api_key_configured），以及
 ```text
 bootstrap.Configure()     只重读 model.json；真实 core 上重复调用是 no-op
                           模型不可用时装载 unavailableProvider，turn 仍能正常终止
-bootstrap.Open()          agent.json 缺失时 LoadConfigFile 返回 DefaultConfig() 且不报错
-                          → 空数据根不会 blocked，但会拿到通用基线（无 catalog、max_steps 3）
+bootstrap.Open()          seed 先于 agent 配置加载，且失败时置 blocked
+                          agent.json 缺失时 LoadConfigFile 返回 DefaultConfig() 且不报错
+                          → 通用基线只在【显式 override 或用户自备 agent.json】下出现；
+                            空数据根要么拿到 seed 结果，要么 blocked，不会静默降级
 llm.resolveAPIKey()       只接受 env:，且有测试显式拒绝内联 key；file: 是新增的第二种形式
 model.WindowLimits        零值合法；省略时 provider 跳过自身窗口校验，且 Runtime 关闭摘要生成
 per-game profile          不存在自动加载机制
@@ -225,6 +233,7 @@ gateway.Server            本阶段不使用其世界注册表
 | seed 幂等 | 第二次启动不新增/不覆盖任何文件，且无 seed 日志 |
 | 显式 override | 设 `GAMEAGENT_AGENT_CONFIG` 时一个默认文件都不写 |
 | 未通过测试不可提交 | 探测失败时返回明确 code，且凭据与配置**都没写** |
+| 默认配置就位失败 | 状态 `blocked` 且带原因；提交被拒（`setup_blocked`）且**不探测、不写任何文件**；有效模型配置也不能让它变 Ready |
 | 配置正确 | 写出的 `model.json` 引用凭据而非包含它，带 window，`api_key` 为相对引用 |
 | 不泄露 | `/api/status` 与 `/api/setup/model` 的响应都不出现 key；进程日志不出现 key |
 | 权限 | Unix：`secrets/` 0700、凭据 0600；权限设置失败时不落盘 |
