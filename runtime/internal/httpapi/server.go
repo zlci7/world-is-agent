@@ -170,6 +170,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleStatus(w, r)
 	case "/api/turns":
 		s.handleTurns(w, r)
+	case "/api/setup/options":
+		s.handleSetupOptions(w, r)
 	case "/api/setup/model":
 		s.handleSetupModel(w, r)
 	default:
@@ -228,6 +230,24 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.statusPayload())
+}
+
+type setupOptionsResponse struct {
+	Providers []llm.ProviderChoice `json:"providers"`
+}
+
+// handleSetupOptions reports what the first-run form may offer.
+//
+// It exists so the page does not carry its own list of providers. A list in the
+// page is a second source for a fact the Runtime already decides, and the failure
+// it produces is a form that offers something the Runtime refuses, or hides
+// something it supports.
+func (s *Server) handleSetupOptions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "the setup options are read with GET")
+		return
+	}
+	writeJSON(w, http.StatusOK, setupOptionsResponse{Providers: llm.ProviderChoices()})
 }
 
 // setupModelRequest is one first-run submission. The credential travels in this

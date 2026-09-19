@@ -27,6 +27,31 @@ export interface Status {
   model_error?: string
 }
 
+/** The Runtime reports three states. `needs_configuration` is the only one a
+ *  form can resolve; `blocked` means the data root could not be given its
+ *  shipped configuration, which no model setting can fix in this process. */
+export const StateNeedsConfiguration = 'needs_configuration'
+export const StateBlocked = 'blocked'
+export const StateReady = 'ready'
+
+/** One first-run submission. There is no window field: the Runtime writes the
+ *  shipped default for the provider, and a wrong number here is worse than no
+ *  number. */
+export interface ModelCandidate {
+  provider: string
+  model: string
+  api_key: string
+}
+
+export interface ProviderChoice {
+  provider: string
+  model: string
+}
+
+export interface SetupOptions {
+  providers: ProviderChoice[]
+}
+
 export interface Turn {
   turn_id: string
   game_id?: string

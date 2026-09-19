@@ -1,4 +1,10 @@
-import { ApiError, type Status, type TurnsResponse } from './types'
+import {
+  ApiError,
+  type ModelCandidate,
+  type SetupOptions,
+  type Status,
+  type TurnsResponse,
+} from './types'
 
 /** The Runtime hands over its session credential in the URL fragment, which a
  *  browser never sends to a server. Exchanging it here and then clearing the
@@ -37,6 +43,30 @@ export function fetchStatus(): Promise<Status> {
 
 export function fetchTurns(limit = 50): Promise<TurnsResponse> {
   return get<TurnsResponse>(`/api/turns?limit=${limit}`)
+}
+
+/** The providers the first-run form may offer, with each one's default model.
+ *  Asking the Runtime keeps the page from carrying a second list that can drift
+ *  from what it will actually accept. */
+export function fetchSetupOptions(): Promise<SetupOptions> {
+  return get<SetupOptions>('/api/setup/options')
+}
+
+/** One first-run submission. The Runtime probes exactly these parameters before
+ *  it writes anything, so there is no separate "test" call: a resolved promise
+ *  means the configuration was accepted, verified and installed, and the response
+ *  is the same status payload the client polls. A rejection carries the probe's
+ *  own code, and nothing was written for it. */
+export async function saveModelSetup(candidate: ModelCandidate): Promise<Status> {
+  const response = await fetch('/api/setup/model', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(candidate),
+  })
+  if (!response.ok) {
+    throw await toApiError(response)
+  }
+  return (await response.json()) as Status
 }
 
 async function toApiError(response: Response): Promise<ApiError> {

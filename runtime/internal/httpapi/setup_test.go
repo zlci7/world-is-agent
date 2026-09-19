@@ -267,8 +267,60 @@ func TestSetupModelIsNotReachableWithAGet(t *testing.T) {
 	}
 }
 
-func assertNoCredentialWritten(t *testing.T, f *fixture) {
-	t.Helper()
+// The form offers what this reports, so an empty or unreachable answer is a form
+// with nothing to submit.
+func TestSetupOptionsRequiresASession(t *testing.T) {
+	f := newFixture(t, nil)
+
+	recorder := f.do(t, http.MethodGet, "/api/setup/options", "")
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+}
+
+func TestSetupOptionsReportsProvidersWithTheirDefaultModels(t *testing.T) {
+	f := newFixture(t, nil)
+
+	recorder := f.do(t, http.MethodGet, "/api/setup/options", "", f.session(t))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+
+	// Asserted against the wire text rather than a decoded struct: decoding into
+	// the same type the handler encodes accepts any field name it happens to use,
+	// which is exactly how a capitalised name reaches a client that reads the
+	// documented lowercase one.
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"provider"`) || !strings.Contains(body, `"model"`) {
+		t.Fatalf("options are not named as the client reads them: %s", body)
+	}
+	if strings.Contains(body, `"Provider"`) || strings.Contains(body, `"Model"`) {
+		t.Fatalf("options use Go field names: %s", body)
+	}
+
+	options := decodeBody[setupOptionsResponse](t, recorder)
+	if len(options.Providers) == 0 {
+		t.Fatal("no provider offered, so the first-run form cannot be submitted")
+	}
+	for _, choice := range options.Providers {
+		if strings.TrimSpace(choice.Provider) == "" || strings.TrimSpace(choice.Model) == "" {
+			t.Fatalf("offered choice is incomplete: %+v", choice)
+		}
+	}
+}
+
+func TestSetupOptionsIsNotReachableWithAPost(t *testing.T) {
+	f := newFixture(t, nil)
+
+	recorder := f.do(t, http.MethodPost, "/api/setup/options", "{}", f.session(t))
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", recorder.Code)
+	}
+}
+
+func assertNoCredentialWritten(t *testing.T, f *fixture) {	t.Helper()
 
 	secretPath := filepath.Join(f.runtime.Layout().SecretsDir(), "model.key")
 	if _, err := os.Stat(secretPath); err == nil {

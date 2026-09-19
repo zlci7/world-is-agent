@@ -135,7 +135,10 @@ API Key    [ ••••••••••••••• ]
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
+| GET | `/api/setup/options` | 页面可以列出哪些 provider，以及每个的默认模型 |
 | POST | `/api/setup/model` | 唯一入口：先探测**这次请求的同一组参数**，通过才写凭据 → 原子写 `model.json` → `Configure()` |
+
+`/api/setup/options` 只报告 Runtime 真能构造出来的 provider：它取自与 `buildProbeProvider` 同一个 switch。页面自己写一份名单就是同一事实的第二个来源，漂移的后果是表单提供一个 Runtime 会拒绝的选项，或者藏起一个它支持的选项。
 
 **没有单独的测试路由。** 探测本身就是提交路径的第一步，所以"只测试不保存"只是同一个动作去掉落盘那半；为它单开一条路由与一套状态，换不到闭环需要的东西。将来确有需求再加。
 
@@ -219,8 +222,9 @@ gateway.Server            本阶段不使用其世界注册表
 ② Secret storage      env: / file:、0600 复核、原子写、限长、路径不外泄     ✅ 已实现并实机验证
 ③ Connection probe    瞬态候选项路径 + 五类结果                            ✅ 已实现（单测）
 ④ Setup commit        test → 通过 → 落盘 → Configure；Ready 后拒绝          ✅ 已实现并实机验证
-⑤ First-run UI        一个 card；测试成功才允许 Save                        ⬜ 待做
-⑥ 空数据根端到端验收    见 §10                                             ⬜ 待做
+⑤ First-run UI        一个 card；保存即验证；blocked 与 needs_configuration
+                      分别显示原因                                        ✅ 已实现，见 §10.1 验证记录
+⑥ 空数据根端到端验收    见 §10                                             ✅ 后端与 HTTP 面已验；浏览器点击待人工确认
 ```
 
 把 ③ 放在 ④ 之前是有意的：先有探测能力，提交路径才能永远遵守"测过才落盘"，不需要任何 skip 分支。开发顺序服务最终产品，而不是反过来。
@@ -240,6 +244,40 @@ gateway.Server            本阶段不使用其世界注册表
 | Ready 后拒绝 | 再次提交被拒、配置文件未被改动，提示需要重启 |
 | 重启 | 配置与 seed 结果都保持，且不重复 seed |
 | 端到端（⑥） | 空目录 → 浏览器自动打开 → 默认配置已就位 → 填表 → 保存 → `Ready` → 重启仍 Ready → 启动游戏并交互 → Turn 出现在 Console |
+
+### 10.1 验证记录
+
+已 automated 覆盖（`go test ./... -p 1` 全绿）：
+
+```text
+runtime/internal/httpapi/firstrun_test.go   空数据根 → options → 提交 → Ready → 重启仍 Ready
+                                            写出的 model.json 引用凭据、含 window
+runtime/internal/httpapi/setup_test.go      未通过测试不落盘；Ready 后拒绝；foreign Origin
+                                            blocked 根在探测前被拒且不写文件
+runtime/internal/bootstrap/                  seed 失败 → blocked，有效模型配置也不能 Ready
+runtime/internal/llm/probe_choice_test.go   options 列出的 provider 真能构造，默认模型一致
+```
+
+已用真实进程验证（从**仓库外目录**启动发行二进制，数据根为空）：
+
+```text
+启动         seed 35 个 definition；状态 needs_configuration；/ 与 JS 资源均 200
+/api/setup/options  {"providers":[{"provider":"deepseek","model":"deepseek-v4-flash"}, ...]}
+无 key 提交         400 invalid_configuration，secrets/ 与 model.json 都没有产生
+不可达 provider     400 network_unavailable，同上
+未知 provider       400 invalid_configuration，同上
+真实端点 + 错误 key  400 authentication_failed；key 在数据根下出现 0 次
+```
+
+尚未验证，需要人工在真实浏览器里确认：
+
+```text
+1. 表单渲染与交互（下拉切换 provider 时模型默认值跟随、按钮禁用态）
+2. 保存成功后页面切到 "Runtime Ready ✓" 并回到 Console
+3. 填表 → 保存 → 重启 → 启动游戏交互 → Turn 出现在 Console（⑥ 的完整串联）
+```
+
+第 1、2 项是页面自身的 DOM 行为，Shell 层无法断言；第 3 项需要真实 API key 与游戏进程。自动化只能证明机制正确，不替代这一条。
 
 ## 11. 明确不做
 
@@ -264,7 +302,7 @@ D2  POSIX 0700/0600 并复核；Windows 不重写 DACL，依赖用户目录权�
 D3  embed + 首次 seed；锚点 agent.json；不 merge/覆盖/升级；显式 override 时完全不 seed
 D4  只做首次 model 配置；不做 Ready 后热切换；默认 UI 不暴露 base_url
 D5  必须先测过才落盘；无 skip 逃生口；也没有单独的"只测试不保存"路由
-D6  只有 Runtime 两态 + 原因；测试结果不持久化、也不进状态
+D6  Runtime 三态（needs_configuration / blocked / ready）+ 原因；测试结果不进状态
 另  window 默认值保留（本仓库已在跑的值）；未知 provider 不猜
 另  api_key_problem 保留：让界面能说出"凭据为什么不可用"
 另  seed 失败必须阻断 Ready，而非只记日志：否则界面会显示 Ready 而实际跑的是通用基线

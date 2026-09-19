@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, type Status, type Turn } from './types'
 import { exchangeBootstrapToken, fetchStatus, fetchTurns } from './api'
+import Setup from './Setup.vue'
 
 const status = ref<Status | null>(null)
 const turns = ref<Turn[]>([])
@@ -12,8 +13,22 @@ const statusProblem = ref<string | null>(null)
 const turnsProblem = ref<string | null>(null)
 const unauthorized = ref(false)
 const loaded = ref(false)
+// Set only by a completed first-run save, so the confirmation is about what this
+// browser just did rather than about every Runtime that happens to be ready.
+const justConfigured = ref(false)
+// The trace can hold turns from an earlier run, so a fresh Runtime has nothing to
+// read yet. Turns are polled once the Runtime is past first-run, which also keeps
+// the first-run page from making a request per tick that cannot return anything.
+const turnsActive = ref(false)
 
 let timer: number | undefined
+
+/** First-run shows a form instead of the console, but only for the one state a
+ *  form can resolve: a blocked data root needs a restart, not another key, and
+ *  its reason is shown on its own. */
+const showSetup = computed(
+  () => loaded.value && status.value !== null && status.value.state === 'needs_configuration',
+)
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -29,6 +44,11 @@ async function refreshStatus() {
   try {
     status.value = await fetchStatus()
     statusProblem.value = null
+    // Past first-run either way: ready means the console is the useful surface,
+    // and blocked means the reason is, including any trace already on disk.
+    if (status.value.state !== 'needs_configuration') {
+      turnsActive.value = true
+    }
   } catch (error) {
     noteUnauthorized(error)
     statusProblem.value = describe(error)
@@ -36,6 +56,9 @@ async function refreshStatus() {
 }
 
 async function refreshTurns() {
+  if (!turnsActive.value) {
+    return
+  }
   try {
     turns.value = (await fetchTurns()).turns
     turnsProblem.value = null
@@ -49,6 +72,16 @@ async function refresh() {
   // Not Promise.all: one failing read must not hold back the other.
   await Promise.all([refreshStatus(), refreshTurns()])
   loaded.value = true
+}
+
+async function onConfigured(updated: Status) {
+  justConfigured.value = true
+  // The save response is the same payload the poll reads, so the form goes away
+  // without waiting for the next tick.
+  status.value = updated
+  statusProblem.value = null
+  turnsActive.value = true
+  await refreshTurns()
 }
 
 onMounted(async () => {
@@ -111,87 +144,102 @@ function triggerLabel(turn: Turn): string {
       started with <code>--no-open</code>, open the bootstrap URL it printed in the Runtime log.
     </p>
 
-    <section v-if="status" class="card">
-      <div class="state">
-        <span class="badge" :class="status.ready ? 'badge-ready' : 'badge-pending'">
-          {{ status.state }}
-        </span>
-        <span v-if="status.reason" class="reason">{{ status.reason }}</span>
+    <div class="columns" :class="{ 'columns-setup': showSetup }">
+      <div class="column">
+        <p v-if="justConfigured" class="banner banner-ok">
+          Runtime Ready ✓ — the agent core is running. Talk to an NPC in the game and the turn will
+          appear here.
+        </p>
+
+        <Setup
+          v-if="showSetup && status"
+          :status="status"
+          @configured="onConfigured"
+        />
+
+        <section v-else-if="status" class="card">
+          <div class="state">
+            <span class="badge" :class="status.ready ? 'badge-ready' : 'badge-pending'">
+              {{ status.state }}
+            </span>
+            <span v-if="status.reason" class="reason">{{ status.reason }}</span>
+          </div>
+
+          <dl class="facts">
+            <div>
+              <dt>Model</dt>
+              <dd>
+                <template v-if="status.model">
+                  {{ status.model.provider || 'default' }} / {{ status.model.model || 'default' }}
+                  <span v-if="status.model.api_key_configured" class="ok">credential configured</span>
+                  <span v-else class="missing">no credential</span>
+                </template>
+                <template v-else>{{ status.model_error || 'not configured' }}</template>
+              </dd>
+            </div>
+            <div>
+              <dt>Adapter endpoint</dt>
+              <dd>{{ status.grpc_addr || '—' }}</dd>
+            </div>
+            <div>
+              <dt>Data root</dt>
+              <dd class="path">{{ status.data_root }}</dd>
+            </div>
+            <div>
+              <dt>Trace</dt>
+              <dd class="path">{{ status.trace_path }}</dd>
+            </div>
+            <div v-if="status.version">
+              <dt>Version</dt>
+              <dd>{{ status.version }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section v-else class="card">
+          <h2>Runtime</h2>
+          <p class="problem">{{ statusProblem || 'Reading Runtime status…' }}</p>
+        </section>
       </div>
 
-      <dl class="facts">
-        <div>
-          <dt>Model</dt>
-          <dd>
-            <template v-if="status.model">
-              {{ status.model.provider || 'default' }} / {{ status.model.model || 'default' }}
-              <span v-if="status.model.api_key_configured" class="ok">credential configured</span>
-              <span v-else class="missing">no credential</span>
-            </template>
-            <template v-else>{{ status.model_error || 'not configured' }}</template>
-          </dd>
-        </div>
-        <div>
-          <dt>Adapter endpoint</dt>
-          <dd>{{ status.grpc_addr || '—' }}</dd>
-        </div>
-        <div>
-          <dt>Data root</dt>
-          <dd class="path">{{ status.data_root }}</dd>
-        </div>
-        <div>
-          <dt>Trace</dt>
-          <dd class="path">{{ status.trace_path }}</dd>
-        </div>
-        <div v-if="status.version">
-          <dt>Version</dt>
-          <dd>{{ status.version }}</dd>
-        </div>
-      </dl>
-    </section>
-
-    <section v-else class="card">
-      <h2>Runtime</h2>
-      <p class="problem">{{ statusProblem || 'Reading Runtime status…' }}</p>
-    </section>
-
-    <section class="card">
-      <h2>Turns</h2>
-      <p v-if="turnsProblem" class="problem">Unable to read the trace: {{ turnsProblem }}</p>
-      <p v-if="loaded && !turnsProblem && turns.length === 0" class="empty">
-        No turn yet. Talk to an NPC in the game and it will appear here.
-      </p>
-      <table v-else-if="turns.length > 0">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Agent</th>
-            <th>Trigger</th>
-            <th>Steps</th>
-            <th>Tools</th>
-            <th>Outcome</th>
-            <th>Duration</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="turn in turns" :key="turn.turn_id">
-            <td class="time">{{ formatTime(turn.started_at) }}</td>
-            <td>{{ turn.entity_id || '—' }}</td>
-            <td class="muted">{{ triggerLabel(turn) }}</td>
-            <td class="number">{{ turn.steps }}</td>
-            <td>
-              <span v-for="tool in turn.tools" :key="tool" class="tool">{{ tool }}</span>
-              <span v-if="!turn.tools || turn.tools.length === 0" class="muted">—</span>
-            </td>
-            <td>
-              <span class="outcome" :class="`outcome-${turn.status}`">{{ statusLabel(turn) }}</span>
-              <span v-if="turn.settled_by" class="muted"> · {{ turn.settled_by }}</span>
-            </td>
-            <td class="number">{{ formatDuration(turn.elapsed_ms) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+      <section class="card column-turns">
+        <h2>Turns</h2>
+        <p v-if="turnsProblem" class="problem">Unable to read the trace: {{ turnsProblem }}</p>
+        <p v-if="loaded && !turnsProblem && turns.length === 0" class="empty">
+          No turn yet. Talk to an NPC in the game and it will appear here.
+        </p>
+        <table v-else-if="turns.length > 0">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Agent</th>
+              <th>Trigger</th>
+              <th>Steps</th>
+              <th>Tools</th>
+              <th>Outcome</th>
+              <th>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="turn in turns" :key="turn.turn_id">
+              <td class="time">{{ formatTime(turn.started_at) }}</td>
+              <td>{{ turn.entity_id || '—' }}</td>
+              <td class="muted">{{ triggerLabel(turn) }}</td>
+              <td class="number">{{ turn.steps }}</td>
+              <td>
+                <span v-for="tool in turn.tools" :key="tool" class="tool">{{ tool }}</span>
+                <span v-if="!turn.tools || turn.tools.length === 0" class="muted">—</span>
+              </td>
+              <td>
+                <span class="outcome" :class="`outcome-${turn.status}`">{{ statusLabel(turn) }}</span>
+                <span v-if="turn.settled_by" class="muted"> · {{ turn.settled_by }}</span>
+              </td>
+              <td class="number">{{ formatDuration(turn.elapsed_ms) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
   </main>
 </template>
 
@@ -235,9 +283,41 @@ body {
 }
 
 main {
-  max-width: 1080px;
+  max-width: 1240px;
   margin: 0 auto;
   padding: 32px 24px 64px;
+}
+
+/* The runtime card is a fixed column and the turn table takes what is left: the
+   table is the part that grows with content, and a full-width card above it would
+   push the first row below the fold on a laptop. */
+.columns {
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+/* First-run is one card on its own: there is nothing to put beside it yet, and a
+   form squeezed into a column reads as an afterthought. */
+.columns-setup {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 620px;
+}
+
+.column {
+  min-width: 0;
+}
+
+.column-turns {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+@media (max-width: 900px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 header h1 {
@@ -263,6 +343,10 @@ header h1 {
 
 .banner-error {
   border-left-color: var(--bad);
+}
+
+.banner-ok {
+  border-left-color: var(--ok);
 }
 
 .problem {

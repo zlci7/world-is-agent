@@ -27,16 +27,20 @@ type fixture struct {
 	token   string
 }
 
-func newFixture(t *testing.T, assets fs.FS) *fixture {
-	t.Helper()
-
-	root := t.TempDir()
-	env := dataroot.Env{
+// fixtureEnv keeps the tests independent from whatever the developer has exported.
+func fixtureEnv(root string) dataroot.Env {
+	return dataroot.Env{
 		GOOS:    "windows",
 		Getenv:  func(string) string { return "" },
 		HomeDir: func() (string, error) { return root, nil },
 	}
-	runtime, err := bootstrap.Open(root, env)
+}
+
+func newFixture(t *testing.T, assets fs.FS) *fixture {
+	t.Helper()
+
+	root := t.TempDir()
+	runtime, err := bootstrap.Open(root, fixtureEnv(root))
 	if err != nil {
 		t.Fatalf("open runtime: %v", err)
 	}

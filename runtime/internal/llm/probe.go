@@ -49,6 +49,44 @@ type ProbeCandidate struct {
 	Window   model.WindowLimits
 }
 
+// ProviderChoice is one provider a user may configure, as the first-run form
+// needs it: a value to send back and a default to start from.
+//
+// The JSON names are explicit because this crosses to a browser. Go's default
+// would export them capitalised, and a client reading the documented lowercase
+// names would silently find nothing.
+type ProviderChoice struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+// ProviderChoices reports the providers this build can talk to, with the model
+// each one falls back to when none is named.
+//
+// It is derived from the same switch that builds a provider, so a provider the
+// form offers is a provider the Runtime can actually construct: a list written
+// into the page would be a second source for the same fact, and the two would
+// drift the moment one of them changed.
+func ProviderChoices() []ProviderChoice {
+	return []ProviderChoice{
+		{Provider: "deepseek", Model: defaultProbeModel("deepseek")},
+		{Provider: "openai", Model: defaultProbeModel("openai")},
+	}
+}
+
+// defaultProbeModel is the model a provider falls back to when the candidate does
+// not name one.
+func defaultProbeModel(provider string) string {
+	switch strings.TrimSpace(provider) {
+	case "openai":
+		return "gpt-5-mini"
+	case "deepseek":
+		return "deepseek-v4-flash"
+	default:
+		return ""
+	}
+}
+
 // ProbeOutcome is the result of one probe. Message explains a failure without
 // carrying the credential.
 type ProbeOutcome struct {
@@ -100,13 +138,13 @@ func buildProbeProvider(candidate ProbeCandidate) (model.Provider, error) {
 	case "openai":
 		name := candidate.Model
 		if name == "" {
-			name = "gpt-5-mini"
+			name = defaultProbeModel("openai")
 		}
 		return openai.NewProvider(candidate.APIKey, name, openai.WithBaseURL(candidate.BaseURL), openai.WithModelWindow(candidate.Window)), nil
 	case "deepseek":
 		name := candidate.Model
 		if name == "" {
-			name = "deepseek-v4-flash"
+			name = defaultProbeModel("deepseek")
 		}
 		return deepseek.NewProvider(candidate.APIKey, name, deepseek.WithBaseURL(candidate.BaseURL), deepseek.WithModelWindow(candidate.Window)), nil
 	default:
