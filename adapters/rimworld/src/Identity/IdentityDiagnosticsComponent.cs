@@ -17,7 +17,8 @@ namespace Wia.RimWorld.Identity
     /// permanent product behaviour: once real protocol traffic carries identity, this component
     /// should shrink to whatever diagnostics are still worth keeping.
     ///
-    /// It reports on save, on load, and once every <see cref="ClockReportIntervalTicks"/> ticks.
+    /// It reports identity and roster on save, identity only on load, and world id, clock and any
+    /// roster change once every <see cref="ClockReportIntervalTicks"/> ticks.
     /// </summary>
     public class IdentityDiagnosticsComponent : GameComponent
     {
@@ -43,15 +44,19 @@ namespace Wia.RimWorld.Identity
         {
             base.ExposeData();
 
-            // PostLoadInit rather than LoadingVars: the pawns and the world are only fully
-            // reconstructed by then, and this component must report on the finished state.
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
-                this.Report("load");
+                // World and clock only. The world is fully rebuilt by PostLoadInit, but the pawn
+                // lists are not populated until the first tick after the load: asking for them here
+                // reports "colonists=0" for a save that is full of colonists, which reads as lost
+                // identity rather than as a timing artefact. The first tick reports the roster with
+                // the ids already restored to the values the save carried.
+                this.ReportIdentity("load");
             }
             else if (Scribe.mode == LoadSaveMode.Saving)
             {
-                this.Report("save");
+                this.ReportIdentity("save");
+                this.ReportRoster("save");
             }
         }
 
@@ -78,13 +83,12 @@ namespace Wia.RimWorld.Identity
             this.ReportRoster("tick");
         }
 
-        private void Report(string slot)
+        private void ReportIdentity(string slot)
         {
             AdapterLog.Info(
                 "identity " + slot +
                 " world=" + this.WorldIdOrNone() +
                 " tick=" + this.TickOrNone());
-            this.ReportRoster(slot);
         }
 
         private void ReportRoster(string slot)
