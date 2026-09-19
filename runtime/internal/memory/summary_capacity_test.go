@@ -189,7 +189,7 @@ func newSummaryCapacityFixture(t *testing.T, store summaryTestStore, count, text
 	default:
 		t.Fatalf("unsupported capacity backend %T", store)
 	}
-	if limits != DefaultHistoryLimits() || limits.SummarySources != 16384 || limits.ScanBytes != 32<<20 || limits.ReadTimeoutMS != 1000 || limits.WriteTimeoutMS != 5000 {
+	if limits != DefaultHistoryLimits() || limits.SummarySources != 16384 || limits.ScanBytes != 32<<20 || limits.ReadTimeoutMS != 2000 || limits.WriteTimeoutMS != 5000 {
 		t.Fatalf("capacity fixture requires unchanged default limits: %+v", limits)
 	}
 	fixture := summaryCapacityFixture{checkpoint: SummaryCheckpoint{ID: "capacity-fixture", Owner: owner, Version: "capacity-v1", Text: "Capacity summary.", CreatedAt: time.Unix(100, 0).UTC()}}
@@ -278,7 +278,7 @@ func summaryCapacityRead(t *testing.T, store SummaryStore, snapshot HistorySnaps
 	if read.Checkpoint != nil {
 		count = len(read.Checkpoint.Sources)
 	}
-	t.Logf("ReadSummary elapsed=%s default_timeout=1s returned_sources=%d diagnostics=%v err=%v", elapsed, count, read.Diagnostics, err)
+	t.Logf("ReadSummary elapsed=%s read_timeout=%dms returned_sources=%d diagnostics=%v err=%v", elapsed, DefaultHistoryLimits().ReadTimeoutMS, count, read.Diagnostics, err)
 	return read, err
 }
 

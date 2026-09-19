@@ -54,7 +54,7 @@
     "page_bytes": 8388608,
     "scan_records": 512,
     "scan_bytes": 33554432,
-    "read_timeout_ms": 1000,
+    "read_timeout_ms": 2000,
     "write_timeout_ms": 5000,
     "summary_sources": 16384,
     "summary_checkpoints": 64

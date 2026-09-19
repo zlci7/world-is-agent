@@ -157,8 +157,21 @@ type HistoryLimits struct {
 	SummaryCheckpoints int `json:"summary_checkpoints"`
 }
 
+// DefaultHistoryLimits returns the limits a store uses when the configuration
+// does not name them.
+//
+// ReadTimeoutMS is sized against SummarySources rather than chosen on its own.
+// Reading the largest coverage a summary may have costs roughly 0.06ms per
+// source, so the full 16384-source cap costs about a second on a local database
+// and a 1000ms budget sat at 100% of it: the read succeeded or failed on
+// scheduling noise. That did not surface as an error, because the Runtime reports
+// a read that runs out of budget as the summary_read_timeout diagnostic and serves
+// the turn without a summary, so the symptom is history that quietly stops being
+// compacted. This budget keeps the declared capacity reachable on a machine of
+// that speed, with the cost of one read spent in the background rather than in a
+// turn.
 func DefaultHistoryLimits() HistoryLimits {
-	return HistoryLimits{MaxBatchBytes: 8 << 20, PageRecords: 64, PageBytes: 8 << 20, ScanRecords: 512, ScanBytes: 32 << 20, ReadTimeoutMS: 1000, WriteTimeoutMS: 5000, SummarySources: 16384, SummaryCheckpoints: 64}
+	return HistoryLimits{MaxBatchBytes: 8 << 20, PageRecords: 64, PageBytes: 8 << 20, ScanRecords: 512, ScanBytes: 32 << 20, ReadTimeoutMS: 2000, WriteTimeoutMS: 5000, SummarySources: 16384, SummaryCheckpoints: 64}
 }
 
 func CanonicalHistoryBatch(batch HistoryBatch, maxBytes int) ([]byte, string, string, error) {

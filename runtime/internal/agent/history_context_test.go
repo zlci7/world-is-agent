@@ -216,8 +216,14 @@ func TestPrepareHistoryClampsReadLimitsAndReportsIncompleteScan(t *testing.T) {
 		t.Fatalf("scan must stop at 512: pages=%v input=%+v events=%+v", store.pages, prepared.Input, r.events)
 	}
 	for i, limits := range store.pages {
-		if limits.Records != 64 || limits.Bytes > 8<<20 || store.deadlines[i] <= 0 || store.deadlines[i] > time.Second {
+		if limits.Records != 64 || limits.Bytes > 8<<20 || store.deadlines[i] <= 0 {
 			t.Fatalf("unbounded page: limits=%+v deadline=%s", limits, store.deadlines[i])
+		}
+		// The configured budget is 10000ms, so a deadline at or under the default
+		// is the clamp. Comparing against the default rather than a literal keeps
+		// this a statement about the clamp instead of about its current value.
+		if store.deadlines[i] > time.Duration(memory.DefaultHistoryLimits().ReadTimeoutMS)*time.Millisecond {
+			t.Fatalf("page deadline %s is not clamped to the default read timeout", store.deadlines[i])
 		}
 	}
 	if !reflect.DeepEqual(store.summaryLimits, []memory.SummaryReadLimits{{Sources: 16384, Checkpoints: 64, Bytes: 32 << 20}}) {
