@@ -134,9 +134,21 @@ func TestCommittedTaskResultReachesHistoryWithoutAModel(t *testing.T) {
 	if f.next().GetEventAck().GetStatus() != protocol.EventAckStatus_EVENT_ACK_STATUS_ACCEPTED {
 		t.Fatal("evidence rejected")
 	}
-	if control := f.next().GetTaskControl(); control == nil || control.TaskId != record.ID {
+	control := f.next().GetTaskControl()
+	if control == nil || control.TaskId != record.ID {
 		t.Fatalf("terminal result did not release its operation: %v", control)
 	}
+	// The Runtime waits for the adapter to confirm a release. Answering here is
+	// what the neighbouring suites do; a peer that never answers makes the Runtime
+	// spend its whole confirmation budget, which is slow and turns the release this
+	// test requests later into a race against that same budget.
+	f.send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_TaskControlResult{TaskControlResult: &protocol.TaskControlResult{
+		Scope:       control.Scope,
+		TaskId:      control.TaskId,
+		OperationId: control.OperationId,
+		RequestId:   control.RequestId,
+		Status:      "released",
+	}}})
 	terminal := f.awaitRecord(record.ID, func(r task.Record) bool { return r.Result != nil })
 	if f.model.calls.Load() != 0 {
 		t.Fatalf("model calls = %d, want a result source without cognition", f.model.calls.Load())
