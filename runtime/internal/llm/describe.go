@@ -1,6 +1,9 @@
 package llm
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // ConfigSummary describes a model configuration for a client to display. It
 // exists so the client can show "which model is configured" without ever
@@ -9,13 +12,15 @@ type ConfigSummary struct {
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
 
-	// APIKeyEnvName is the environment variable the configuration points at,
-	// and only when it points at one. A credential written into the file
-	// directly has no name to show, so it is reported as configured without
-	// being echoed.
+	// APIKeyEnvName is the environment variable the configuration points at, and
+	// only when it points at one. The other accepted form names a file, and a
+	// file path identifies where the credential lives, so it is not reported.
 	APIKeyEnvName string `json:"api_key_env_name,omitempty"`
 	// APIKeyConfigured reports whether the credential resolves right now.
 	APIKeyConfigured bool `json:"api_key_configured"`
+	// APIKeyProblem explains why it does not, when it does not. The reason names
+	// the reference the user wrote, never the path it resolved to.
+	APIKeyProblem string `json:"api_key_problem,omitempty"`
 }
 
 // DescribeConfig reads a model configuration file and summarizes it.
@@ -35,12 +40,16 @@ func DescribeConfig(path string) (ConfigSummary, error) {
 		Provider: config.Provider,
 		Model:    config.Model,
 	}
-	// Only an env: reference has a name that is safe to display. Anything else
-	// is the credential itself and must not leave this package.
-	if name, ok := strings.CutPrefix(config.APIKey, "env:"); ok {
+	if name, ok := strings.CutPrefix(config.APIKey, apiKeyEnvPrefix); ok {
 		summary.APIKeyEnvName = strings.TrimSpace(name)
 	}
-	if _, err := resolveAPIKey(config); err == nil {
+
+	if _, err := resolveAPIKey(config, filepath.Dir(path)); err != nil {
+		// Why a credential is unusable is worth saying: "no credential" sends the
+		// user looking in the wrong place when the real answer is that the file
+		// they referenced is not there.
+		summary.APIKeyProblem = err.Error()
+	} else {
 		summary.APIKeyConfigured = true
 	}
 	return summary, nil

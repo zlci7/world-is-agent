@@ -2,6 +2,7 @@ package bootstrap_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/bootstrap"
 	"gameagent/runtime/internal/dataroot"
+	"gameagent/runtime/internal/llm"
+	"gameagent/runtime/internal/secret"
 	"gameagent/runtime/internal/session"
 	"gameagent/runtime/internal/tool"
 )
@@ -336,5 +339,60 @@ func TestConfigurationEnvironmentOverridesResolveAgainstTheDataRoot(t *testing.T
 	}
 	if got, want := runtime.ModelConfigPath(), filepath.Clean(absoluteModel); got != want {
 		t.Fatalf("model config path = %q, want the absolute override %q", got, want)
+	}
+}
+
+// The seed and a stored credential together: a data root nobody has configured
+// becomes ready, on the shipped profile, without a file being edited by hand.
+func TestFreshRootBecomesReadyWithAFileCredential(t *testing.T) {
+	root := t.TempDir()
+	layout := dataroot.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatalf("ensure layout: %v", err)
+	}
+
+	// The layout the shipped profile expects: <root>/config/model.json naming
+	// <root>/secrets/model.key.
+	if err := secret.Write(filepath.Join(layout.SecretsDir(), "model.key"), "sk-file-credential"); err != nil {
+		t.Fatalf("secret.Write: %v", err)
+	}
+	writeConfig(t, root, "model.json", `{"provider":"deepseek","model":"test-model","api_key":"file:../secrets/model.key"}`)
+
+	runtime, err := bootstrap.Open(root, stubEnv(nil))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer runtime.Close()
+
+	if !runtime.Ready() {
+		t.Fatalf("state = %s (%s), want ready", runtime.State(), runtime.Reason())
+	}
+
+	// Ready only means the configuration is usable. It must be the seeded profile
+	// that is in effect, not the generic baseline that loads no definitions.
+	catalogRoot := runtime.AgentConfig().DefinitionCatalogRoot
+	if catalogRoot == "" {
+		t.Fatal("the runtime is running on a profile with no definition catalog")
+	}
+	if _, err := os.Stat(catalogRoot); err != nil {
+		t.Fatalf("the seeded definition catalog is not there: %v", err)
+	}
+
+	// And what a client can read carries no credential and no path to it.
+	summary, err := llm.DescribeConfig(runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatalf("DescribeConfig: %v", err)
+	}
+	if !summary.APIKeyConfigured {
+		t.Fatalf("api_key_configured = false with a readable credential: %+v", summary)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	for _, leak := range []string{"sk-file-credential", layout.SecretsDir(), "model.key"} {
+		if strings.Contains(string(encoded), leak) {
+			t.Fatalf("the client-visible summary carries %q: %s", leak, encoded)
+		}
 	}
 }

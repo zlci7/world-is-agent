@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gameagent/runtime/internal/llm/deepseek"
 	"gameagent/runtime/internal/llm/fake"
 	"gameagent/runtime/internal/llm/openai"
 	"gameagent/runtime/internal/model"
+	"gameagent/runtime/internal/secret"
 )
 
 // ConfigEnvName overrides the model configuration path. The Runtime resolves a
@@ -50,7 +52,10 @@ func NewProviderFromConfigFile(path string) (model.Provider, Config, error) {
 		return nil, Config{}, err
 	}
 
-	provider, err := NewProvider(config)
+	// The configuration's own directory resolves a relative file: credential, so
+	// the data root can move without breaking it and this package never has to
+	// know what a data root is.
+	provider, err := newProvider(config, filepath.Dir(path))
 	if err != nil {
 		return nil, Config{}, err
 	}
@@ -58,7 +63,15 @@ func NewProviderFromConfigFile(path string) (model.Provider, Config, error) {
 	return provider, config, nil
 }
 
+// NewProvider builds a provider from an in-memory configuration, which has no
+// location. A relative file: credential therefore cannot be resolved here and is
+// reported as unusable; configurations read from disk go through
+// NewProviderFromConfigFile.
 func NewProvider(config Config) (model.Provider, error) {
+	return newProvider(config, "")
+}
+
+func newProvider(config Config, configDir string) (model.Provider, error) {
 	if err := config.WindowLimits.Validate(); err != nil {
 		return nil, err
 	}
@@ -67,7 +80,7 @@ func NewProvider(config Config) (model.Provider, error) {
 		return fake.NewProvider(), nil
 
 	case "openai":
-		apiKey, err := resolveAPIKey(config)
+		apiKey, err := resolveAPIKey(config, configDir)
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +93,7 @@ func NewProvider(config Config) (model.Provider, error) {
 		return openai.NewProvider(apiKey, modelName, openai.WithBaseURL(config.BaseURL), openai.WithModelWindow(config.WindowLimits)), nil
 
 	case "deepseek":
-		apiKey, err := resolveAPIKey(config)
+		apiKey, err := resolveAPIKey(config, configDir)
 		if err != nil {
 			return nil, err
 		}
@@ -97,16 +110,29 @@ func NewProvider(config Config) (model.Provider, error) {
 	}
 }
 
-func resolveAPIKey(config Config) (string, error) {
-	if config.APIKey == "" {
-		return "", fmt.Errorf("api_key is required for provider %q; use env:VARIABLE_NAME", config.Provider)
-	}
+// The two accepted forms of a stored credential. A credential written into the
+// configuration directly is not one of them: it would sit with the
+// configuration, under the same permissions, and be copied along with it.
+const (
+	apiKeyEnvPrefix  = "env:"
+	apiKeyFilePrefix = "file:"
+)
 
-	if !strings.HasPrefix(config.APIKey, "env:") {
-		return "", fmt.Errorf("api_key for provider %q must reference an environment variable, for example env:DEEPSEEK_API_KEY", config.Provider)
+func resolveAPIKey(config Config, configDir string) (string, error) {
+	switch {
+	case config.APIKey == "":
+		return "", fmt.Errorf("api_key is required for provider %q; use %sVARIABLE_NAME or %sPATH", config.Provider, apiKeyEnvPrefix, apiKeyFilePrefix)
+	case strings.HasPrefix(config.APIKey, apiKeyEnvPrefix):
+		return resolveEnvAPIKey(config)
+	case strings.HasPrefix(config.APIKey, apiKeyFilePrefix):
+		return resolveFileAPIKey(config, configDir)
+	default:
+		return "", fmt.Errorf("api_key for provider %q must reference an environment variable or a file, for example %sDEEPSEEK_API_KEY or %ssecrets/model.key", config.Provider, apiKeyEnvPrefix, apiKeyFilePrefix)
 	}
+}
 
-	envName := strings.TrimSpace(strings.TrimPrefix(config.APIKey, "env:"))
+func resolveEnvAPIKey(config Config) (string, error) {
+	envName := strings.TrimSpace(strings.TrimPrefix(config.APIKey, apiKeyEnvPrefix))
 	if envName == "" {
 		return "", fmt.Errorf("api_key env reference is empty for provider %q", config.Provider)
 	}
@@ -116,5 +142,35 @@ func resolveAPIKey(config Config) (string, error) {
 		return "", fmt.Errorf("%s is required for provider %q", envName, config.Provider)
 	}
 
+	return apiKey, nil
+}
+
+// resolveFileAPIKey reads a credential from a file. A relative reference is
+// resolved against the configuration's own directory.
+//
+// The messages name the reference the user wrote, never the path it resolved to:
+// they reach the local client, and the client is not told where the credential
+// lives.
+func resolveFileAPIKey(config Config, configDir string) (string, error) {
+	reference := strings.TrimSpace(strings.TrimPrefix(config.APIKey, apiKeyFilePrefix))
+	if reference == "" {
+		return "", fmt.Errorf("api_key file reference is empty for provider %q", config.Provider)
+	}
+
+	path := reference
+	if !filepath.IsAbs(path) {
+		if configDir == "" {
+			return "", fmt.Errorf("api_key %s%s cannot be resolved without the location of the configuration file", apiKeyFilePrefix, reference)
+		}
+		path = filepath.Join(configDir, path)
+	}
+
+	apiKey, err := secret.Read(path)
+	if err != nil {
+		return "", fmt.Errorf("api_key %s%s: %w", apiKeyFilePrefix, reference, err)
+	}
+	if apiKey == "" {
+		return "", fmt.Errorf("api_key %s%s: %w", apiKeyFilePrefix, reference, secret.ErrEmpty)
+	}
 	return apiKey, nil
 }
