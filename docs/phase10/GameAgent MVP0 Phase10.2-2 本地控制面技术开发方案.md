@@ -166,12 +166,19 @@ base_url          不回传。URL 的 userinfo 或 query 可以携带凭证
 
 ## 7. 已知限制
 
+以下为 **10.2-2 完成时点**的限制；前三项已由 10.2-3 解决，其余仍然成立，此处保留当时的判断：
+
 ```text
 模型配置仍需手工写入    <root>/config/model.json；向导属于 10.2-3
+                        → 已由 10.2-3 兑现（首次配置页写入）
 api_key 仍只接受 env:VAR  llm 包有测试显式拒绝内联 key。要在 UI 里填 key，必须由 10.2-3
                         单独决定落盘形态（明文 + 权限收紧，还是 OS 密钥库绑定）
+                        → 已由 10.2-3 定为 file: 引用 + POSIX 权限收紧
 secret 权限收紧未做      POSIX 0600 / Windows ACL；属 10.2-3
+                        → POSIX 已做；Windows 按 D2 决策不重写 DACL
 前端需自行构建           仓库不存 dist，也不含 Release 产物
+                        → 仍然成立。10.2-4 加了发行脚本，但 dist 依旧不入库：
+                          开发者要先 npm run build 才能得到内嵌客户端的二进制
 无 CI                    控制面测试是本仓库当前的自动化边界
 ```
 

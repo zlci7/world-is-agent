@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；10.2-1 Runtime Bootstrap & Data Root 已实现（§3.2.2）；10.2-2 本地控制面首个切片已实现并实机验证（[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)）；10.2-3 首次运行配置**已验收**（[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，含真机验收记录）；10.2-4 Portable Release **已产出并验证**（§3.6、§3.7）；10.2-5 运行状态可视化与 10.3 未开工
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化与 10.3 未开工
 > **Date:** 2026-09-18
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
@@ -210,7 +210,7 @@ Linux        $XDG_DATA_HOME/wia，未设置则 ~/.local/share/wia
 统一一个 root，不拆 config/data 双 root
 <root>/config/       model.json、agent.json
 <root>/data/         traces.jsonl、memory/、tasks/tasks.sqlite
-<root>/secrets/      预留（10.2-3）
+<root>/secrets/      凭据文件（10.2-3 起使用；POSIX 上 0700/0600）
 ```
 
 路径解析规则——这条决定了"已有显式配置仍然生效"的边界：
@@ -245,7 +245,7 @@ Runtime-owned path   config / trace / task db / memory root / definition root �
 验收测试             acceptance 以 --data-root 指向自己的临时目录
 ```
 
-仍然属于后续子阶段：首次运行向导、secret 存储与权限收紧、可视化。**模型配置目前仍需手工写入数据根下的 `config/model.json`**；HTTP 面已由 10.2-2 提供。
+在 10.2-1 完成时点，以下三项仍属后续子阶段：首次运行向导、secret 存储与权限收紧、可视化。**其中前两项已由 10.2-3 兑现**——模型配置现在由首次配置页写入，凭据以 `file:` 引用存放在 `secrets/` 并在 POSIX 上收紧权限；可视化（10.2-5）仍未开工。
 
 ### 3.3 技术选型与优先级（已确认）
 
@@ -428,6 +428,25 @@ Mobile / LAN / 手机浏览器形态     本阶段只服务同一台电脑上的
 6. 模型 key 无效或缺失时，错误信息指向具体原因，不表现为"agent 不说话"。
 7. §3.4 的约束全部生效：非 loopback 不可访问、伪造 Host 被拒、无有效凭证被拒、任何接口都不回传 Key 明文。
 8. 不引入对 Runtime Core 的 game-specific 依赖。
+
+### 3.8 验收结论
+
+**Phase10.2 Client & Productization 已验收**（2026-09-19）。八条退出条件逐条兑现：
+
+| 退出条件 | 证据 |
+| --- | --- |
+| ① 全新环境任意目录启动 | 空数据根启动并 seed；重启不重复 seed；`--data-root` 可指定落点（10.2-3 方案 §10.2） |
+| ② 浏览器自动打开、不需 Node | 真机自动打开并交接会话；客户端内嵌，解压包内 `/` 与 assets 均 200 |
+| ③ 免安装包解压即用 | `world-is-agent-v0.1.0-windows-amd64.zip`（7.4 MB）在仓库外解压、零参数运行，`version=0.1.0` |
+| ④ 首次运行配置产出可用配置 | 八条验收项全过，含错 key 被拒且什么都不写（10.2-3 方案 §10.2） |
+| ⑤ 游戏内交互 → UI 看到 Turn | 两个完整回合，19 个事件全链路，`terminal_status=completed`，记忆已写入 |
+| ⑥ 无效 key 指向具体原因 | 实测 DeepSeek 对无效 key 返回 401；界面报 `Authentication failed`，表单保留、不落盘 |
+| ⑦ §3.4 安全约束生效 | loopback-only bind、Host 校验、会话凭证、Origin 校验、任何接口不回传 key |
+| ⑧ 无 game-specific 依赖 | 架构检查脚本在跑；本阶段未触碰该边界 |
+
+**本阶段显式不做**（见 §3.6）：Installer、代码签名、macOS/Linux 包、桌面壳。**10.2-5 的运行状态可视化与依赖体检不阻塞本验收**，理由见 §3.5。
+
+10.2-3 的完整记录（自动化、真实进程、真实浏览器、真机端到端）在 [10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md) §10.1、§10.2。
 
 ---
 
