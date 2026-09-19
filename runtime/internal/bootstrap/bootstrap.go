@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/config"
 	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/dataroot"
 	"gameagent/runtime/internal/definition"
@@ -86,6 +87,17 @@ func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
 	layout := dataroot.New(root)
 	if err := layout.Ensure(); err != nil {
 		return nil, err
+	}
+
+	// A fresh data root starts from the shipped configuration. This runs before
+	// anything reads the agent configuration, and does nothing once the root has
+	// one. Seeding is best-effort in the same sense as the trace recorder: a root
+	// that could not be seeded still starts, with the reason reported, rather than
+	// refusing to run.
+	if seeded, err := config.Seed(layout.ConfigDir(), strings.TrimSpace(env.Getenv(agent.ConfigEnvName)) != ""); err != nil {
+		log.Printf("seed shipped configuration failed: %v", err)
+	} else if seeded {
+		log.Printf("GameAgent seeded default configuration into %s", layout.ConfigDir())
 	}
 
 	r := &Runtime{layout: layout, state: StateNeedsConfiguration}
