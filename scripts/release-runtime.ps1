@@ -60,9 +60,10 @@ $exeName = 'wia-runtime.exe'
 Write-Host 'Building the local client...'
 Push-Location (Join-Path $root 'console\web')
 try {
-    if (-not (Test-Path -LiteralPath 'node_modules')) {
-        npm ci
-    }
+    # Always npm ci, not only when node_modules is absent: a release has to be
+    # reproducible from the lock file rather than from whatever is installed.
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
     npm run build
     if ($LASTEXITCODE -ne 0) { throw "Client build failed with exit code $LASTEXITCODE" }
 }
@@ -72,6 +73,7 @@ finally {
 
 Write-Host "Building $exeName (version $Version)..."
 Push-Location $root
+$previousCGO = $env:CGO_ENABLED
 try {
     # -s -w drop the symbol table and DWARF data; the package is smaller and
     # nothing here is meant to be debugged from a release binary.
@@ -81,7 +83,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Go build failed with exit code $LASTEXITCODE" }
 }
 finally {
-    $env:CGO_ENABLED = $null
+    # Restored rather than cleared: this script must not alter the caller's env.
+    $env:CGO_ENABLED = $previousCGO
     Pop-Location
 }
 

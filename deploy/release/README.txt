@@ -58,9 +58,11 @@ that is installed separately, as an SMAPI mod, and is not part of this package.
 For Stardew Valley:
 
   1. Install SMAPI (https://smapi.io) if you have not already.
-  2. Get the adapter mod from its own repository and place its folder under
-     the game's Mods directory, so that Mods\GameAgentStardew\manifest.json
-     exists. The mod is built against your game installation.
+  2. Get the adapter from the World Is Agent source repository, under
+     adapters/stardew, and install its build output as a mod folder so that
+     Mods\GameAgentStardew\manifest.json exists. The adapter is built from
+     source against your own game installation; there is no prebuilt mod to
+     download yet.
   3. Start the Runtime first, then start the game through SMAPI.
 
 The adapter connects to 127.0.0.1:50051, which is where the Runtime listens. Its
