@@ -45,6 +45,35 @@ Use `npm install` only when you intend to change a dependency and commit the reg
 
 Design and acceptance record: [Phase10.2-2 本地控制面](../phase10/GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md).
 
+## Portable Release
+
+The Runtime is distributed as a portable package: extract it anywhere and run the executable with no arguments.
+
+```powershell
+.\scripts\release-runtime.ps1              # version from VERSION
+.\scripts\release-runtime.ps1 -Version 0.2.0
+```
+
+The script builds the client first, then builds the Runtime with the version written at link time, and assembles a package that contains only what a user needs:
+
+```text
+dist/world-is-agent-v<version>-windows-amd64.zip
+├── wia-runtime.exe
+├── README.txt
+└── LICENSE
+```
+
+Two things are deliberate. The package is staged in a temporary directory rather than in the repository, because a build output does not belong in the tree; only the archive lands in `dist/`, which git ignores. And the game adapter is not included: adapters are C# projects that compile against a local game installation, and they are installed separately as mods, so shipping one would ship something most users cannot build or verify. `deploy/release/README.txt` is the file users read, and it says what the Runtime is, how to run it, that an adapter is needed before there is anything to show, and where the data root and the credential live.
+
+Verification is a run from outside the repository, not a unit test:
+
+```powershell
+Expand-Archive dist/world-is-agent-v0.1.0-windows-amd64.zip -DestinationPath $env:TEMP\wia-check
+& "$env:TEMP\wia-check\world-is-agent-v0.1.0-windows-amd64\wia-runtime.exe" --data-root $env:TEMP\wia-check-root
+```
+
+The binary must seed its own configuration, serve the embedded client, and report the injected version on `/api/status` without any repository file, Node.js or Go on the path. `--data-root` keeps the check away from the data root a user already has; without it the Runtime uses the platform data directory.
+
 ## Adapter Capabilities From Third-Party Mods
 
 Adapters may wrap another mod's API and expose it as a Capability, so the agent can select it like any other tool. Third-party mods stay optional dependencies: when one is absent, the adapter still loads and the capability is rejected with an explicit code.

@@ -18,6 +18,20 @@
 * **Agent 隔离**：基于 `game_id + world_id + entity_id` 管理独立 Agent
 * **同步 / 异步执行**：支持游戏动作及长生命周期任务
 
+## 快速开始
+
+Runtime 以免安装包分发：解压后运行可执行文件，不需要参数。
+
+```powershell
+.\scripts\release-runtime.ps1        # 产出 dist\world-is-agent-v<version>-windows-amd64.zip
+```
+
+包内只有 `wia-runtime.exe`、`README.txt` 与 `LICENSE`。首次启动会在平台数据目录建立数据根、写入随附的 Agent 配置与游戏定义，自动打开浏览器，并在页面上要求填写模型 provider 与 API key。不需要管理员权限，也不需要 Node.js 或 Go。
+
+**游戏 Adapter 不在这个包里。** Adapter 是游戏侧 Mod，需要针对本机游戏安装编译并单独安装；没有 Adapter 时 Runtime 能正常运行，只是没有 Turn 可看。Stardew Valley Adapter 见 [adapters/stardew](adapters/stardew/README.md)。
+
+开发期从源码运行用 `.\scripts\start-runtime.ps1`，细节见[开发指南](docs/development/guide.md)。
+
 ## 技术栈
 
 `Golang` · `gRPC` · `Protobuf` · `SQLite` · `C#` · `SMAPI` · `LLM Tool Calling` · `JSON Schema`

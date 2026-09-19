@@ -3,6 +3,10 @@ bin/
 obj/
 runtime/server.exe
 
+# Release archives produced by scripts/release-runtime.ps1. A package is built
+# from a tag, so a checked-in archive could only be stale.
+dist/
+
 # The client build. dist/ is produced from console/web/ and embedded into the
 # Runtime binary; only the placeholder that keeps the embed pattern valid is
 # tracked, so a checked-in bundle can never drift from its source.
