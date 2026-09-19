@@ -165,6 +165,13 @@ function triggerLabel(turn: Turn): string {
             <span v-if="status.reason" class="reason">{{ status.reason }}</span>
           </div>
 
+          <p v-if="status.state === 'blocked'" class="empty">
+            The shipped configuration could not be written to
+            <code>{{ status.config_dir }}</code>, so the Runtime will not become ready in this
+            process. No model setting resolves this: fix the data root, then start the Runtime
+            again.
+          </p>
+
           <dl class="facts">
             <div>
               <dt>Model</dt>

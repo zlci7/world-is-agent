@@ -92,6 +92,12 @@ func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
 		return errors.New("an API key is required")
 	}
 
+	// One commit at a time, from the check to the installed core. The lock is
+	// separate from r.mu so that a commit does not block status reads for the
+	// duration of two file writes.
+	r.setupMu.Lock()
+	defer r.setupMu.Unlock()
+
 	r.mu.Lock()
 	installed := r.loop != nil && !r.placeholder
 	r.mu.Unlock()
@@ -174,6 +180,12 @@ type Runtime struct {
 	state       State
 	reason      string
 	blocked     bool
+	// setupMu serialises the whole model configuration commit. Checking that no
+	// core is installed and installing one cannot be separated by another
+	// submission: two concurrent saves would otherwise both pass the check and
+	// both write, leaving the credential on disk belonging to a different model
+	// than the core that is running.
+	setupMu sync.Mutex
 }
 
 // Open resolves the data root, loads what configuration exists and opens the
@@ -377,16 +389,6 @@ func (r *Runtime) State() State {
 // Ready reports whether the agent core can serve turns. Downstream components that
 // consume durable state, such as the task dispatcher, must not act while it is false.
 func (r *Runtime) Ready() bool { return r.State() == StateReady }
-
-// Blocked reports a configuration problem that configuring a model cannot resolve.
-// A caller about to do work whose only purpose is to make the core ready can use
-// it to fail immediately, instead of spending that work on a process that will
-// refuse the result.
-func (r *Runtime) Blocked() bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.blocked
-}
 
 // Reason explains a state that is not StateReady.
 func (r *Runtime) Reason() string {

@@ -38,9 +38,6 @@ func TestAFailedSeedBlocksTheCoreEvenWithAValidModelConfiguration(t *testing.T) 
 	if runtime.State() != StateBlocked {
 		t.Fatalf("state = %q, want %q", runtime.State(), StateBlocked)
 	}
-	if !runtime.Blocked() {
-		t.Fatal("a root that could not be seeded did not report itself blocked")
-	}
 	if runtime.Ready() {
 		t.Fatal("a root that could not be seeded reported ready")
 	}

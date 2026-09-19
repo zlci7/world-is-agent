@@ -292,16 +292,24 @@ func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, ok := decodeSetupRequest(w, r)
-	if !ok {
+	// The state decides first, before the body is read and before anything is
+	// probed. Only one state can be resolved by configuring a model, so the other
+	// two are answered from the reason: a blocked root refuses every result, and a
+	// running core keeps the configuration it already installed. Probing first
+	// would spend a real model call, and write the credential it is checked for,
+	// on a submission that is going to be refused either way.
+	switch state := s.options.Runtime.State(); state {
+	case bootstrap.StateBlocked:
+		writeError(w, http.StatusBadRequest, "setup_blocked", s.options.Runtime.Reason())
+		return
+	case bootstrap.StateReady:
+		writeError(w, http.StatusBadRequest, "already_configured",
+			"the agent core is already configured; changing the model requires a restart")
 		return
 	}
-	// A blocked data root cannot be made ready by any model configuration, so the
-	// submission is answered before the probe: spending a model call, and leaving a
-	// credential behind for it, would both be wasted on a process that refuses the
-	// result. The reason is the actionable part and it carries no credential.
-	if s.options.Runtime.Blocked() {
-		writeError(w, http.StatusBadRequest, "setup_blocked", s.options.Runtime.Reason())
+
+	body, ok := decodeSetupRequest(w, r)
+	if !ok {
 		return
 	}
 	candidate := body.candidate()

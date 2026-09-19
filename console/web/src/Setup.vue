@@ -98,14 +98,7 @@ async function submit() {
 </script>
 
 <template>
-  <p v-if="status.state === 'blocked'" class="banner banner-error">
-    {{ status.reason || 'The Runtime could not prepare its configuration.' }}
-    This is not a model setting: the shipped configuration could not be written to the data root
-    (<code>{{ status.config_dir }}</code>), so configuring a model here cannot make the Runtime
-    ready. Fix that, then start the Runtime again.
-  </p>
-
-  <p v-else-if="optionsProblem" class="banner banner-error">
+  <p v-if="optionsProblem" class="banner banner-error">
     The Runtime did not report which providers it supports: {{ optionsProblem }}
   </p>
 

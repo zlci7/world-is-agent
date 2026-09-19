@@ -162,7 +162,11 @@ invalid_configuration    根本没到网络：provider 未知、window 非法、
 authentication_failed    提供商拒绝了凭据
 network_unavailable      连不上、DNS、超时
 provider_error           其它非成功响应
+setup_blocked            数据根 blocked：配模型解决不了，不探测也不写盘
+already_configured       Core 已运行：保持已安装的配置，改模型需要重启
 ```
+
+后两个不是探测结果，而是**状态判定**，见 §6.4。
 
 **provider 的原始响应体不回传**：那是给日志写的，而这些响应到达浏览器。
 
@@ -174,15 +178,21 @@ provider_error           其它非成功响应
 
 即使将来页面加了"测试"按钮，**服务端也不复用那个结论**：前端测 A 通过、提交时 payload 变成 B，就会落盘一个未验证的配置。权威提交永远对**本次请求的参数**自己探一次。
 
-提交顺序：**探测 → 通过 → 写凭据 → 写配置 → `Configure()`**。
+提交顺序：**状态判定 → 探测 → 通过 → 写凭据 → 写配置 → `Configure()`**。
 
-**`blocked` 的数据根在探测之前就被拒**（code `setup_blocked`）。这类根的问题是"默认配置没能就位"或"既有 `agent.json` 不可用"，配一个模型解决不了它，本进程内也不会变 Ready；先探测等于花一次模型调用、再为它留下一个凭据文件，然后拒绝自己刚刚验证过的结果。探测前拒绝同时也保证了这一档**一个文件都不写**。
+**状态先于 body 解析，也先于探测。** 只有 `needs_configuration` 能被配模型解决，另外两态直接从原因作答：blocked 的根会拒绝任何结果，已运行的 Core 保持它已安装的配置。先探测等于花一次真实模型调用、并为它写下凭据，去换一个注定被拒的结果。API 边界不能依赖 UI 不这么调。blocked 这一档因此也保证**一个文件都不写**。
 
 过了这道关之后 `Configure()` 仍可能失败（provider 不可用时 `NewProviderFromConfigFile` 报错，或 `definition_catalog_root` 指向的目录不可读）。这种情况下凭据与 `model.json` 已落盘，状态为 `needs_configuration` 并带原因——文件与状态是自洽的，用户修正后再次提交即可，无需重启。
 
-### 6.5 Ready 之后拒绝再提交
+### 6.5 提交是原子的
 
-`Configure()` 在真实 core 上重复调用是 no-op，所以 Ready 之后再写配置会让文件和正在运行的核心互相矛盾。接口直接拒绝并说明需要重启。本轮不做热切换。
+从"检查还没配置"到"装好 Core"必须是一个提交，中途不能被另一个提交插入。否则两个并发请求会**都通过检查、都写盘**，留下"盘上的凭据属于另一个模型，而运行中的 Core 不是"。这条不变量由 `Runtime.modelSetupMu` 保证（`setupMu` 与 `r.mu` 分开，避免提交期间挡住状态读取）。
+
+这不是 UI 双击问题：页面在提交期间已经禁用按钮，但 API 边界不该依赖它。
+
+### 6.6 Ready 之后拒绝再提交
+
+`Configure()` 在真实 core 上重复调用是 no-op，所以 Ready 之后再写配置会让文件和正在运行的核心互相矛盾。接口在状态判定阶段就拒绝（code `already_configured`）并说明需要重启。本轮不做热切换。
 
 ## 7. 客户端可见的状态
 

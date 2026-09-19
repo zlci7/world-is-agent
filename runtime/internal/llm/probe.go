@@ -63,10 +63,15 @@ type ProviderChoice struct {
 // ProviderChoices reports the providers this build can talk to, with the model
 // each one falls back to when none is named.
 //
-// It is derived from the same switch that builds a provider, so a provider the
-// form offers is a provider the Runtime can actually construct: a list written
-// into the page would be a second source for the same fact, and the two would
-// drift the moment one of them changed.
+// This is a hand-kept list beside the switch in buildProbeProvider, not a
+// derivation from it. There is no registry to enumerate, and generating one for
+// two entries would be more machinery than the problem has.
+//
+// The direction that matters for the first-run form is enforced by
+// TestEveryOfferedProviderIsConstructibleWithItsDefaultModel: anything offered
+// here can be built, so the form cannot fail after the user has typed a
+// credential. The other direction is not: adding a provider to that switch does
+// not make it appear here.
 func ProviderChoices() []ProviderChoice {
 	return []ProviderChoice{
 		{Provider: "deepseek", Model: defaultProbeModel("deepseek")},

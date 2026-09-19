@@ -210,10 +210,9 @@ func newBlockedFixture(t *testing.T) *fixture {
 		t.Fatalf("open runtime: %v", err)
 	}
 	t.Cleanup(func() { _ = runtime.Close() })
-	if !runtime.Blocked() {
-		t.Fatal("the fixture did not produce a blocked data root")
+	if state := runtime.State(); state != bootstrap.StateBlocked {
+		t.Fatalf("the fixture produced state %q, want %q", state, bootstrap.StateBlocked)
 	}
-
 	server, err := New(Options{
 		Addr:     "127.0.0.1:0",
 		Runtime:  runtime,
@@ -317,6 +316,69 @@ func TestSetupOptionsIsNotReachableWithAPost(t *testing.T) {
 
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", recorder.Code)
+	}
+}
+
+// A running core keeps the configuration it installed. The refusal has to come
+// from the state rather than from a failed probe or a failed install, so it is
+// answered before the body is read: a malformed body still reports the state,
+// which a body-first handler would report as an invalid body instead.
+func TestSetupModelRefusesAReadyRuntimeBeforeReadingTheBody(t *testing.T) {
+	f := newFixture(t, nil)
+	cookie := f.session(t)
+
+	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
+		"provider": "deepseek", "model": "first-model", "base_url": acceptingProvider(t).URL, "api_key": "sk-first",
+	}), cookie)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("first setup status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	firstConfig, err := os.ReadFile(f.runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A body that cannot be parsed at all: the state is the reason, not the body.
+	recorder = f.do(t, http.MethodPost, "/api/setup/model", "{", cookie)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
+	}
+	response := decodeBody[errorResponse](t, recorder)
+	if response.Error.Code != "already_configured" {
+		t.Fatalf("code = %q, want already_configured", response.Error.Code)
+	}
+	if !strings.Contains(response.Error.Message, "restart") {
+		t.Fatalf("message = %q, want it to ask for a restart", response.Error.Message)
+	}
+
+	// Even a well-formed replacement is refused, and it does not reach the
+	// provider or the files.
+	replacement := acceptingProvider(t)
+	recorder = f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
+		"provider": "deepseek", "model": "second-model", "base_url": replacement.URL, "api_key": "sk-second",
+	}), cookie)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("replacement status = %d, want 400: %s", recorder.Code, recorder.Body.String())
+	}
+	if got := decodeBody[errorResponse](t, recorder).Error.Code; got != "already_configured" {
+		t.Fatalf("replacement code = %q", got)
+	}
+	current, err := os.ReadFile(f.runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != string(firstConfig) {
+		t.Fatalf("the configuration changed after a refused replacement:\n%s", current)
+	}
+	stored, err := os.ReadFile(filepath.Join(f.runtime.Layout().SecretsDir(), "model.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(stored)) != "sk-first" {
+		t.Fatalf("stored credential = %q, want the one that was installed", stored)
+	}
+	if !f.runtime.Ready() {
+		t.Fatal("the core stopped being ready after a refused replacement")
 	}
 }
 
