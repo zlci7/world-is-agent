@@ -36,7 +36,6 @@ function Search-Files {
 
 $runtimePath = Join-Path $Root 'runtime'
 $adapterPath = Join-Path $Root 'adapters'
-$stardewPath = Join-Path $adapterPath 'stardew'
 
 $runtimeForbiddenTerms = @(
     'SMAPI',
@@ -46,6 +45,7 @@ $runtimeForbiddenTerms = @(
     'PelicanTown',
     'StardewValley',
     'Stardew',
+    'RimWorld',
     'Minecraft',
     'Unity',
     'Godot'
@@ -72,9 +72,14 @@ foreach ($match in $runtimeContractKeys) {
     Add-Violation "runtime names an adapter contract key: $($match.Path):$($match.LineNumber)"
 }
 
-$stardewRuntimeInternalRefs = Search-Files -Path $stardewPath -Include $sourceIncludes -Pattern 'runtime[/\\]internal|runtime\.internal'
-foreach ($match in $stardewRuntimeInternalRefs) {
-    Add-Violation "stardew adapter references runtime/internal: $($match.Path):$($match.LineNumber)"
+# Every adapter, not just the first one, must stay clear of Runtime internals: the protocol is the
+# only contract between them.
+$adapterDirectories = Get-ChildItem -LiteralPath $adapterPath -Directory -ErrorAction SilentlyContinue
+foreach ($adapterDirectory in $adapterDirectories) {
+    $adapterRuntimeInternalRefs = Search-Files -Path $adapterDirectory.FullName -Include $sourceIncludes -Pattern 'runtime[/\\]internal|runtime\.internal'
+    foreach ($match in $adapterRuntimeInternalRefs) {
+        Add-Violation "$($adapterDirectory.Name) adapter references runtime/internal: $($match.Path):$($match.LineNumber)"
+    }
 }
 
 $protocolGenPath = Join-Path $Root 'protocol\gen'
