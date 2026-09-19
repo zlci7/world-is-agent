@@ -74,7 +74,7 @@ namespace Wia.RimWorld.Identity
             }
 
             this.lastClockReportTick = tick;
-            AdapterLog.Info("clock tick=" + tick);
+            AdapterLog.Info("clock tick=" + tick + " world=" + this.WorldIdOrNone());
             this.ReportRoster("tick");
         }
 
@@ -133,21 +133,26 @@ namespace Wia.RimWorld.Identity
             }
         }
 
+        /// <summary>
+        /// Reports why an id is absent rather than just "none": "no world yet" and "the component
+        /// that owns the id is missing" are different faults, and collapsing them would let a real
+        /// failure read as a timing artefact.
+        /// </summary>
         private string WorldIdOrNone()
         {
             World world = Find.World;
             if (world == null)
             {
-                return "none";
+                return "no-world";
             }
 
             WorldIdentityComponent identity = world.GetComponent<WorldIdentityComponent>();
-            if (identity == null || string.IsNullOrEmpty(identity.WorldId))
+            if (identity == null)
             {
-                return "none";
+                return "component-absent";
             }
 
-            return identity.WorldId;
+            return string.IsNullOrEmpty(identity.WorldId) ? "empty" : identity.WorldId;
         }
 
         private string TickOrNone()
