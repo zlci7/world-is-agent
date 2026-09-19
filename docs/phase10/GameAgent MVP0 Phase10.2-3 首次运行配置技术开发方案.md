@@ -233,12 +233,13 @@ gateway.Server            本阶段不使用其世界注册表
 ③ Connection probe    瞬态候选项路径 + 五类结果                            ✅ 已实现（单测）
 ④ Setup commit        test → 通过 → 落盘 → Configure；Ready 后拒绝          ✅ 已实现并实机验证
 ⑤ First-run UI        一个 card；保存即验证；blocked 与 needs_configuration
-                      分别显示原因                                        ✅ 已实现，见 §10.1 验证记录
-⑥ 空数据根端到端验收    见 §10                                             ⏳ 后端、HTTP 面与浏览器出错路径已验；
-                                                                          成功路径待人工确认（§10.1）
+                      分别显示原因                                        ✅ 已实现并实机验证
+⑥ 空数据根端到端验收    见 §10                                             ✅ 已通过，见 §10.2
 ```
 
 把 ③ 放在 ④ 之前是有意的：先有探测能力，提交路径才能永远遵守"测过才落盘"，不需要任何 skip 分支。开发顺序服务最终产品，而不是反过来。
+
+**10.2-3 验收结论：Accepted**（2026-09-19）。八条验收项全部通过，含一次完整的空数据根首次运行与游戏内闭环。证据见 §10.1 与 §10.2。
 
 ## 10. 验收
 
@@ -299,18 +300,15 @@ API Key 为空时 Save disabled，并提示 "An API key is required."
 console 只有探测产生的 400，无未捕获异常
 ```
 
-**待人工确认（需要一把真能用的 provider key）。** 浏览器自动化到此为止，因为把可用凭据读出来填进表单不在自动化的范围内：
+自动化到这里为止，因为把可用凭据读出来填进表单不在自动化的范围内。剩下四条的机制已由
+`firstrun_test.go`（第 1、2 项同一状态序列）与 `TestRestartAfterFirstRunKeepsTheConfiguration`
+（第 3 项）覆盖，第 4 项依赖游戏进程；但它们成立与否要看真机，见 §10.2。
 
-```text
-1. 填入正确 key → 保存 → Setup card 消失，出现 "Runtime Ready ✓"
-2. 刷新页面仍是 Ready
-3. 重启 Runtime 仍是 Ready
-4. 启动 Stardew、与 NPC 对话 → Turn 出现在 Console
-```
+### 10.2 真机验收记录
 
-第 1、2 项的机制已由 `firstrun_test.go` 覆盖（同一状态序列在 HTTP 面上走通），第 3 项由 `TestRestartAfterFirstRunKeepsTheConfiguration` 覆盖；第 4 项依赖游戏进程。人工这一步是确认它们在实际浏览器与游戏里同样成立。
+2026-09-19，发行二进制零参数运行于 Windows，数据根为平台默认目录，provider 为 DeepSeek。
 
-#### 人工验收步骤
+#### 复现步骤
 
 运行时不需要任何参数：数据根默认就是平台数据目录（Windows 为 `%LOCALAPPDATA%\WorldIsAgent`），
 配置树与客户端都嵌在二进制里，首次启动自己 seed 并打开浏览器。
@@ -323,9 +321,50 @@ go build -o build\bin\wia-server.exe .\runtime\cmd\server
 .\build\bin\wia-server.exe
 ```
 
-依次确认：卡片出现 → Provider 下拉可选 → 切换 provider 时 Model 跟随 → 填正确 key → Save →
-卡片消失并出现 `Runtime Ready ✓` → **刷新仍是 Ready** → 关掉进程再启动（不再 seed，仍 Ready）
-→ 启动 Stardew 与 NPC 对话 → Turn 出现在 Console。
+想重复"首次运行"：删掉 `%LOCALAPPDATA%\WorldIsAgent` 再启动即可。若不想动默认数据根，
+加 `--data-root <某个空目录>`。
+
+开发期跑仓库里的配置树用现成脚本 `.\scripts\start-runtime.ps1`；注意它把数据根设为仓库内的
+`runtime/`，那里已有受版本控制的 `config/agent.json`，因此**不会执行 seed**，且写出的
+`runtime/config/model.json` 是被 git 跟踪的文件。
+
+#### 结果
+
+```text
+空数据根启动        日志出现 seed 行；卡片出现；Provider 为 deepseek / deepseek-v4-flash
+填表保存            按钮进入 "Testing and saving…"；正确 key → 卡片消失，出现 "Runtime Ready ✓"
+落盘核对            config/model.json: provider=deepseek, model=deepseek-v4-flash,
+                    api_key="file:../secrets/model.key"（相对引用，非明文）,
+                    context_window_tokens=131072, max_output_tokens=12800
+                    secrets/model.key: 35 字符，与用户输入一致，无多余换行
+刷新                仍为 Ready，不出现卡片
+重启                日志直接 "agent core ready"，无 seed 行；仍是 Ready
+游戏闭环            与 NPC 对话产生两个完整回合：
+                      player_interacted_with_npc / npc:Linus / 1896ms / terminal_status=completed
+                      player_said_to_npc        / npc:Linus / 1436ms / terminal_status=completed
+                    各 19 个事件，序列完整：turn_started → observation → history_prepared →
+                    context_request_built → model_request_started → model_response_received →
+                    tool_call_selected → action_submit_started → action_result_received →
+                    tool_batch_completed → turn_settled → context_updated →
+                    turn_completion_sent → turn_completed
+                    记忆写入成功（history_write_sequence 1、2）
+```
+
+一次失败路径也在真机出现并被正确处理：首次粘贴的 key 少了 9 个字符，界面显示
+`Authentication failed: the provider rejected the API key`，卡片保留可改，数据根未产生任何文件；
+换成完整 key 后保存成功。分类器与第三方响应一致——实测 DeepSeek 对无效 key 返回 401
+`Authentication Fails`。
+
+#### 已知限制
+
+```text
+1. Turn 详情不可点：Console 当前只有汇总表，没有任何可点元素。每次模型请求、上下文、
+   工具参数与动作返回都属于 10.2-4「turn 详情 / 时间线」。数据已完整记在 data/traces.jsonl。
+2. Windows 不收紧 secrets 目录的 ACL（D2）：权限继承自平台数据目录，WIA 不做任何修改。
+   同一数据根同时只允许一个 Runtime 进程（第二个进程报 store_in_use 后退出）。
+3. 未验证：POSIX 上的 0700/0600 复核、显式 override（GAMEAGENT_AGENT_CONFIG）路径、
+   未装游戏的纯浏览器流程 —— 前两项由单测覆盖，第三项不阻塞本阶段。
+```
 
 想重复"首次运行"：删掉 `%LOCALAPPDATA%\WorldIsAgent` 再启动即可。若不想动默认数据根，
 加 `--data-root <某个空目录>`。
@@ -334,13 +373,6 @@ go build -o build\bin\wia-server.exe .\runtime\cmd\server
 `.\scripts\start-runtime.ps1`。
 
 失败时的安全行为：探测不通过就**什么都不写**，表单保持可改。
-
-依次确认：卡片出现 → Provider 下拉可选 → 切换 provider 时 Model 跟随 → 填正确 key → Save →
-卡片消失并出现 `Runtime Ready ✓` → **刷新仍是 Ready** → 关掉进程再启动（不再 seed，仍 Ready）
-→ 启动 Stardew 与 NPC 对话 → Turn 出现在 Console。
-
-失败时的安全行为：探测不通过就**什么都不写**，表单保持可改；若要重来，删掉
-`$env:TEMP\wia-firstrun` 再启动即可。
 
 ## 11. 明确不做
 
