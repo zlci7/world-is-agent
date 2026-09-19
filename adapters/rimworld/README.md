@@ -94,4 +94,4 @@ tests/            standalone build verification
 Early. The adapter currently completes the handshake (hello, environment ready, capability
 declaration) and publishes no capabilities yet. Identity, observation and the dialogue capability
 arrive in later stages; see
-[docs/phase10/GameAgent MVP0 Phase10.3-A RimWorld 对话接入与世界实例实体技术方案.md](../../docs/phase10/GameAgent%20MVP0%20Phase10.3-A%20RimWorld%20对话接入与世界实例实体技术方案.md).
+[docs/phase10/GameAgent MVP0 Phase10.3 RimWorld 对话接入与世界实例实体技术方案.md](../../docs/phase10/GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md).

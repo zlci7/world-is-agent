@@ -34,7 +34,8 @@ Phase A（逻辑分离，已授权）
 
 Phase B（物理拆仓，已授权）
     Adapter 迁往独立仓库 wia-adapter-<game>。
-    随 Phase10.3 执行：出现第二个真实 Adapter 时拆仓，这是原触发条件本身。
+    触发条件是出现第二个真实 Adapter（10.3）；实际执行在 10.5，排在 10.4 之后，
+    因为 definitions 的归属要先由 10.4 决定。
 ```
 
 - Runtime 主仓库保留 `world-is-agent`，不改名为 `wia-runtime`。

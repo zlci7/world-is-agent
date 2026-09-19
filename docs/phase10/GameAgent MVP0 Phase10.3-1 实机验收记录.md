@@ -1,6 +1,6 @@
-# GameAgent MVP0 Phase10.3-A1 实机验收记录
+# GameAgent MVP0 Phase10.3-1 实机验收记录
 
-> 状态：**已验收**。方案见 [Phase10.3-A 技术方案](GameAgent%20MVP0%20Phase10.3-A%20RimWorld%20对话接入与世界实例实体技术方案.md)。
+> 状态：**已验收**。方案见 [Phase10.3 技术方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)。
 > 原始日志：[a1-handshake-player-log.txt](../../adapters/rimworld/tests/evidence/a1-handshake-player-log.txt)
 
 ## 1. 环境

@@ -1392,14 +1392,15 @@ Runtime 断线时游戏照常运行和保存，当前临时控制权安全释放
 - Runtime Bootstrap & Data Root：控制面可先于模型就绪（未配置也能启动本地 HTTP 面），数据目录、端口、配置路径、trace、SQLite、definition root 统一从一个 App/Data Root 解析，可作为独立产物在任意目录运行。
 - 本地 Web UI（Vue 3 + TypeScript + Vite，`//go:embed` 进 runtime 二进制）：启动后自动打开浏览器、免安装包分发、首次运行向导、依赖体检、Turn 时间线可视化。
 - 只服务同一台电脑上的本地浏览器；不做 Mobile、LAN 或远程访问。
-- 第二个真实游戏 Adapter，并完成 Stardew Adapter 的物理拆仓（Phase B，见下）。
+- 第二个真实游戏 Adapter；Stardew Adapter 的物理拆仓由它触发，但独立为 10.5（Phase B，见下）。
 
 ## 本阶段触发的结构性动作
 
 ```text
 Phase B（物理拆仓，本阶段授权）
     Adapter 迁往独立仓库 wia-adapter-<game>。
-    原触发条件是"出现第二个真实 Adapter"，Phase10.3 即该条件。
+    触发条件是"出现第二个真实 Adapter"，即 Phase10.3。
+    实际执行在 10.5，排在 10.4（Game Profile 选择）之后：definitions 的归属要先由 10.4 决定。
     Phase A 已完成逻辑分离，拆仓应为低风险目录搬迁 + 建仓。
 ```
 

@@ -1,6 +1,6 @@
-# GameAgent MVP0 Phase10.3-A RimWorld 对话接入与世界实例实体技术方案
+# GameAgent MVP0 Phase10.3 RimWorld 对话接入与世界实例实体技术方案
 
-> 状态：**已定稿（Accepted for Implementation）；A1 已实现并实机验收**（见 [Phase10.3-A1 实机验收记录](GameAgent%20MVP0%20Phase10.3-A1%20实机验收记录.md)）。
+> 状态：**已定稿（Accepted for Implementation）；A1 已实现并实机验收**（见 [Phase10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)）。
 > 本文只描述确认后的范围与验收条件；实现进度与实机结论另行记录。
 > 上位文档：[Phase10 技术开发与验收总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) §4。
 
@@ -663,22 +663,22 @@ Runtime 目前只读一份 `agent.json`，本阶段不解决：`GAMEAGENT_AGENT_
 ## 14. 阶段拆分与分段验收
 
 ```text
-10.3-A1  Skeleton
+10.3-1  Skeleton
   Mod 加载 → 进程级主线程泵 → gRPC 双向流 → AdapterHello → EnvironmentReady → 能力声明
   到此为止；不做 WorldBinding / WorldClock / Checkpoint / task extension
   验收：Runtime Core diff = 0；退出条件 1–4
 
-10.3-A2  Identity + Time
+10.3-2  Identity + Time
   world_id 持久化 GUID；pawn entity_id 并在实机记录其确切形式后冻结；tick-only GameTime
   save/load、商队、Memory session 连续性
   验收：退出条件 5–8
 
-10.3-A3  Instance Projection
+10.3-3  Instance Projection
   建立 dev data root 的 RimWorld profile（§13.1）；archetype:colonist 绑定
   有界 state.rimworld；两个 Pawn 的上下文与记忆隔离证据
   验收：退出条件 9–13
 
-10.3-A4  Dialogue
+10.3-4  Dialogue
   gizmo → player_interacted_with_npc → present_dialogue → 展示即 SUCCEEDED → settle
   → 玩家回复 → player_said_to_npc
   验收：退出条件 14–18 与 §16 证据链
@@ -774,7 +774,7 @@ definitions distribution：
     不会补进既有 data root。该规则是刻意的——runtime/config/defaults.go 的包注释写明，
     逐文件补齐会"silently become an upgrade mechanism"。
 
-    因此在 10.3-B / RimWorld 正式发布前必须重新决定：
+    因此在 10.5 / RimWorld 正式发布前必须重新决定：
       - definitions 随 Adapter 发布；
       - 或 Runtime 引入明确的 definition upgrade / install 机制；
       - 或其他显式安装路径。
@@ -783,7 +783,7 @@ definitions distribution：
     Stardew 已经存在该问题，不是 RimWorld 引入的。
 
 multi-game profile selection：
-    10.3-A 开发期仍使用独立 dev data root。
+    10.3 开发期仍使用独立 dev data root。
     第二 Adapter 闭环、公开 RimWorld 支持前，需要由 Local UI 选择 active game / profile
     （届时有两个真实消费者：Stardew profile 与 RimWorld profile）。
     本阶段不实现，也不预先设计其 API。
@@ -799,6 +799,6 @@ Pawn 之间的社交互动文本替换
 长期任务 / 全部 Needs / 全部 Job / 多 Pawn autonomy
 Memory 查看界面
 功能对齐 Stardew
-拆仓（10.3-B）与接入检查表（10.3-C）
+拆仓（10.5）与接入检查表（10.6）
 game profile 重构
 ```
