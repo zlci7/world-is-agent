@@ -234,7 +234,8 @@ gateway.Server            本阶段不使用其世界注册表
 ④ Setup commit        test → 通过 → 落盘 → Configure；Ready 后拒绝          ✅ 已实现并实机验证
 ⑤ First-run UI        一个 card；保存即验证；blocked 与 needs_configuration
                       分别显示原因                                        ✅ 已实现，见 §10.1 验证记录
-⑥ 空数据根端到端验收    见 §10                                             ✅ 后端与 HTTP 面已验；浏览器点击待人工确认
+⑥ 空数据根端到端验收    见 §10                                             ⏳ 后端、HTTP 面与浏览器出错路径已验；
+                                                                          成功路径待人工确认（§10.1）
 ```
 
 把 ③ 放在 ④ 之前是有意的：先有探测能力，提交路径才能永远遵守"测过才落盘"，不需要任何 skip 分支。开发顺序服务最终产品，而不是反过来。
@@ -264,9 +265,13 @@ runtime/internal/httpapi/firstrun_test.go   空数据根 → options → 提交 
                                             写出的 model.json 引用凭据、含 window
 runtime/internal/httpapi/setup_test.go      未通过测试不落盘；Ready 后拒绝；foreign Origin
                                             blocked 根在探测前被拒且不写文件
+                                            状态判定先于 body 解析（畸形 body 仍报状态）
 runtime/internal/bootstrap/                  seed 失败 → blocked，有效模型配置也不能 Ready
+                                            并发提交只成功一个，且盘上凭据与配置成对
 runtime/internal/llm/probe_choice_test.go   options 列出的 provider 真能构造，默认模型一致
 ```
+
+**并发提交是实测过的，不是推断。** 去掉 `setupMu` 后，8 个并发提交里有 5 到 6 个报成功（失败原因是多个提交在同一个目标文件上互相踩：`rename ... Access is denied`）；加锁后连跑 20 次全过。
 
 已用真实进程验证（从**仓库外目录**启动发行二进制，数据根为空）：
 
@@ -279,15 +284,48 @@ runtime/internal/llm/probe_choice_test.go   options 列出的 provider 真能构
 真实端点 + 错误 key  400 authentication_failed；key 在数据根下出现 0 次
 ```
 
-尚未验证，需要人工在真实浏览器里确认：
+已在**真实浏览器**验证（headless Chromium，空数据根）：
 
 ```text
-1. 表单渲染与交互（下拉切换 provider 时模型默认值跟随、按钮禁用态）
-2. 保存成功后页面切到 "Runtime Ready ✓" 并回到 Console
-3. 填表 → 保存 → 重启 → 启动游戏交互 → Turn 出现在 Console（⑥ 的完整串联）
+Setup card 出现，标题 "Set up your model"
+Provider 下拉有内容：deepseek（默认选中）、openai
+默认 Model = deepseek-v4-flash
+切到 openai → Model 跟随变为 gpt-5-mini；切回 deepseek → 变回 deepseek-v4-flash
+API Key 为空时 Save disabled，并提示 "An API key is required."
+填入错误 key → 按钮进入 "Testing and saving…"
+错误 key → 显示 "Authentication failed: the provider rejected the API key"
+表单不消失，按钮恢复可用，Provider/Model 保持用户所填
+拒绝后数据根干净：0 个凭据文件、无 model.json、key 出现 0 次
+console 只有探测产生的 400，无未捕获异常
 ```
 
-第 1、2 项是页面自身的 DOM 行为，Shell 层无法断言；第 3 项需要真实 API key 与游戏进程。自动化只能证明机制正确，不替代这一条。
+**待人工确认（需要一把真能用的 provider key）。** 浏览器自动化到此为止，因为把可用凭据读出来填进表单不在自动化的范围内：
+
+```text
+1. 填入正确 key → 保存 → Setup card 消失，出现 "Runtime Ready ✓"
+2. 刷新页面仍是 Ready
+3. 重启 Runtime 仍是 Ready
+4. 启动 Stardew、与 NPC 对话 → Turn 出现在 Console
+```
+
+第 1、2 项的机制已由 `firstrun_test.go` 覆盖（同一状态序列在 HTTP 面上走通），第 3 项由 `TestRestartAfterFirstRunKeepsTheConfiguration` 覆盖；第 4 项依赖游戏进程。人工这一步是确认它们在实际浏览器与游戏里同样成立。
+
+#### 人工验收步骤
+
+从**空数据根**启动发行二进制，让 Runtime 自己打开浏览器并把会话交给它：
+
+```powershell
+cd runtime
+go build -o wia-server.exe ./cmd/server
+.\wia-server.exe --data-root "$env:TEMP\wia-firstrun"      # 首次自动打开浏览器
+```
+
+依次确认：卡片出现 → Provider 下拉可选 → 切换 provider 时 Model 跟随 → 填正确 key → Save →
+卡片消失并出现 `Runtime Ready ✓` → **刷新仍是 Ready** → 关掉进程再启动（这次不加 `--no-open`
+也会打开，且不再 seed）→ 仍是 Ready → 启动 Stardew 与 NPC 对话 → Turn 出现在 Console。
+
+失败时的安全行为：探测不通过就**什么都不写**，表单保持可改；若要重来，删掉
+`$env:TEMP\wia-firstrun` 再启动即可。
 
 ## 11. 明确不做
 
