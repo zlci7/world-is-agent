@@ -6,7 +6,7 @@ MVP0 is now frozen for release: the current version is stabilized and documented
 
 This document is the public source of truth for current repository capabilities, validation scope, and known limits.
 
-Last updated: 2026-09-18.
+Last updated: 2026-09-19.
 
 ## Validation Scope
 
@@ -44,8 +44,9 @@ Stardew Valley is the first real adapter and validation environment.
 | Providers | Provider-neutral model interface with Fake, DeepSeek, and OpenAI implementations. |
 | Trace | JSONL turn trace written under the Runtime data root at `data/traces.jsonl`, including bounded context request summaries. |
 | Data root | Every Runtime-owned path resolves from one data root instead of the process working directory. Precedence: `--data-root`, then `WIA_DATA_ROOT`, then the platform data directory (`%LOCALAPPDATA%\WorldIsAgent`, `~/Library/Application Support/WorldIsAgent`, or `$XDG_DATA_HOME/wia`). Absolute configured paths are used as-is; relative ones resolve against the data root. |
-| Startup | Bootstrap and the agent core are separate: the Runtime serves gRPC even when no model configuration exists, reporting `needs_configuration` with the expected path instead of exiting. |
-| Local client | A local HTTP control plane serves an embedded client showing Runtime state, the data root, a credential-free model summary, and recent AgentTurns projected from the trace. The Runtime opens the browser itself and hands over a session credential in the URL fragment, so nothing is copied by hand. The listener is loopback only, the Host header must be a loopback name, every `/api` route but the session exchange requires the session cookie, and no route returns a credential. The client is built from `console/web` and embedded into the binary; it is not distributed as a prebuilt artifact yet. |
+| Startup | Bootstrap and the agent core are separate: the Runtime serves gRPC even when no model configuration exists, reporting `needs_configuration` with the expected path instead of exiting. A data root that could not be given its shipped configuration reports `blocked` instead, because configuring a model cannot resolve it. |
+| First-run configuration | An empty data root is given the shipped agent profile and definitions, and the model configuration is written from the local client: the Runtime probes the exact provider, model and key it is about to write, and only a passing probe writes the credential file, `config/model.json`, and installs the agent core. A failed probe writes nothing. Stored credentials support `env:VARIABLE` and `file:relative-path` references; on Unix the secrets directory is `0700` and the credential file `0600`. |
+| Local client | A local HTTP control plane serves an embedded client showing Runtime state, the data root, a credential-free model summary, and recent AgentTurns projected from the trace; on a data root with no model configuration it serves the first-run setup card instead. The Runtime opens the browser itself and hands over a session credential in the URL fragment, so nothing is copied by hand. The listener is loopback only, the Host header must be a loopback name, every `/api` route but the session exchange requires the session cookie, and no route returns a credential. The client is built from `console/web` and embedded into the binary; it is not distributed as a prebuilt artifact yet. |
 
 Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and real dialogue persistence/readback are covered. Real Runtime process-restart recovery, the specified cross-version end-to-end path, and race validation remain open; see the [acceptance record](phase08/GameAgent MVP0 Phase8.1 技术开发与验收方案.md#验收结论). SQLite is independent of the game save: future comparable GameTime is filtered, but abandoned-branch history may become visible when game time catches up.
 
@@ -77,7 +78,8 @@ Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and
 | Heartbeat/liveness productization | Heartbeat exists in protocol but is not yet a completed recovery mechanism. |
 | Scenario evaluation | No public scenario evaluation suite yet. |
 | Packaged release | Local developer workflow is the primary installation path. |
-| First-run configuration | The Runtime stays up and the local client reports what is missing, but the model configuration cannot be written from the client yet: `config/model.json` is still edited by hand, and the stored credential is limited to an `env:VARIABLE` reference. |
+
+First-run configuration validation: the empty data root path is covered end to end at the HTTP surface — a fresh root reports `needs_configuration`, the shipped profile and 35 definitions are seeded, the setup submission writes a credential reference and a window, the Runtime reaches `ready`, and a restart keeps both. A real process started from outside the repository was exercised against a live provider, the missing-key, unreachable-provider and unknown-provider paths, and a rejected key: each was refused with its own code and wrote nothing. Not yet covered: the setup card's own behaviour in a browser, and one run through to a turn in the console.
 
 ## Maintenance Rule
 
