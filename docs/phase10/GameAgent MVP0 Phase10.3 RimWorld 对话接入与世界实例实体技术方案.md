@@ -287,6 +287,8 @@ Observation.game_time.tick     使用同一个时钟
 2  Map → 商队 → Map（其间 Pawn.Map == null）→ 两者都不变
 3  同一 Pawn 重载后仍是同一个 AgentSession，且历史可被读回
 4  同一 loaded run 内 Event 与 Observation 的 tick 单调递增；save → reload 同一保存点时间一致
+   注：10.3-2 只验证 tick 本身（单一来源、单调、save → reload 一致）；"Event 与 Observation"
+   的配对要等两者都存在，见 §15 条件 8 与 §16 的 10.3-4 证据链
 ```
 
 ## 7. Bounded Observation
@@ -671,7 +673,10 @@ Runtime 目前只读一份 `agent.json`，本阶段不解决：`GAMEAGENT_AGENT_
 10.3-2  Identity + Time
   world_id 持久化 GUID；pawn entity_id 并在实机记录其确切形式后冻结；tick-only GameTime
   save/load、商队、Memory session 连续性
-  验收：退出条件 5–8
+  验收：退出条件 5–7，以及条件 8 中本阶段可取得证据的部分
+    （单一 tick 来源、同一 loaded run 内单调、save → reload 同一保存点 tick 一致）
+  条件 8 的 Event ↔ Observation 配对需要 GameEvent 与 ObserveRequest，两者都到 10.3-4 才存在，
+  因此该配对并入 §16 的 10.3-4 证据链，不在本阶段造一条没有触发源的 Observation 路径
 
 10.3-3  Instance Projection
   建立 dev data root 的 RimWorld profile（§13.1）；archetype:colonist 绑定
@@ -700,6 +705,10 @@ Runtime 目前只读一份 `agent.json`，本阶段不解决：`GAMEAGENT_AGENT_
 7    同一 world_id 内两个不同 eligible colonist 的 entity_id 必须不同
 8    Event 与 Observation 使用同一个 tick-only GameTime；同一 loaded run 内单调递增，
      save → reload 同一保存点时间一致
+     10.3-2 收口：tick 在适配器里只有一个来源；同一 loaded run 内单调递增；
+       save → reload 同一保存点 tick 一致
+     配对部分（同一次交互的 Event.game_time.tick 与 Observation.game_time.tick 相等）需要
+       GameEvent 与 ObserveRequest 同时存在，二者都在 10.3-4 才出现，故并入 §16 的 10.3-4 证据链
 
 9    eligible colonist 绑定 archetype:colonist；敌人/囚犯/动物/机械/死亡 Pawn 没有 WIA 入口
 10   两个 Pawn 的 Context 中实例 traits/背景互不串扰（以 Context trace 为准）
@@ -734,6 +743,9 @@ Runtime 目前只读一份 `agent.json`，本阶段不解决：`GAMEAGENT_AGENT_
   两次玩家事件（各自 gizmo 触发）
         ↓
   Runtime 分别发出 ObserveRequest 并各自取得 Observation
+        ↓
+  同一次交互内 Event.game_time.tick == Observation.game_time.tick
+    （条件 8 的配对部分；两边的 tick 都取自适配器唯一的时钟来源）
         ↓
   Context trace
     A 只出现 A 的 instance facts 与 A 的 history
