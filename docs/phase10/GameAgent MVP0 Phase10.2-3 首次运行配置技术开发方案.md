@@ -316,9 +316,12 @@ console 只有探测产生的 400，无未捕获异常
 
 ```powershell
 cd runtime
-go build -o wia-server.exe ./cmd/server
-.\wia-server.exe --data-root "$env:TEMP\wia-firstrun"      # 首次自动打开浏览器
+go build -o server.exe ./cmd/server          # server.exe 已在 .gitignore 中
+.\server.exe --data-root "$env:TEMP\wia-firstrun"
 ```
+
+首次启动会自动打开浏览器。若要自己控制打开时机，加 `--no-open`，Runtime 会把带一次性令牌的
+URL 打印在日志里，打开它即可（令牌在 URL fragment 中，不会发给服务器）。
 
 依次确认：卡片出现 → Provider 下拉可选 → 切换 provider 时 Model 跟随 → 填正确 key → Save →
 卡片消失并出现 `Runtime Ready ✓` → **刷新仍是 Ready** → 关掉进程再启动（这次不加 `--no-open`
