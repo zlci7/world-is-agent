@@ -82,6 +82,18 @@ if (-not (Test-Path -LiteralPath $aboutSource)) {
     throw "Missing mod metadata: $aboutSource"
 }
 
+# The XML patch is what attaches the WIA entry point to the Human def. Without it the adapter loads
+# and handshakes but no gizmo ever appears, which looks like a broken mod rather than a missing file.
+$patchesSource = Join-Path $projectDirectory 'Patches'
+if (-not (Test-Path -LiteralPath $patchesSource)) {
+    throw "Missing mod patches: $patchesSource"
+}
+
+$patchFiles = @(Get-ChildItem -LiteralPath $patchesSource -File -Filter '*.xml')
+if ($patchFiles.Count -eq 0) {
+    throw "No patch XML found in: $patchesSource"
+}
+
 foreach ($name in $managed) {
     $source = Join-Path $OutputPath $name
     if (-not (Test-Path -LiteralPath $source)) {
@@ -109,9 +121,10 @@ Write-Host "Installing adapter to: $targetPath"
 # Staging is a whitelist, not a merge. The installed tree is what RimWorld loads, so a managed
 # assembly left behind by an earlier version would silently change the mod's behaviour: it stays a
 # real part of the loaded program, and an unloadable one in this folder can stop later assemblies
-# from loading at all. Only these two folders are emptied; anything else the user keeps in the mod
+# from loading at all. Patches/ is emptied for the same reason - a leftover patch XML would keep
+# modifying defs after the code that relied on it is gone. Anything else the user keeps in the mod
 # folder is left alone.
-foreach ($folder in @('Assemblies', 'Native')) {
+foreach ($folder in @('Assemblies', 'Native', 'Patches')) {
     $folderPath = Join-Path $targetPath $folder
     if (Test-Path -LiteralPath $folderPath) {
         Remove-Item -LiteralPath $folderPath -Recurse -Force
@@ -122,6 +135,10 @@ foreach ($folder in @('Assemblies', 'Native')) {
 
 New-Item -ItemType Directory -Force -Path (Join-Path $targetPath 'About') | Out-Null
 Copy-Item -LiteralPath $aboutSource -Destination (Join-Path $targetPath 'About\About.xml') -Force
+
+foreach ($patch in $patchFiles) {
+    Copy-Item -LiteralPath $patch.FullName -Destination (Join-Path $targetPath "Patches\$($patch.Name)") -Force
+}
 
 foreach ($name in $managed) {
     Copy-Item -LiteralPath (Join-Path $OutputPath $name) -Destination (Join-Path $targetPath "Assemblies\$name") -Force

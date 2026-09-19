@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Patch>
+  <!--
+    The WIA entry point is attached to the vanilla Human def rather than to a pawn kind.
+    Human is the parent of every humanlike def, so the comp also lands on enemies, prisoners and
+    guests. That is deliberate and handled in code: WiaDialogueComp decides eligibility itself
+    instead of trusting the def it happened to be attached to, because a comp that trusted its def
+    would put a "talk to the agent" button on a raider.
+  -->
+  <Operation Class="PatchOperationAdd">
+    <xpath>Defs/ThingDef[defName="Human"]/comps</xpath>
+    <value>
+      <li Class="Wia.RimWorld.Dialogue.WiaDialogueCompProperties" />
+    </value>
+  </Operation>
+</Patch>

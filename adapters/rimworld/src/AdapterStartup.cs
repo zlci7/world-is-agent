@@ -18,10 +18,14 @@ namespace Wia.RimWorld
     [StaticConstructorOnStartup]
     public static class AdapterStartup
     {
-        private static RuntimeConnection connection;
-
         /// <summary>Managed id of the thread this mod was constructed on.</summary>
         public static int StartupThreadId { get; private set; }
+
+        /// <summary>
+        /// The process-level connection, or null when the adapter disabled itself at startup. The
+        /// dialogue gizmo reads this to decide whether the entry point is usable at all.
+        /// </summary>
+        internal static RuntimeConnection Connection { get; private set; }
 
         static AdapterStartup()
         {
@@ -55,8 +59,8 @@ namespace Wia.RimWorld
                 UnityEngine.Object.DontDestroyOnLoad(host);
                 MainThreadPump pump = host.AddComponent<MainThreadPump>();
 
-                connection = new RuntimeConnection(pump);
-                connection.Start();
+                Connection = new RuntimeConnection(pump);
+                Connection.Start();
 
                 AdapterLog.Info(
                     $"adapter {AdapterIdentity.AdapterVersion} started on thread {StartupThreadId}; " +

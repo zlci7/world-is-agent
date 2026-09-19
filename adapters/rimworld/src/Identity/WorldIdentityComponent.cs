@@ -50,6 +50,25 @@ namespace Wia.RimWorld.Identity
             }
         }
 
+        /// <summary>
+        /// The identity of the loaded world, or null when there is no world or the component that
+        /// owns the identity is missing. The two are told apart by the caller rather than collapsed
+        /// here, because "no world yet" and "the component did not load" are different faults.
+        ///
+        /// Main thread only.
+        /// </summary>
+        public static string CurrentWorldId()
+        {
+            global::RimWorld.Planet.World world = Find.World;
+            if (world == null)
+            {
+                return null;
+            }
+
+            WorldIdentityComponent identity = world.GetComponent<WorldIdentityComponent>();
+            return identity == null ? null : identity.WorldId;
+        }
+
         private static string NewWorldId()
         {
             return Guid.NewGuid().ToString("N");

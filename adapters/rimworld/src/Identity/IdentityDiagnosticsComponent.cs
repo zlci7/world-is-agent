@@ -144,19 +144,18 @@ namespace Wia.RimWorld.Identity
         /// </summary>
         private string WorldIdOrNone()
         {
-            World world = Find.World;
-            if (world == null)
+            if (Find.World == null)
             {
                 return "no-world";
             }
 
-            WorldIdentityComponent identity = world.GetComponent<WorldIdentityComponent>();
-            if (identity == null)
+            string worldId = WorldIdentityComponent.CurrentWorldId();
+            if (worldId == null)
             {
                 return "component-absent";
             }
 
-            return string.IsNullOrEmpty(identity.WorldId) ? "empty" : identity.WorldId;
+            return string.IsNullOrEmpty(worldId) ? "empty" : worldId;
         }
 
         private string TickOrNone()
