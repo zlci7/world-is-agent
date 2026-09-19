@@ -12,8 +12,8 @@ namespace Wia.RimWorld.Runtime
     /// Runtime is unavailable.
     ///
     /// The receive loop runs on a thread-pool thread and only touches protocol objects. Work that
-    /// would read or change game state is queued onto the main-thread pump instead. A1 has no such
-    /// work yet; the boundary is established here so later stages cannot bypass it.
+    /// would read or change game state is queued onto the main-thread pump instead. The handshake
+    /// stage has no such work yet; the boundary is established here so later stages cannot bypass it.
     /// </summary>
     internal sealed class RuntimeConnection : IDisposable
     {
@@ -140,7 +140,8 @@ namespace Wia.RimWorld.Runtime
                     await this.SendAsync(call, BuildHello(sessionId), token).ConfigureAwait(false);
                     AdapterLog.Info(
                         $"AdapterHello sent to {AdapterIdentity.RuntimeHost}:{AdapterIdentity.RuntimePort} " +
-                        $"session={sessionId} extensions=(none)");
+                        $"session={sessionId} adapter={AdapterIdentity.AdapterId} " +
+                        $"game={AdapterIdentity.GameId}/{GameVersionSnapshot.Current} extensions=(none)");
 
                     while (await call.ResponseStream.MoveNext(token).ConfigureAwait(false))
                     {
@@ -174,7 +175,7 @@ namespace Wia.RimWorld.Runtime
                     AdapterVersion = AdapterIdentity.AdapterVersion,
                     ProtocolVersion = AdapterIdentity.ProtocolVersion,
                     GameId = AdapterIdentity.GameId,
-                    GameVersion = AdapterIdentity.GameVersion,
+                    GameVersion = GameVersionSnapshot.Current,
                     SessionId = sessionId,
                 },
             };
@@ -219,7 +220,15 @@ namespace Wia.RimWorld.Runtime
                 throw new InvalidOperationException("EnvironmentReady rejected: " + error);
             }
 
-            AdapterLog.Info("EnvironmentReady received; accepted extensions=(none)");
+            // Logs the list that arrived rather than restating what was expected. It is always empty
+            // at this point because a non-empty list is rejected above, but the line keeps reporting
+            // data instead of a claim if that ever stops being true.
+            AdapterLog.Info("EnvironmentReady received; accepted extensions=" + FormatExtensions(accepted));
+        }
+
+        private static string FormatExtensions(string[] extensions)
+        {
+            return extensions.Length == 0 ? "(none)" : string.Join(",", extensions);
         }
 
         private async Task HandleCapabilityRequestAsync(
@@ -232,9 +241,9 @@ namespace Wia.RimWorld.Runtime
                 throw new InvalidOperationException("CapabilityRequest rejected: " + error);
             }
 
-            // A1 publishes no capabilities yet: present_dialogue arrives with the dialogue stage.
-            // Declaring the handshake step now keeps the skeleton complete without claiming a
-            // capability the adapter cannot execute.
+            // No capabilities yet: present_dialogue arrives with the dialogue stage. Declaring the
+            // handshake step now keeps the skeleton complete without claiming a capability the
+            // adapter cannot execute.
             CapabilityList capabilities = new CapabilityList { Revision = 1 };
 
             await this.SendAsync(

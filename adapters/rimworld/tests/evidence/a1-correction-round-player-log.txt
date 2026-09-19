@@ -1,0 +1,28 @@
+Raw [WIA] lines from the RimWorld Player.log after the 10.3-1 correction round.
+Captured 2026-09-19, RimWorld 1.6.4871 rev591, Runtime on a fresh temporary dev data root.
+The mod was installed by scripts/install-rimworld-adapter.ps1 -GamePath D:\data\project\RimWorld.
+
+== Positive run: handshake completes ==
+
+[WIA] native library loaded from D:\data\project\RimWorld\Mods\WiaRimWorld\Native\grpc_csharp_ext.dll (handle 0x7FFDD55C0000); bare-name resolution returned 0x7FFDD55C0000 (win32 error 0)
+[WIA] adapter 0.1.0 started on thread 1; game rimworld/1.6.4871 rev591; runtime 127.0.0.1:50051
+[WIA] AdapterHello sent to 127.0.0.1:50051 session=531620ca1ef34b53b5eadabdac067469 adapter=wia-rimworld game=rimworld/1.6.4871 extensions=(none)
+[WIA] EnvironmentReady received; accepted extensions=(none)
+[WIA] CapabilityList sent: (none) revision=1
+[WIA] main-thread pump drained on thread 1, startup thread was 1, same=True
+
+Runtime side, same session:
+
+capability bootstrap session_id=531620ca1ef34b53b5eadabdac067469 revision=1 accepted=0 catalog=0 skipped_nil=0 invalid_names=[] invalid_schema=[] invalid_policy=[] duplicates=[] unsupported_entity_id="" invalid_entity_id=""
+
+"rev591" cannot be produced by AdapterIdentity.BuildTargetGameVersion, which is the bare
+"1.6.4871". Its presence is what shows the reported version is read from the running game.
+
+== Negative run: native library absent, transport must not start ==
+
+The only [WIA] line in the whole log:
+
+[WIA] adapter disabled, no connection will be attempted: native library not found at D:\data\project\RimWorld\Mods\WiaRimWorld\Native\grpc_csharp_ext.dll; run scripts/install-rimworld-adapter.ps1 to stage it (restart RimWorld after installing it)
+
+Lines matching "AdapterHello sent": 0
+The Runtime logged nothing during this run.

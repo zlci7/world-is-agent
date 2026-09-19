@@ -18,9 +18,9 @@ if (-not $ProjectPath) {
 }
 
 # The game is not a build dependency: Krafs.Rimworld.Ref supplies reference assemblies.
-# It is only needed to resolve the install target, so an explicit path always wins.
+# It is only needed to resolve the install target, and it is never guessed: a wrong guess installs
+# into a different game directory and still reports success.
 if (-not $GamePath) { $GamePath = $env:WIA_RIMWORLD_GAME_PATH }
-if (-not $GamePath) { $GamePath = Join-Path $repoRoot '..\RimWorld' }
 
 if (-not (Test-Path -LiteralPath $ProjectPath)) {
     throw "RimWorld adapter project not found: $ProjectPath"
@@ -32,8 +32,11 @@ if (-not $OutputPath) {
 }
 
 if (-not $ModsPath) {
+    if (-not $GamePath) {
+        throw 'Game path not specified. Pass -GamePath or set WIA_RIMWORLD_GAME_PATH.'
+    }
     if (-not (Test-Path -LiteralPath $GamePath)) {
-        throw "RimWorld install path not found: $GamePath. Pass -GamePath or set WIA_RIMWORLD_GAME_PATH."
+        throw "RimWorld install path not found: $GamePath"
     }
     if (-not (Test-Path -LiteralPath (Join-Path $GamePath 'RimWorldWin64.exe'))) {
         throw "Not a RimWorld install: $GamePath"
@@ -72,10 +75,22 @@ if (-not (Test-Path -LiteralPath $OutputPath)) {
 }
 
 Write-Host "Installing adapter to: $targetPath"
-New-Item -ItemType Directory -Force -Path (Join-Path $targetPath 'About') | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $targetPath 'Assemblies') | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $targetPath 'Native') | Out-Null
 
+# Staging is a whitelist, not a merge. The installed tree is what RimWorld loads, so a managed
+# assembly left behind by an earlier version would silently change the mod's behaviour: it stays a
+# real part of the loaded program, and an unloadable one in this folder can stop later assemblies
+# from loading at all. Only these two folders are emptied; anything else the user keeps in the mod
+# folder is left alone.
+foreach ($folder in @('Assemblies', 'Native')) {
+    $folderPath = Join-Path $targetPath $folder
+    if (Test-Path -LiteralPath $folderPath) {
+        Remove-Item -LiteralPath $folderPath -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Force -Path $folderPath | Out-Null
+}
+
+New-Item -ItemType Directory -Force -Path (Join-Path $targetPath 'About') | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectDirectory 'About\About.xml') -Destination (Join-Path $targetPath 'About\About.xml') -Force
 
 foreach ($name in $managed) {
@@ -85,10 +100,6 @@ foreach ($name in $managed) {
     }
     Copy-Item -LiteralPath $source -Destination (Join-Path $targetPath "Assemblies\$name") -Force
 }
-
-# Clear any native image a previous layout left in Assemblies/.
-Get-ChildItem -LiteralPath (Join-Path $targetPath 'Assemblies') -Filter 'grpc_csharp_ext*' -ErrorAction SilentlyContinue |
-    Remove-Item -Force
 
 # The native library must sit outside Assemblies/, and must be named exactly as the DllImport in
 # Grpc.Core expects it: Windows LoadLibrary does not match a loaded module by a different base name.

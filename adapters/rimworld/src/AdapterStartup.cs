@@ -31,14 +31,24 @@ namespace Wia.RimWorld
             {
                 // Must run before the first gRPC call: Grpc.Core resolves its native library by
                 // bare name, and this is what puts that module in the process.
-                if (NativeLibraryLoader.TryPreload(out string nativeReport))
+                if (!NativeLibraryLoader.TryPreload(out string nativeReport))
                 {
-                    AdapterLog.Info(nativeReport);
+                    // Fail closed. No gRPC call can succeed without this library, so starting the
+                    // transport anyway would only produce an endless connect-fail-retry loop that
+                    // hides the real cause. Reconnecting cannot fix a missing file, and this static
+                    // constructor runs once per process: staging the file afterwards does not recover
+                    // the running game, RimWorld has to be restarted.
+                    AdapterLog.Error(
+                        "adapter disabled, no connection will be attempted: " + nativeReport +
+                        " (restart RimWorld after installing it)");
+                    return;
                 }
-                else
-                {
-                    AdapterLog.Error("native gRPC library unavailable: " + nativeReport);
-                }
+
+                AdapterLog.Info(nativeReport);
+
+                // Main thread, once per process. The connection worker reads this snapshot instead
+                // of touching the game's API itself.
+                GameVersionSnapshot.Capture();
 
                 GameObject host = new GameObject("WiaRimWorldPump");
                 host.hideFlags = HideFlags.HideAndDontSave;
@@ -50,6 +60,7 @@ namespace Wia.RimWorld
 
                 AdapterLog.Info(
                     $"adapter {AdapterIdentity.AdapterVersion} started on thread {StartupThreadId}; " +
+                    $"game {AdapterIdentity.GameId}/{GameVersionSnapshot.Diagnostic}; " +
                     $"runtime {AdapterIdentity.RuntimeHost}:{AdapterIdentity.RuntimePort}");
             }
             catch (Exception ex)

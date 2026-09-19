@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10.3 RimWorld 对话接入与世界实例实体技术方案
 
-> 状态：**已定稿（Accepted for Implementation）；A1 已实现并实机验收**（见 [Phase10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)）。
+> 状态：**已定稿（Accepted for Implementation）；10.3-1 已实现并实机验收**（见 [Phase10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)）。
 > 本文只描述确认后的范围与验收条件；实现进度与实机结论另行记录。
 > 上位文档：[Phase10 技术开发与验收总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) §4。
 
@@ -203,7 +203,7 @@ EntityRef
   definition_id   = "archetype:colonist"
 ```
 
-`Pawn.GetUniqueLoadID()` 的确切返回形式由游戏 API 决定，**A2 必须在实机记录真实取值并冻结**，
+`Pawn.GetUniqueLoadID()` 的确切返回形式由游戏 API 决定，**10.3-2 必须在实机记录真实取值并冻结**，
 不得凭推测写死字符串拼接结果。本阶段冻结的是"格式"（单一 `pawn:` 前缀 + `entity_type = "pawn"`），
 不是"猜测的后缀"。
 
@@ -633,7 +633,7 @@ dev data root 将拿不到任何 definitions，archetype 也就无法被 catalog
 
 已知副作用：把 definitions 放在 Runtime 发布树里意味着它们会被 seed 进**之后新建的** data root。
 `Seed()` 不是升级机制——`agent.json` 一旦存在它就直接返回，不会补任何 definition，
-因此既有的 data root 不会自动得到 RimWorld definitions。本阶段不受影响（A3 使用全新 dev data root），
+因此既有的 data root 不会自动得到 RimWorld definitions。本阶段不受影响（10.3-3 使用全新 dev data root），
 但这是发布前必须解决的问题，见 §17。
 
 ### 13.2 不重构 game profile
@@ -767,7 +767,7 @@ Grpc.Core 已进入 maintenance mode，官方建议迁移到 gRPC for .NET（后
 world lineage：Save As 继承同一 GUID，语义是 world lineage 而非文件 identity，本阶段接受。
 
 definitions distribution：
-    本阶段沿用 Stardew 的做法把 definitions 放进 Runtime 发布树；A3 使用全新 dev data root，
+    本阶段沿用 Stardew 的做法把 definitions 放进 Runtime 发布树；10.3-3 使用全新 dev data root，
     因此当前 seed 机制足够。
 
     但 Seed() 不是升级机制：agent.json 一旦存在，新版本新增的 game definitions

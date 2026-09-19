@@ -16,15 +16,22 @@ namespace Wia.RimWorld.Runtime
         /// <summary>Game identifier reported in AdapterHello and used in every session key.</summary>
         public const string GameId = "rimworld";
 
-        /// <summary>RimWorld version this adapter is built and tested against.</summary>
-        public const string GameVersion = "1.6.4871";
+        /// <summary>
+        /// RimWorld version this adapter is built and tested against. This is a build-time fact:
+        /// what AdapterHello reports is the version the process is actually running, which the
+        /// game may update without the adapter being rebuilt. See <see cref="GameVersionSnapshot"/>.
+        /// </summary>
+        public const string BuildTargetGameVersion = "1.6.4871";
 
         /// <summary>Version of the adapter assembly itself.</summary>
         public const string AdapterVersion = "0.1.0";
 
         /// <summary>
-        /// The Runtime's adapter endpoint. The Runtime listens on loopback only; the address is
-        /// the default gRPC port and can be overridden by the Runtime's --grpc-addr flag.
+        /// The Runtime's adapter endpoint: loopback only, on the Runtime's default gRPC port.
+        ///
+        /// This is fixed, not negotiated. The adapter has no settings entry yet, so it does not
+        /// follow the Runtime's <c>--grpc-addr</c> flag: pointing the Runtime at another address
+        /// requires rebuilding the adapter with that address.
         /// </summary>
         public const string RuntimeHost = "127.0.0.1";
 
