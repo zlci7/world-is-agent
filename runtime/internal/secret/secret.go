@@ -1,12 +1,13 @@
 // Package secret stores and reads the one credential the Runtime keeps on the
 // user's machine.
 //
-// Two rules shape it.
-//
 // The value is written where only its owner can read it, and a failure to make
-// that true is a failure to save. Writing a credential into a file that anyone
-// can read while reporting success would be worse than not saving it at all, so
-// the permissions are applied before anything else and verified afterwards.
+// that true is a failure to save. Writing a credential into a file anyone can read
+// while reporting success would be worse than not saving it at all.
+//
+// That guarantee is a POSIX one. On Windows the platform file has nothing to set
+// and says so; there, the credential's protection is the permission the data root
+// directory already has.
 //
 // Errors never carry the resolved path. These messages reach the local client,
 // and the client is not told where the credential lives; the reference the user

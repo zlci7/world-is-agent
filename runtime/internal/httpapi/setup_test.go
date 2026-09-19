@@ -8,7 +8,33 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gameagent/runtime/internal/llm"
 )
+
+// providerStub answers one model request. The first-run flow only needs to know
+// whether the provider accepts the credential, so the response is the smallest
+// one the provider parses.
+func providerStub(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func acceptingProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	return providerStub(t, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+}
+
+func rejectingProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	return providerStub(t, http.StatusUnauthorized, `{"error":{"message":"invalid api key"}}`)
+}
 
 func setupBody(fields map[string]any) string {
 	encoded, err := json.Marshal(fields)
@@ -16,6 +42,54 @@ func setupBody(fields map[string]any) string {
 		panic(err)
 	}
 	return string(encoded)
+}
+
+func TestSetupTestRequiresASession(t *testing.T) {
+	f := newFixture(t, nil)
+
+	recorder := f.do(t, http.MethodPost, "/api/setup/test", setupBody(map[string]any{
+		"provider": "deepseek", "api_key": "sk-probe",
+	}))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+}
+
+// The test is a question, not a commit: it reports and writes nothing.
+func TestSetupTestReportsBothOutcomes(t *testing.T) {
+	f := newFixture(t, nil)
+	cookie := f.session(t)
+
+	accepted := f.do(t, http.MethodPost, "/api/setup/test", setupBody(map[string]any{
+		"provider": "deepseek", "model": "test-model", "base_url": acceptingProvider(t).URL, "api_key": "sk-good",
+	}), cookie)
+
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", accepted.Code, accepted.Body.String())
+	}
+	if outcome := decodeBody[llm.ProbeOutcome](t, accepted); !outcome.OK || outcome.Code != "ok" {
+		t.Fatalf("outcome = %+v, want ok", outcome)
+	}
+
+	rejected := f.do(t, http.MethodPost, "/api/setup/test", setupBody(map[string]any{
+		"provider": "deepseek", "model": "test-model", "base_url": rejectingProvider(t).URL, "api_key": "sk-bad",
+	}), cookie)
+
+	if rejected.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 even for a rejected credential", rejected.Code)
+	}
+	outcome := decodeBody[llm.ProbeOutcome](t, rejected)
+	if outcome.OK {
+		t.Fatal("a rejected credential was reported as working")
+	}
+	if outcome.Code != "authentication_failed" {
+		t.Fatalf("code = %q, want authentication_failed", outcome.Code)
+	}
+	if strings.Contains(rejected.Body.String(), "sk-bad") {
+		t.Fatal("the probe response echoed the credential")
+	}
+	assertNoCredentialWritten(t, f)
 }
 
 func TestSetupModelRequiresASession(t *testing.T) {
@@ -31,26 +105,25 @@ func TestSetupModelRequiresASession(t *testing.T) {
 	assertNoCredentialWritten(t, f)
 }
 
-// Until the connection probe exists, the only accepted commit is one the caller
-// explicitly asked not to verify. Committing silently would produce exactly the
-// configuration the first-run flow exists to prevent: one that looks verified.
-func TestSetupModelRefusesToCommitWithoutAnExplicitSkip(t *testing.T) {
+// The commit probes what it is about to write instead of trusting a test the
+// client already ran, and a failed probe leaves nothing behind.
+func TestSetupModelWritesNothingWhenTheProbeFails(t *testing.T) {
 	f := newFixture(t, nil)
 	cookie := f.session(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
-		"provider": "deepseek", "api_key": "sk-unverified",
+		"provider": "deepseek", "model": "test-model", "base_url": rejectingProvider(t).URL, "api_key": "sk-rejected",
 	}), cookie)
 
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", recorder.Code)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
 	}
 	response := decodeBody[errorResponse](t, recorder)
-	if response.Error.Code != "connection_test_unavailable" {
-		t.Fatalf("code = %q", response.Error.Code)
+	if response.Error.Code != "authentication_failed" {
+		t.Fatalf("code = %q, want the probe's own code", response.Error.Code)
 	}
-	if !strings.Contains(response.Error.Message, "skip_connection_test") {
-		t.Fatalf("message %q does not name the field that would allow it", response.Error.Message)
+	if strings.Contains(recorder.Body.String(), "sk-rejected") {
+		t.Fatal("the failure response echoed the credential")
 	}
 	assertNoCredentialWritten(t, f)
 }
@@ -60,10 +133,10 @@ func TestSetupModelCommitsAndReportsTheNewState(t *testing.T) {
 	cookie := f.session(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
-		"provider":             "deepseek",
-		"model":                "test-model",
-		"api_key":              "sk-from-the-wizard",
-		"skip_connection_test": true,
+		"provider": "deepseek",
+		"model":    "test-model",
+		"base_url": acceptingProvider(t).URL,
+		"api_key":  "sk-from-the-wizard",
 	}), cookie)
 
 	if recorder.Code != http.StatusOK {
@@ -93,8 +166,7 @@ func TestSetupModelCommitsAndReportsTheNewState(t *testing.T) {
 	if strings.Contains(string(written), "sk-from-the-wizard") {
 		t.Fatalf("the written configuration holds the credential: %s", written)
 	}
-	secretPath := filepath.Join(f.runtime.Layout().SecretsDir(), "model.key")
-	stored, err := os.ReadFile(secretPath)
+	stored, err := os.ReadFile(filepath.Join(f.runtime.Layout().SecretsDir(), "model.key"))
 	if err != nil {
 		t.Fatalf("read the stored credential: %v", err)
 	}
@@ -109,9 +181,9 @@ func TestSetupModelValidatesTheBody(t *testing.T) {
 
 	for name, body := range map[string]string{
 		"not json":     "{",
-		"no provider":  setupBody(map[string]any{"api_key": "sk-value", "skip_connection_test": true}),
-		"no key":       setupBody(map[string]any{"provider": "deepseek", "skip_connection_test": true}),
-		"unknown wire": setupBody(map[string]any{"provider": "nowhere", "api_key": "sk-value", "skip_connection_test": true}),
+		"no provider":  setupBody(map[string]any{"api_key": "sk-value"}),
+		"no key":       setupBody(map[string]any{"provider": "deepseek"}),
+		"unknown wire": setupBody(map[string]any{"provider": "nowhere", "api_key": "sk-value"}),
 	} {
 		recorder := f.do(t, http.MethodPost, "/api/setup/model", body, cookie)
 		if recorder.Code != http.StatusBadRequest {
@@ -120,6 +192,7 @@ func TestSetupModelValidatesTheBody(t *testing.T) {
 		if strings.Contains(recorder.Body.String(), "sk-value") {
 			t.Errorf("%s: the response echoed the credential", name)
 		}
+		assertNoCredentialWritten(t, f)
 	}
 }
 
@@ -127,7 +200,7 @@ func TestSetupModelRejectsAForeignOrigin(t *testing.T) {
 	f := newFixture(t, nil)
 
 	request := httptest.NewRequest(http.MethodPost, f.origin+"/api/setup/model", strings.NewReader(setupBody(map[string]any{
-		"provider": "deepseek", "api_key": "sk-foreign", "skip_connection_test": true,
+		"provider": "deepseek", "api_key": "sk-foreign",
 	})))
 	request.AddCookie(f.session(t))
 	request.Header.Set("Origin", "http://evil.example.com")

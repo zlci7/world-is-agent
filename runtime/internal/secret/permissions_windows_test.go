@@ -3,27 +3,23 @@
 package secret
 
 import (
+	"os"
 	"testing"
-
-	"golang.org/x/sys/windows"
 )
 
-// assertOwnerOnly checks the property the package promises on this platform:
-// inherited access is gone. x/sys does not expose ACE enumeration, so the
-// protected flag is what is checked, and it is precisely the flag that records
-// whether inherited entries still apply.
+// There is no permission to check on Windows: restrictPlatform is a documented
+// no-op, and the credential's protection is the permission the data root
+// directory already has. What is checked here is that writing still happened
+// where it was asked to, so the POSIX-only guarantee cannot quietly become "no
+// file at all" on this platform.
 func assertOwnerOnly(t *testing.T, path string, isDir bool) {
 	t.Helper()
 
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("read security info of %s: %v", path, err)
+		t.Fatalf("stat %s: %v", path, err)
 	}
-	control, _, err := descriptor.Control()
-	if err != nil {
-		t.Fatalf("read control flags of %s: %v", path, err)
-	}
-	if control&windows.SE_DACL_PROTECTED == 0 {
-		t.Fatalf("%s still inherits its permissions from the parent directory", path)
+	if info.IsDir() != isDir {
+		t.Fatalf("%s: isDir = %v, want %v", path, info.IsDir(), isDir)
 	}
 }

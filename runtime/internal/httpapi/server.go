@@ -34,6 +34,7 @@ import (
 
 	"gameagent/runtime/internal/bootstrap"
 	"gameagent/runtime/internal/llm"
+	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/traceview"
 )
 
@@ -171,6 +172,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleTurns(w, r)
 	case "/api/setup/model":
 		s.handleSetupModel(w, r)
+	case "/api/setup/test":
+		s.handleSetupTest(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "no such route")
 	}
@@ -237,22 +240,52 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 // setupModelRequest is one first-run submission. The credential travels in this
 // request and nowhere else: it is never echoed, logged or traced.
 type setupModelRequest struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	// SkipConnectionTest commits a configuration that was not verified against the
-	// provider. It exists for a user who is offline, and it must be asked for
-	// explicitly rather than assumed.
-	SkipConnectionTest bool `json:"skip_connection_test"`
+	Provider            string `json:"provider"`
+	Model               string `json:"model"`
+	BaseURL             string `json:"base_url"`
+	APIKey              string `json:"api_key"`
+	ContextWindowTokens int    `json:"context_window_tokens"`
+	MaxOutputTokens     int    `json:"max_output_tokens"`
+}
+
+func (b setupModelRequest) candidate() llm.ProbeCandidate {
+	return llm.ProbeCandidate{
+		Provider: b.Provider,
+		Model:    b.Model,
+		BaseURL:  b.BaseURL,
+		APIKey:   b.APIKey,
+		Window:   model.WindowLimits{ContextTokens: b.ContextWindowTokens, OutputTokens: b.MaxOutputTokens},
+	}
+}
+
+// handleSetupTest answers one question: does this candidate work? It never writes
+// anything, and the answer is not remembered -- the form shows it for as long as
+// it is looking at those fields, and no part of the Runtime claims a model was
+// verified after a restart.
+func (s *Server) handleSetupTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "a connection test is made with POST")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && origin != s.url {
+		writeError(w, http.StatusForbidden, "origin_not_allowed", fmt.Sprintf("unexpected origin %q", origin))
+		return
+	}
+
+	body, ok := decodeSetupRequest(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, llm.ProbeConnection(r.Context(), body.candidate()))
 }
 
 // handleSetupModel is the authoritative commit for the model configuration.
 //
-// Until the connection probe exists, it accepts only an explicit
-// skip_connection_test. That is not a limitation to work around: committing
-// silently here would produce exactly the configuration the first-run flow exists
-// to prevent, one that looks verified and is not.
+// It probes the parameters it is about to write rather than trusting a test the
+// client already ran: between that test and this request the payload can change,
+// and writing an unverified configuration is the one outcome the first-run flow
+// exists to prevent. A failed probe writes nothing, so the user can correct the
+// form and try again.
 func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "the model configuration is written with POST")
@@ -263,22 +296,25 @@ func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body setupModelRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSetupBodyBytes)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "expected a JSON object with the model configuration")
+	body, ok := decodeSetupRequest(w, r)
+	if !ok {
 		return
 	}
-	if !body.SkipConnectionTest {
-		writeError(w, http.StatusConflict, "connection_test_unavailable",
-			"this build cannot verify a model connection yet, so the configuration is only written when skip_connection_test is set explicitly")
+	candidate := body.candidate()
+	if outcome := llm.ProbeConnection(r.Context(), candidate); !outcome.OK {
+		// The code is the actionable part; the message says what to fix without
+		// carrying the credential.
+		writeError(w, http.StatusBadRequest, outcome.Code, outcome.Message)
 		return
 	}
 
 	err := s.options.Runtime.ApplyModelConfiguration(bootstrap.ModelSetup{
-		Provider: body.Provider,
-		Model:    body.Model,
-		BaseURL:  body.BaseURL,
-		APIKey:   body.APIKey,
+		Provider:            candidate.Provider,
+		Model:               candidate.Model,
+		BaseURL:             candidate.BaseURL,
+		APIKey:              candidate.APIKey,
+		ContextWindowTokens: candidate.Window.ContextTokens,
+		MaxOutputTokens:     candidate.Window.OutputTokens,
 	})
 	if err != nil {
 		// The core state carries the reason, so the client can show what is
@@ -290,6 +326,15 @@ func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 	// The same payload the client polls, so a successful save needs no second
 	// request to learn what changed.
 	writeJSON(w, http.StatusOK, s.statusPayload())
+}
+
+func decodeSetupRequest(w http.ResponseWriter, r *http.Request) (setupModelRequest, bool) {
+	var body setupModelRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSetupBodyBytes)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "expected a JSON object with the model configuration")
+		return setupModelRequest{}, false
+	}
+	return body, true
 }
 
 // maxSetupBodyBytes bounds one setup submission. A credential is short, and a
