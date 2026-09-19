@@ -312,20 +312,32 @@ console 只有探测产生的 400，无未捕获异常
 
 #### 人工验收步骤
 
-从**空数据根**启动发行二进制，让 Runtime 自己打开浏览器并把会话交给它：
+运行时不需要任何参数：数据根默认就是平台数据目录（Windows 为 `%LOCALAPPDATA%\WorldIsAgent`），
+配置树与客户端都嵌在二进制里，首次启动自己 seed 并打开浏览器。
 
 ```powershell
-cd runtime
-go build -o server.exe ./cmd/server          # server.exe 已在 .gitignore 中
-.\server.exe --data-root "$env:TEMP\wia-firstrun"
+# 构建（仓库根，输出落在已被 .gitignore 覆盖的 build/bin/）
+go build -o build\bin\wia-server.exe .\runtime\cmd\server
+
+# 运行：零参数。首次启动会 seed 并自动打开浏览器
+.\build\bin\wia-server.exe
 ```
 
-首次启动会自动打开浏览器。若要自己控制打开时机，加 `--no-open`，Runtime 会把带一次性令牌的
-URL 打印在日志里，打开它即可（令牌在 URL fragment 中，不会发给服务器）。
+依次确认：卡片出现 → Provider 下拉可选 → 切换 provider 时 Model 跟随 → 填正确 key → Save →
+卡片消失并出现 `Runtime Ready ✓` → **刷新仍是 Ready** → 关掉进程再启动（不再 seed，仍 Ready）
+→ 启动 Stardew 与 NPC 对话 → Turn 出现在 Console。
+
+想重复"首次运行"：删掉 `%LOCALAPPDATA%\WorldIsAgent` 再启动即可。若不想动默认数据根，
+加 `--data-root <某个空目录>`。
+
+开发期跑仓库里的配置树用现成脚本（它把数据根设为 `runtime/`，并 `go run`）：
+`.\scripts\start-runtime.ps1`。
+
+失败时的安全行为：探测不通过就**什么都不写**，表单保持可改。
 
 依次确认：卡片出现 → Provider 下拉可选 → 切换 provider 时 Model 跟随 → 填正确 key → Save →
-卡片消失并出现 `Runtime Ready ✓` → **刷新仍是 Ready** → 关掉进程再启动（这次不加 `--no-open`
-也会打开，且不再 seed）→ 仍是 Ready → 启动 Stardew 与 NPC 对话 → Turn 出现在 Console。
+卡片消失并出现 `Runtime Ready ✓` → **刷新仍是 Ready** → 关掉进程再启动（不再 seed，仍 Ready）
+→ 启动 Stardew 与 NPC 对话 → Turn 出现在 Console。
 
 失败时的安全行为：探测不通过就**什么都不写**，表单保持可改；若要重来，删掉
 `$env:TEMP\wia-firstrun` 再启动即可。
