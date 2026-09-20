@@ -80,7 +80,7 @@ Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and
 | History retrieval and retention | Phase8.3 is a design draft for literal source retrieval and optional cleanup, disabled by default. |
 | Long-term semantic memory | No Semantic extraction/correction pipeline, vector store, or embedding index. |
 | Provider-specific token sizing | Context budget uses deterministic estimated tokens, not exact provider tokenizer or automatic model window detection. |
-| Automatic reconnect | Adapter reconnect and environment recovery are future work. |
+| Automatic reconnect | The RimWorld adapter reconnects on its own and re-handshakes in a new session, verified in game. Cross-adapter reconnect and environment recovery is not yet standardized, so this stays adapter-specific behaviour rather than a protocol guarantee. |
 | Durable async continuation | Async action waiting is process-local. |
 | Cross-stream ordering | Same-agent FIFO is validated inside one live EnvironmentSession. |
 | Heartbeat/liveness productization | Heartbeat exists in protocol but is not yet a completed recovery mechanism. |

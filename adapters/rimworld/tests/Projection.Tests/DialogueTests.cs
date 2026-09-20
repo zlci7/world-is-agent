@@ -336,6 +336,70 @@ namespace WiaRimWorld.Projection.Tests
         }
 
         [Fact]
+        public void ATurnThatCompletesWithoutPresentingEndsTheConversation()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation conversation = store.Begin("world-1", "pawn:A", "event-1");
+
+            // The Runtime lets a model settle a turn with no tool call, and that turn still completes.
+            // Nothing was shown and no reply is coming, so the conversation has to end here - otherwise
+            // the colonist answers "already talking" for the rest of the session.
+            Assert.True(store.CompleteTurn("event-1"));
+
+            Conversation found;
+            Assert.False(store.IsOpen(conversation.ConversationId));
+            Assert.False(store.TryGetOpenForEntity("pawn:A", out found));
+
+            // Which is what makes the next click work.
+            store.Begin("world-1", "pawn:A", "event-2");
+            Assert.True(store.TryGetOpenForEntity("pawn:A", out found));
+        }
+
+        [Fact]
+        public void ATurnThatPresentedKeepsTheConversationOpen()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation conversation = store.Begin("world-1", "pawn:A", "event-1");
+
+            store.MarkPresented(conversation.ConversationId);
+
+            // The window is up and the player's reply is what starts the next turn, so this turn
+            // completing must not close anything.
+            Assert.False(store.CompleteTurn("event-1"));
+            Assert.True(store.IsOpen(conversation.ConversationId));
+        }
+
+        [Fact]
+        public void AReplyTurnThatPresentsNothingEndsTheConversation()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation conversation = store.Begin("world-1", "pawn:A", "event-1");
+            store.MarkPresented(conversation.ConversationId);
+            store.CompleteTurn("event-1");
+
+            // The player replies, which starts a second turn on the same conversation.
+            store.Bind("event-2", conversation);
+            Assert.True(store.IsOpen(conversation.ConversationId));
+
+            // This turn settles without presenting, so the exchange ends even though the first turn
+            // did present.
+            Assert.True(store.CompleteTurn("event-2"));
+            Assert.False(store.IsOpen(conversation.ConversationId));
+        }
+
+        [Fact]
+        public void CompletingAnUnknownOrClosedConversationChangesNothing()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation conversation = store.Begin("world-1", "pawn:A", "event-1");
+            store.Close(conversation.ConversationId);
+
+            Assert.False(store.CompleteTurn("event-missing"));
+            Assert.False(store.CompleteTurn("event-1"));
+            Assert.False(store.CompleteTurn(null));
+        }
+
+        [Fact]
         public void UnknownAndEmptyEventIdsDoNotResolve()
         {
             ConversationStore store = new ConversationStore();

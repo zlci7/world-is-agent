@@ -385,7 +385,13 @@ namespace Wia.RimWorld.Runtime
 
             AdapterLog.Info("turn completed turn=" + completion.TurnId + " status=" + completion.Status);
 
-            if (completion.Status == TurnCompletionStatus.Failed)
+            if (completion.Status == TurnCompletionStatus.Completed)
+            {
+                // Completed is not on its own a reason to keep the conversation: a model may settle
+                // with no tool call, and then nothing was shown and no reply is coming.
+                this.Dialogue.CompleteTurn(completion.EventId);
+            }
+            else if (completion.Status == TurnCompletionStatus.Failed)
             {
                 this.Dialogue.AbandonEvent(completion.EventId, "回合失败");
             }

@@ -9,6 +9,16 @@ namespace Wia.RimWorld.Dialogue
         public string ConversationId;
         public string WorldId;
         public string EntityId;
+
+        /// <summary>
+        /// True while the turn started by this conversation's latest event has not presented a line.
+        ///
+        /// The Runtime lets a model settle a turn with no tool call at all, and that turn still
+        /// completes. Whether the conversation should outlive a completed turn depends on whether the
+        /// player was actually shown anything, so that fact is tracked per turn rather than inferred
+        /// from the conversation merely being open.
+        /// </summary>
+        public bool AwaitingPresentation;
     }
 
     /// <summary>
@@ -48,6 +58,7 @@ namespace Wia.RimWorld.Dialogue
                 ConversationId = "conv-" + Guid.NewGuid().ToString("N"),
                 WorldId = worldId,
                 EntityId = entityId,
+                AwaitingPresentation = true,
             };
 
             lock (this.gate)
@@ -72,6 +83,9 @@ namespace Wia.RimWorld.Dialogue
 
             lock (this.gate)
             {
+                // A follow-up event starts a new turn for this conversation, so it is again waiting to
+                // see whether that turn presents anything.
+                conversation.AwaitingPresentation = true;
                 this.open[conversation.ConversationId] = conversation;
                 this.BindLocked(conversation, eventId);
             }
@@ -150,6 +164,58 @@ namespace Wia.RimWorld.Dialogue
             lock (this.gate)
             {
                 this.open.Remove(conversationId);
+            }
+        }
+
+        /// <summary>
+        /// Records that the conversation's current turn has shown a line. Called when
+        /// present_dialogue succeeds.
+        /// </summary>
+        public void MarkPresented(string conversationId)
+        {
+            if (string.IsNullOrEmpty(conversationId))
+            {
+                return;
+            }
+
+            lock (this.gate)
+            {
+                Conversation conversation;
+                if (this.open.TryGetValue(conversationId, out conversation))
+                {
+                    conversation.AwaitingPresentation = false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Settles a turn that the Runtime reported as completed, and reports whether that ended the
+        /// conversation.
+        ///
+        /// A turn can complete successfully without the model calling any tool. When that happens
+        /// there is no window and no reply is coming, so keeping the conversation open would leave the
+        /// colonist answering "already talking" forever with nothing for the player to close. A turn
+        /// that did present something is left open: the window is up and the reply is what starts the
+        /// next turn.
+        /// </summary>
+        public bool CompleteTurn(string eventId)
+        {
+            Conversation conversation;
+            if (!this.TryResolve(eventId, out conversation))
+            {
+                return false;
+            }
+
+            lock (this.gate)
+            {
+                Conversation tracked;
+                if (!this.open.TryGetValue(conversation.ConversationId, out tracked) || !tracked.AwaitingPresentation)
+                {
+                    return false;
+                }
+
+                this.open.Remove(conversation.ConversationId);
+                return true;
             }
         }
 

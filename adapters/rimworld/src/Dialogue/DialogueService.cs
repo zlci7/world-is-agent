@@ -181,6 +181,10 @@ namespace Wia.RimWorld.Dialogue
 
             this.Present(conversation, pawn, input);
 
+            // The player has now been shown something, so a completed turn has to leave this
+            // conversation open instead of settling it as though nothing had happened.
+            this.conversations.MarkPresented(conversation.ConversationId);
+
             if (input.EndsConversation)
             {
                 // The model chose the ending form, so this conversation is over before the window is
@@ -227,6 +231,30 @@ namespace Wia.RimWorld.Dialogue
 
                 Messages.Message("WIA 对话没有开始：" + reason, MessageTypeDefOf.RejectInput, false);
             });
+        }
+
+        /// <summary>
+        /// Settles a turn the Runtime reported as completed.
+        ///
+        /// A completed turn is normally the one that put a window on screen, and that conversation has
+        /// to stay open because the player's reply is what starts the next turn. A model may also
+        /// settle with no tool call at all, though, and that turn completes just as successfully; there
+        /// is no window then and no reply is coming, so the conversation is closed. Without this the
+        /// colonist would answer "already talking" for the rest of the session with nothing to close.
+        ///
+        /// Called from the stream thread.
+        /// </summary>
+        public void CompleteTurn(string eventId)
+        {
+            if (!this.conversations.CompleteTurn(eventId))
+            {
+                return;
+            }
+
+            this.pump.Enqueue(() => Messages.Message(
+                "WIA：这一回合没有产生对话，已结束",
+                MessageTypeDefOf.RejectInput,
+                false));
         }
 
         private void Present(Conversation conversation, Pawn pawn, PresentDialogueRequest input)

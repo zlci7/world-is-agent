@@ -58,7 +58,7 @@ scripts/install-rimworld-adapter.ps1                        白名单增加 Patc
         不一致（16 种 kind/version/turn 组合都不匹配），因此那条捷径不作为证据提出
 
 12   state.rimworld 有 schema_version，且字段数量与长度上限固定生效
-     ✅ 离线测试：SchemaVersionIsReported、EveryFieldIsBoundedNoMatterHowLargeTheInputIs、
+     ✅ 离线测试：SchemaVersionIsReported、ConfiguredTextFieldsAndCollectionsAreBounded、
         TruncationDoesNotLeaveHalfOfASurrogatePair
 
 13   同一冻结 snapshot 构建两次，结构化内容一致
@@ -306,3 +306,67 @@ check-standalone-build.ps1                 三项全过
 check-architecture.ps1                     通过
 git diff --check                           干净
 ```
+
+## 8. CR 第二轮：Turn 正常 Completed 但模型没有调用 present_dialogue
+
+第二轮评审在上一轮的清理逻辑里指出一个缺口：`HandleTurnCompletion` 对 `Failed` 与
+`Cancelled` 收摊，对 `Completed` 什么都不做。而 Runtime 允许模型**不带任何 tool call 直接
+settle**，那次 turn 同样以 `Completed` 结束。于是：
+
+```text
+conversation 仍然 open
+没有 dialogue window
+turn 已经 completed
+→ 玩家再点这个殖民者：「这位殖民者已经在对话中」
+→ 而这个会话没有任何正常关闭入口
+```
+
+这是一个永久卡死的殖民者，不是概率问题：只要模型有一次不按预期调用工具就会发生。
+
+### 修法
+
+问题在于「会话还开着」不等于「玩家看到了东西、并且在等回复」。所以 store 现在按 **turn**
+记录一个 `AwaitingPresentation`：
+
+```text
+Begin(打开对话)              → open, AwaitingPresentation = true
+Bind(玩家回复，开新 turn)     → AwaitingPresentation = true
+MarkPresented(present 成功)   → AwaitingPresentation = false
+Close(模型选择结束形态 / 玩家关窗) → 移出 open
+
+TurnCompletion.Completed → CompleteTurn(event_id)
+    会话不在 open            → 什么都不做
+    open 且 AwaitingPresentation → 这一回合没产生对话 → 关闭 + 给玩家一条消息
+    open 且 !AwaitingPresentation → 正常，窗口正等着玩家回复，保持 open
+```
+
+这样初始点击的 turn 与玩家回复的 turn 都安全：两者都会先经过 `present_dialogue`，
+只有真正没有产出对话的那次会被收掉。
+
+### 回归用例
+
+```text
+ATurnThatCompletesWithoutPresentingEndsTheConversation
+ATurnThatPresentedKeepsTheConversationOpen
+AReplyTurnThatPresentsNothingEndsTheConversation
+CompletingAnUnknownOrClosedConversationChangesNothing
+```
+
+第一条同时验证了「下一个 gizmo 点击可以正常工作」——这正是这个 bug 的可见症状。
+
+### 本轮同时收掉的两处 P2 文字
+
+```text
+本记录 §2 条件 12 仍引用改名前的测试名，已同步为 ConfiguredTextFieldsAndCollectionsAreBounded
+docs/STATUS.md 的 Automatic reconnect 一行仍写 "future work"，
+        而 RimWorld 适配器的断线重连已在 10.3-1 实机验证，已改为如实描述
+```
+
+### 仍未闭合
+
+```text
+退出条件 6 的商队部分     需要一局正常新档的殖民地（-quicktest 地图没有组建商队入口，见 10.3-2 记录 §4）
+退出条件 9 的负向         需要地图上存在囚犯或袭击者
+```
+
+两项的实机步骤见仓库外的 `wia-103-remaining-tests.md`，由用户在实机执行后补齐证据。
