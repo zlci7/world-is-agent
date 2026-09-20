@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10.3-2 实机验收记录
 
-> 状态：**身份与时钟部分已实机验收；商队部分未验证**（原因见 §4）。
+> 状态：**已实机验收**（退出条件 5–8 全部闭合，其中商队部分见 §4）。
 > 方案见 [Phase10.3 技术方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)。
 > 10.3-1 的证据见 [10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)，
 > 10.3-3 与 10.3-4 的证据见 [10.3-3/10.3-4 实现与证据记录](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)。
@@ -25,7 +25,7 @@ Runtime         全新 dev data root，默认适配器端口 127.0.0.1:50051
      ✅ save/load：5 名殖民者在存档与读档两侧取值完全相同（§3）
      ✅ 确切形式已冻结：GetUniqueLoadID() 返回 "Thing_" + defName + 数字，
         因此 entity_id 形如 pawn:Thing_Human89。适配器不重建这个格式，只加一次 pawn: 前缀
-     ⬜ 商队：未验证，见 §4
+     ✅ 商队：Map → 远行队 → Map 一个完整来回，entity_id 全程不变（§4）
 
 7    同一 world_id 内两个不同 eligible colonist 的 entity_id 必须不同
      ✅ 同一殖民地 5 名殖民者得到 5 个互不相同的 entity_id（§3）
@@ -90,13 +90,48 @@ entity_id      5 个取值互不相同；save 与 load 两侧同名殖民者取�
 tick           1 → 2001 → 3065 → 5065 单调；save=3064 与 load=3064 相等
 ```
 
-## 4. 未验证的部分
+## 4. 远行队实机证据
+
+在一次独立运行中从正常存档 `test_save` 载入（`world_id=2246980492de438d85d92a0f2b927270`，
+`identity load ... tick=5423`），两名殖民者被派出去、又走了回来：
 
 ```text
-条件 6 的远行队部分：Map → 远行队 → Map 期间 Pawn.Map == null 且 entity_id 不变。
+pawn:Thing_Human93   卡梅尼亚特拉
+  map=0    position=(117, 0, 156)  in_caravan=False
+  map=0    position=(127, 0, 148)  in_caravan=False
+  map=0    position=(113, 0, 149)  in_caravan=False
+  map=0    position=(120, 0, 146)  in_caravan=False
+  map=0    position=(120, 0, 226)  in_caravan=False
+  map=none position=none           in_caravan=True    ← 离开地图
+  map=none position=none           in_caravan=True
+  map=none position=none           in_caravan=True
+  map=0    position=(110, 0, 132)  in_caravan=False   ← 回到地图
+  map=0    position=(129, 0, 161)  in_caravan=False
+
+pawn:Thing_Human101  桦树皮
+  map=0    position=(113, 0, 155)  in_caravan=False
+  map=0    position=(120, 0, 146)  in_caravan=False
+  map=0    position=(111, 0, 153)  in_caravan=False
+  map=0    position=(115, 0, 151)  in_caravan=False
+  map=0    position=(120, 0, 229)  in_caravan=False
+  map=none position=none           in_caravan=True    ← 离开地图
+  map=none position=none           in_caravan=True
+  map=none position=none           in_caravan=True
+  map=0    position=(106, 0, 144)  in_caravan=False   ← 回到地图
+  map=0    position=(100, 0, 145)  in_caravan=False
 ```
 
-原因是**可观测的，不是推测**：验收用的殖民地来自 `-quicktest`，在该殖民地上
+判据全部成立：
+
+```text
+entity_id    Map → 远行队 → Map 全程不变
+位置         map=none 时 position 也是 none，没有把过期坐标当作当前位置上报
+其余三人     同一时段始终 map=0 in_caravan=False，没有受影响
+```
+
+### 为什么这一条要单独跑一局
+
+验收最初用的殖民地来自 `-quicktest`，在该殖民地上
 
 ```text
 选中殖民者后命令栏只有「WIA 对话」与「征召」两个 gizmo，没有组建远行队入口；
@@ -104,7 +139,7 @@ tick           1 → 2001 → 3065 → 5065 单调；save=3064 与 load=3064 相
 ```
 
 也就是说这张测试地图没有提供组建远行队的入口，需要一局通过正常新开档流程建立的殖民地。
-补验步骤：
+本次补验用的就是正常存档 `test_save`。复现步骤：
 
 > 术语：Caravan 在游戏**官方简体中文**里译作「远行队」，不是社区常说的「商队」。
 > 对应英文键 `CommandFormCaravan`（组建远行队）与 `CommandSendCaravan`（派出远行队）。
