@@ -2,9 +2,8 @@
  *  runtime/internal/httpapi/server.go. */
 
 /** The model configuration as the Runtime reports it. It carries no credential
- *  and no field that can carry one: the base URL is absent because a URL can
- *  embed userinfo or a token, and `api_key_env_name` is the variable name rather
- *  than the value. */
+ *  and no field that can carry one: a base URL can contain userinfo or a token,
+ *  and `api_key_env_name` is the variable name rather than the value. */
 export interface ModelSummary {
   provider?: string
   model?: string
@@ -72,6 +71,7 @@ export interface ConnectionError {
 export const StateNeedsConfiguration = 'needs_configuration'
 export const StateBlocked = 'blocked'
 export const StateReady = 'ready'
+export const StateReconfiguring = 'reconfiguring'
 
 /** One first-run submission. There is no window field: the Runtime writes the
  *  shipped default for the provider, and a wrong number here is worse than no
@@ -79,6 +79,7 @@ export const StateReady = 'ready'
 export interface ModelCandidate {
   provider: string
   model: string
+  base_url?: string
   api_key: string
 }
 

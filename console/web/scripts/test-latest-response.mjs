@@ -41,4 +41,17 @@ async function simulate(postName) {
 await simulate('game POST')
 await simulate('model POST')
 
+{
+  const gate = createLatestResponseGate()
+  const mutation = gate.beginMutation()
+
+  // An unrelated options read can fail without participating in status ordering.
+  // Its failure must not release or invalidate the active mutation.
+  assert.equal(gate.hasActiveMutation(), true)
+  assert.equal(gate.finishMutation(mutation + 1), false)
+  assert.equal(gate.hasActiveMutation(), true)
+  assert.equal(gate.finishMutation(mutation), true)
+  assert.equal(gate.hasActiveMutation(), false)
+}
+
 console.log('latest response ordering: ok')

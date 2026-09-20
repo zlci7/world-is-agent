@@ -11,17 +11,25 @@ import { ApiError, type ModelCandidate, type Status } from './types'
 
 const props = defineProps<{
   status: Status
+  mode: 'initial' | 'settings'
   busy: boolean
   beginStatusMutation: () => number
   acceptStatus: (status: Status, request: number) => void
 }>()
-const emit = defineEmits<{ failed: [unknown] }>()
+const emit = defineEmits<{
+  mutationFailed: [unknown, number]
+  readFailed: [unknown]
+  saved: []
+  cancelled: []
+}>()
 
 const providers = ref<ModelCandidate[]>([])
 const optionsProblem = ref<string | null>(null)
+const optionsLoading = ref(false)
 
 const provider = ref('')
 const model = ref('')
+const baseUrl = ref('')
 const apiKey = ref('')
 const saving = ref(false)
 const failure = ref('')
@@ -42,7 +50,11 @@ const canSubmit = computed(
   () => !saving.value && !props.busy && provider.value !== '' && apiKey.value.trim() !== '',
 )
 
-onMounted(async () => {
+onMounted(loadOptions)
+
+async function loadOptions() {
+  optionsLoading.value = true
+  optionsProblem.value = null
   try {
     const options = await fetchSetupOptions()
     providers.value = options.providers.map((choice) => ({
@@ -52,12 +64,20 @@ onMounted(async () => {
     }))
     // The first choice is the provider this build and its release notes lead
     // with; the user can still pick another.
-    selectProvider(providers.value[0]?.provider ?? '')
+    if (props.mode === 'settings') {
+      provider.value = props.status.model?.provider ?? providers.value[0]?.provider ?? ''
+      model.value = props.status.model?.model ?? ''
+      baseUrl.value = ''
+    } else {
+      selectProvider(providers.value[0]?.provider ?? '')
+    }
   } catch (error) {
     optionsProblem.value = describe(error)
-    emit('failed', error)
+    emit('readFailed', error)
+  } finally {
+    optionsLoading.value = false
   }
-})
+}
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -84,12 +104,14 @@ async function submit() {
     const updated = await saveModelSetup({
       provider: provider.value,
       model: model.value.trim(),
+      base_url: baseUrl.value.trim(),
       api_key: apiKey.value,
     })
     // The credential did its job once the Runtime accepted it; drop it rather
     // than leave it in a component that is about to disappear.
     apiKey.value = ''
     props.acceptStatus(updated, request)
+    emit('saved')
   } catch (error) {
     // Nothing was written for a failed probe, so the form stays exactly as the
     // user left it and can be corrected and submitted again.
@@ -98,20 +120,36 @@ async function submit() {
     } else {
       failure.value = describe(error)
     }
-    emit('failed', error)
+    emit('mutationFailed', error, request)
   } finally {
     saving.value = false
   }
 }
+
+function cancel() {
+  apiKey.value = ''
+  failure.value = ''
+  emit('cancelled')
+}
 </script>
 
 <template>
-  <p v-if="optionsProblem" class="banner banner-error">
-    The Runtime did not report which providers it supports: {{ optionsProblem }}
-  </p>
-
-  <section v-else class="card">
-    <h2>Set up your model</h2>
+  <section class="card">
+    <h2>{{ mode === 'settings' ? 'Model settings' : 'Set up your model' }}</h2>
+    <template v-if="optionsProblem">
+      <p class="banner banner-error">
+        The Runtime did not report which providers it supports: {{ optionsProblem }}
+      </p>
+      <div class="actions">
+        <button type="button" :disabled="optionsLoading || busy" @click="loadOptions">
+          {{ optionsLoading ? 'Retrying…' : 'Retry' }}
+        </button>
+        <button v-if="mode === 'settings'" type="button" class="secondary" :disabled="busy" @click="cancel">
+          Cancel
+        </button>
+      </div>
+    </template>
+    <template v-else>
     <p class="lead">
       The Runtime drives the agent with a model of your choice. The key is stored on this machine
       only, in the data root, and is never sent anywhere except your provider.
@@ -122,7 +160,7 @@ async function submit() {
       <select
         id="setup-provider"
         :value="provider"
-        :disabled="saving"
+        :disabled="saving || busy"
         @change="selectProvider(($event.target as HTMLSelectElement).value)"
       >
         <option v-for="choice in providers" :key="choice.provider" :value="choice.provider">
@@ -133,7 +171,15 @@ async function submit() {
 
     <div class="field">
       <label for="setup-model">Model</label>
-      <input id="setup-model" v-model="model" :disabled="saving" spellcheck="false" />
+      <input id="setup-model" v-model="model" :disabled="saving || busy" spellcheck="false" />
+    </div>
+
+    <div class="field">
+      <label for="setup-base-url">Base URL</label>
+      <div class="field-control">
+        <input id="setup-base-url" v-model="baseUrl" :disabled="saving || busy" spellcheck="false" />
+        <small>Leave empty to use the provider default.</small>
+      </div>
     </div>
 
     <div class="field">
@@ -144,7 +190,7 @@ async function submit() {
         type="password"
         autocomplete="off"
         spellcheck="false"
-        :disabled="saving"
+        :disabled="saving || busy"
         @keyup.enter="submit"
       />
     </div>
@@ -153,13 +199,17 @@ async function submit() {
 
     <div class="actions">
       <button type="button" :disabled="!canSubmit" @click="submit">
-        {{ saving ? 'Testing and saving…' : 'Save and continue' }}
+        {{ saving ? 'Testing and applying…' : (mode === 'settings' ? 'Apply settings' : 'Save and continue') }}
+      </button>
+      <button v-if="mode === 'settings'" type="button" class="secondary" :disabled="saving || busy" @click="cancel">
+        Cancel
       </button>
       <span v-if="saving" class="muted">
         The Runtime is checking the key with {{ provider }} before it saves anything.
       </span>
       <span v-else-if="!canSubmit" class="muted">An API key is required.</span>
     </div>
+    </template>
   </section>
 </template>
 
@@ -194,6 +244,15 @@ async function submit() {
   font: inherit;
 }
 
+.field-control {
+  display: grid;
+  gap: 3px;
+}
+
+.field-control small {
+  color: var(--muted);
+}
+
 .field input:disabled,
 .field select:disabled {
   opacity: 0.6;
@@ -221,5 +280,11 @@ button {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.secondary {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--ink);
 }
 </style>

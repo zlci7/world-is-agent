@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ApiError, type Status, type Turn } from './types'
+import { ApiError, StateReconfiguring, type Status, type Turn } from './types'
 import { exchangeBootstrapToken, fetchStatus, fetchTurns } from './api'
 import { createLatestResponseGate } from './latest-response'
 import Setup from './Setup.vue'
@@ -20,6 +20,7 @@ const loaded = ref(false)
 // the first-run page from making a request per tick that cannot return anything.
 const turnsActive = ref(false)
 const statusMutationActive = ref(false)
+const modelSettingsOpen = ref(false)
 const statusGate = createLatestResponseGate()
 
 let timer: number | undefined
@@ -35,12 +36,19 @@ const showGameSetup = computed(() => loaded.value && status.value !== null && (
   status.value.state === 'ready' ||
   (status.value.state === 'needs_configuration' && recoverableGameReasons.has(status.value.reason_code ?? ''))
 ))
-const showModelSetup = computed(() => loaded.value && status.value !== null &&
-  status.value.state === 'needs_configuration' && status.value.configured_game !== null &&
-  (status.value.reason_code === 'model_configuration_required' ||
-    (status.value.reason_code === 'initialization_failed' &&
-      (status.value.model === undefined || status.value.model_error !== undefined))))
+const showModelSetup = computed(() => {
+  const current = status.value
+  if (!loaded.value || current === null) return false
+  if (modelSettingsOpen.value && current.ready) return true
+  return current.state === 'needs_configuration' && current.configured_game !== null &&
+    (current.reason_code === 'model_configuration_required' ||
+      (current.reason_code === 'initialization_failed' &&
+        (current.model === undefined || current.model_error !== undefined)))
+})
 const setupMode = computed(() => showGameSetup.value || showModelSetup.value)
+const configurationBusy = computed(() =>
+  statusMutationActive.value || status.value?.state === StateReconfiguring,
+)
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -74,19 +82,28 @@ async function refreshStatus() {
 
 function beginStatusMutation(): number {
   statusMutationActive.value = true
-  return statusGate.begin()
+  return statusGate.beginMutation()
 }
 
 function acceptStatus(updated: Status, request: number) {
-  if (!statusGate.isLatest(request)) return
+  if (!statusGate.finishMutation(request)) return
   status.value = updated
   statusProblem.value = null
   statusMutationActive.value = false
   if (updated.ready) turnsActive.value = true
 }
 
-async function recoverAfterFailure(error: unknown) {
+function closeModelSettings() {
+  modelSettingsOpen.value = false
+}
+
+function noteReadFailure(error: unknown) {
   noteUnauthorized(error)
+}
+
+async function recoverAfterMutationFailure(error: unknown, request: number) {
+  noteUnauthorized(error)
+  if (!statusGate.finishMutation(request)) return
   statusMutationActive.value = false
   await refreshStatus()
 }
@@ -175,19 +192,24 @@ function triggerLabel(turn: Turn): string {
         <GameSetup
           v-if="showGameSetup && status"
           :status="status"
-          :busy="statusMutationActive"
+          :busy="configurationBusy"
           :begin-status-mutation="beginStatusMutation"
           :accept-status="acceptStatus"
-          @failed="recoverAfterFailure"
+          @mutation-failed="recoverAfterMutationFailure"
+          @read-failed="noteReadFailure"
         />
 
         <Setup
           v-if="showModelSetup && status"
           :status="status"
-          :busy="statusMutationActive"
+          :mode="modelSettingsOpen ? 'settings' : 'initial'"
+          :busy="configurationBusy"
           :begin-status-mutation="beginStatusMutation"
           :accept-status="acceptStatus"
-          @failed="recoverAfterFailure"
+          @mutation-failed="recoverAfterMutationFailure"
+          @read-failed="noteReadFailure"
+          @saved="closeModelSettings"
+          @cancelled="closeModelSettings"
         />
 
         <section v-if="status" class="card">
@@ -202,20 +224,10 @@ function triggerLabel(turn: Turn): string {
             {{ status.reason || 'Fix the reported Runtime configuration problem, then restart the Runtime.' }}
           </p>
 
-          <p v-if="status.restart_required" class="banner restart">
-            <strong>Restart required.</strong> Close and relaunch the Runtime to load
-            {{ status.configured_game?.title || status.configured_game?.id }}. The current game
-            remains active until then.
-          </p>
-
           <dl class="facts">
             <div>
               <dt>Current Game</dt>
               <dd>{{ status.loaded_game?.title || status.loaded_game?.id || 'Not loaded' }}</dd>
-            </div>
-            <div v-if="status.restart_required">
-              <dt>Next Game</dt>
-              <dd>{{ status.configured_game?.title || status.configured_game?.id }}</dd>
             </div>
             <div>
               <dt>Connections</dt>
@@ -230,6 +242,13 @@ function triggerLabel(turn: Turn): string {
                   <span v-else class="missing">no credential</span>
                 </template>
                 <template v-else>{{ status.model_error || 'not configured' }}</template>
+                <button
+                  v-if="status.ready"
+                  type="button"
+                  class="inline-button"
+                  :disabled="configurationBusy"
+                  @click="modelSettingsOpen = true"
+                >Model settings</button>
               </dd>
             </div>
             <div>
@@ -252,7 +271,7 @@ function triggerLabel(turn: Turn): string {
 
           <div v-if="status.ready" class="guidance">
             Start {{ status.loaded_game?.title || 'the selected game' }} after the Runtime is ready.
-            If the game was already open, reconnect its Adapter or restart the game.
+            The Adapter reconnects when Runtime settings change.
           </div>
 
           <div v-if="status.adapters.length" class="connections">
@@ -597,9 +616,17 @@ button:disabled {
   opacity: 0.55;
 }
 
-.restart,
 .connection-error {
   margin-top: 14px;
+}
+
+.inline-button {
+  margin-left: 10px;
+  padding: 3px 8px;
+  border-color: var(--line);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
 }
 
 .guidance {

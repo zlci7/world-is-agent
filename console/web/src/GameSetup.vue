@@ -9,7 +9,10 @@ const props = defineProps<{
   beginStatusMutation: () => number
   acceptStatus: (status: Status, request: number) => void
 }>()
-const emit = defineEmits<{ failed: [unknown] }>()
+const emit = defineEmits<{
+  mutationFailed: [unknown, number]
+  readFailed: [unknown]
+}>()
 
 const games = ref<GameChoice[]>([])
 const selected = ref('')
@@ -20,8 +23,8 @@ const problem = ref('')
 const currentId = computed(() => props.status.loaded_game?.id ?? '')
 const targetId = computed(() => props.status.configured_game?.id ?? '')
 const buttonLabel = computed(() => {
-  if (saving.value) return 'Saving selection…'
-  return props.status.ready ? (selected.value === currentId.value ? 'Keep current game' : 'Save next game') : 'Choose game'
+  if (saving.value) return 'Switching game…'
+  return props.status.ready ? 'Switch game' : 'Choose game'
 })
 const canSubmit = computed(() => {
   const game = games.value.find((item) => item.id === selected.value)
@@ -44,7 +47,7 @@ async function loadGames() {
       : games.value[0]?.id ?? ''
   } catch (error) {
     problem.value = describe(error)
-    emit('failed', error)
+    emit('readFailed', error)
   } finally {
     loading.value = false
   }
@@ -64,7 +67,7 @@ async function submit() {
     await loadGames()
   } catch (error) {
     problem.value = error instanceof ApiError ? error.message : describe(error)
-    emit('failed', error)
+    emit('mutationFailed', error, request)
   } finally {
     saving.value = false
   }
@@ -75,8 +78,7 @@ async function submit() {
   <section class="card">
     <h2>Choose a game</h2>
     <p v-if="status.ready" class="lead">
-      The current Runtime keeps serving {{ status.loaded_game?.title || status.loaded_game?.id }}.
-      A different game takes effect after you close and relaunch the Runtime.
+      Switching applies immediately and cancels any turn in progress. Recorded turn history remains available.
     </p>
     <p v-else class="lead">Select the game this Runtime will serve.</p>
 
@@ -96,7 +98,7 @@ async function submit() {
     <p v-if="problem" class="problem">{{ problem }}</p>
     <div class="actions">
       <button type="button" :disabled="!canSubmit" @click="submit">{{ buttonLabel }}</button>
-      <span v-if="saving" class="muted">Preparing and validating the selected game…</span>
+      <span v-if="saving" class="muted">Preparing and applying the selected game…</span>
     </div>
   </section>
 </template>
