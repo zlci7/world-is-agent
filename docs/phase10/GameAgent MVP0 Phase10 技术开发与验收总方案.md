@@ -1,10 +1,10 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**（方案 [10.3 方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)；实机证据 [10.3-1](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)、[10.3-2](GameAgent%20MVP0%20Phase10.3-2%20实机验收记录.md)、[10.3-3/10.3-4](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)；条件 9 负向未验证、经用户决定豁免）；**10.4 Game Profile 选择与 10.5 官方 Adapter 仓库拆分方案待文档验收，实现未开始**（[10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)、[10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)）；顺序为 10.4 → 10.5，开发连续执行，产品集中验收；10.6 未开工
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**（方案 [10.3 方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)；实机证据 [10.3-1](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)、[10.3-2](GameAgent%20MVP0%20Phase10.3-2%20实机验收记录.md)、[10.3-3/10.3-4](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)；条件 9 负向未验证、经用户决定豁免）；**10.4 Game Profile 选择与 10.5 官方 Adapter 仓库拆分方案为 Accepted for Implementation，实现未开始、产品验收未完成**（[10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)、[10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)）；顺序为 10.4 → 10.5，开发连续执行，产品集中验收；10.6 未开工
 > **Date:** 2026-09-20
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
-> **Code Inspection Baseline:** `main` @ `d620fdf`；10.4 与 10.5 尚待实现
+> **Code Inspection Baseline:** `main` @ `a16d1d3`；10.4 与 10.5 尚待实现
 > **技术栈:** Go、SQLite、gRPC / Protobuf、C#、SMAPI、Vue 3 + TypeScript + Vite（构建期）、Go `net/http` 与 `//go:embed`（本地控制面与 UI 分发）
 > **Roadmap:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md)
 > **Architecture:** [Runtime 整体架构设计规范](../summary/GameAgent%20Runtime%20整体架构设计规范.md)
@@ -559,7 +559,7 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 | 3 | 10.5 官方 Adapter 仓库拆分 | 10.4 实现与自动验证完成；两个 Adapter 一起迁入 `world-is-agent-adapters` |
 | 4 | 10.6 Adapter 接入检查表 | 10.3 与 10.5 的实际验证经验 |
 
-10.4 → 10.5 按内部工作单元连续开发、自测、回归和内部 CR，最终集中进行实机产品验收。内部编号不是逐项人工验收关卡；本地提交在用户授权范围内执行，GitHub 上传由用户完成。
+10.4 与 10.5 的技术方案已确认。进入已授权的开发工作后，按内部工作单元连续开发、自测、回归和内部 CR，最终集中进行实机产品验收。内部编号不是逐项人工验收关卡；本地提交在用户授权范围内执行，GitHub 上传由用户完成。Accepted for Implementation 表示方案通过，实现的 Accepted 结论须有自动验证及实机验收证据。
 
 Game Profile 与 definitions 的所有权固定归 Runtime。10.4 先完成显式准备与选择，使 Runtime 发布包具备完整游戏配置；10.5 再迁出两个 Adapter 的源码和专属脚本。10.6 的检查表从真实接入及拆仓结果形成，不纳入本轮 10.4、10.5 的实现范围。
 
@@ -576,17 +576,25 @@ Game Profile 与 definitions 的所有权固定归 Runtime。10.4 先完成显�
 
 ### 4.9 10.4 Game Profile 选择
 
-用户选择游戏时，`POST /api/setup/game` 准备缺失的 Runtime 资产、校验完整性并保存 `active-game.json`。`assets_ready` 只描述配置资产，新用户继续配置模型，已有有效模型的用户直接初始化。
+用户选择游戏时，`POST /api/setup/game` 从内嵌发布树准备缺失的 Runtime 资产、校验完整性并原子保存 `active-game.json`。`assets_ready` 只描述配置资产，新用户继续配置模型，已有有效模型的用户直接初始化。
 
-首次完整初始化是 profile 的冻结点，Agent Core、catalog、memory 与 task 组件使用同一配置。Ready 后保存其它游戏仅改变下次启动选择。状态区分 `loaded_game`、`configured_game`、`restart_required` 和真实 Adapter 连接身份；Hello mismatch 在 EnvironmentReady 与能力发现前拒绝。
+一个进程级 Runtime Coordinator 统一负责配置提交、运行实例发布和关闭。首次完整初始化是 profile 的冻结点，Agent Core、catalog、memory 与 task 组件使用同一候选配置，全部准备成功后原子发布；HTTP 状态与 Gateway 准入读取同一运行快照。Ready 后保存其它游戏仅改变下次启动选择。
 
-旧 v0.1.0 配置按原发布游戏迁移，保留用户参数和原文件；模型、密钥与历史数据保持原位置。实施与验证矩阵见 [10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)。
+状态区分 `loaded_game`、`configured_game`、`restart_required`、连接集合和数量。同游戏多连接沿用既有 EnvironmentSession、世界所有权和重连规则；Hello mismatch 在 EnvironmentReady 与能力发现前拒绝。Connections 不表示存档或任务世界 Ready。
+
+损坏的选择文件可通过重新选择恢复，损坏的游戏 profile 可通过选择另一有效游戏恢复，用户 profile 文件保留。当前网页能够恢复的问题进入 `needs_configuration`；外部覆盖配置、资源故障等超出网页安全恢复能力时进入 `blocked`。正常使用顺序为 Runtime Ready 后启动游戏；提前启动或 Runtime 重启后使用各 Adapter 已有重连方式。
+
+旧 v0.1.0 配置按发布数据中的原游戏映射迁移，保留用户参数和原文件。选择文件已存在但损坏时处理选择恢复，不重新触发根级旧配置迁移；模型、密钥与历史数据保持原位置。实施与验证矩阵见 [10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)。
 
 ### 4.10 10.5 官方 Adapter 仓库拆分
 
 将 `adapters/stardew/` 与 `adapters/rimworld/` 分别迁入 `world-is-agent-adapters/stardew-valley/` 与 `world-is-agent-adapters/rimworld/`。各自的源码、游戏资产、测试、安装和打包脚本随迁；Game Profile、prompt、definitions 和 Protocol 留在主仓库。
 
-交付必须验证主仓库独立运行、两款 Adapter 分别独立构建、固定协议依赖与安装包完整性。完整迁移清单、顺序和退出条件见 [10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)。
+每游戏 `VERSION` 决定自身发行版本，tag 使用 `<game_id>-v<version>`，包名使用 `wia-adapter-<game_id>-v<version>.zip`。程序集信息版本、Hello 上报版本和适用的 Mod 版本字段一致；游戏兼容版本独立维护。每游戏 `protocol.version` 固定已测协议 tag，独立验证记录解析 commit 并校验协议内容。
+
+单游戏目录的构建、测试、打包和安装入口保持自足。根部辅助脚本仅提供可选的统一调用或仓库检查，业务实现和 transport 保持各游戏独立。
+
+交付必须验证主仓库独立运行、两款 Adapter 分别独立构建、固定协议依赖、版本一致性与安装包完整性。完整迁移清单、顺序和退出条件见 [10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)。
 
 ---
 
