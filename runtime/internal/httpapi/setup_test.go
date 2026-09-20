@@ -49,7 +49,7 @@ func setupBody(fields map[string]any) string {
 }
 
 func TestSetupModelRequiresASession(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
 		"provider": "deepseek", "api_key": "sk-must-not-be-written",
@@ -64,7 +64,7 @@ func TestSetupModelRequiresASession(t *testing.T) {
 // The commit probes what it is about to write instead of trusting a test the
 // client already ran, and a failed probe leaves nothing behind.
 func TestSetupModelWritesNothingWhenTheProbeFails(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 	cookie := f.session(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
@@ -85,7 +85,7 @@ func TestSetupModelWritesNothingWhenTheProbeFails(t *testing.T) {
 }
 
 func TestSetupModelCommitsAndReportsTheNewState(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 	cookie := f.session(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
@@ -132,7 +132,7 @@ func TestSetupModelCommitsAndReportsTheNewState(t *testing.T) {
 }
 
 func TestSetupModelValidatesTheBody(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 	cookie := f.session(t)
 
 	for name, body := range map[string]string{
@@ -172,7 +172,7 @@ func TestSetupModelRefusesABlockedDataRootBeforeProbing(t *testing.T) {
 	if response.Error.Code != "setup_blocked" {
 		t.Fatalf("code = %q, want setup_blocked", response.Error.Code)
 	}
-	if !strings.Contains(response.Error.Message, "shipped configuration") {
+	if !strings.Contains(response.Error.Message, "storage_unavailable") {
 		t.Fatalf("message = %q, want it to name the initialization failure", response.Error.Message)
 	}
 	if strings.Contains(recorder.Body.String(), "sk-blocked-root") {
@@ -200,6 +200,9 @@ func newBlockedFixture(t *testing.T) *fixture {
 		t.Fatalf("occupy the shipped tree: %v", err)
 	}
 
+	if err := os.WriteFile(filepath.Join(configDir, "active-game.json"), []byte(`{"game_id":"rimworld"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	env := dataroot.Env{
 		GOOS:    "linux",
 		Getenv:  func(string) string { return "" },
@@ -240,7 +243,8 @@ func newBlockedFixture(t *testing.T) *fixture {
 	}
 }
 
-func TestSetupModelRejectsAForeignOrigin(t *testing.T) {	f := newFixture(t, nil)
+func TestSetupModelRejectsAForeignOrigin(t *testing.T) {
+	f := newModelFixture(t)
 
 	request := httptest.NewRequest(http.MethodPost, f.origin+"/api/setup/model", strings.NewReader(setupBody(map[string]any{
 		"provider": "deepseek", "api_key": "sk-foreign",
@@ -257,7 +261,7 @@ func TestSetupModelRejectsAForeignOrigin(t *testing.T) {	f := newFixture(t, nil)
 }
 
 func TestSetupModelIsNotReachableWithAGet(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 
 	recorder := f.do(t, http.MethodGet, "/api/setup/model", "", f.session(t))
 
@@ -269,7 +273,7 @@ func TestSetupModelIsNotReachableWithAGet(t *testing.T) {
 // The form offers what this reports, so an empty or unreachable answer is a form
 // with nothing to submit.
 func TestSetupOptionsRequiresASession(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 
 	recorder := f.do(t, http.MethodGet, "/api/setup/options", "")
 
@@ -279,7 +283,7 @@ func TestSetupOptionsRequiresASession(t *testing.T) {
 }
 
 func TestSetupOptionsReportsProvidersWithTheirDefaultModels(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 
 	recorder := f.do(t, http.MethodGet, "/api/setup/options", "", f.session(t))
 	if recorder.Code != http.StatusOK {
@@ -310,7 +314,7 @@ func TestSetupOptionsReportsProvidersWithTheirDefaultModels(t *testing.T) {
 }
 
 func TestSetupOptionsIsNotReachableWithAPost(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/options", "{}", f.session(t))
 
@@ -324,7 +328,7 @@ func TestSetupOptionsIsNotReachableWithAPost(t *testing.T) {
 // answered before the body is read: a malformed body still reports the state,
 // which a body-first handler would report as an invalid body instead.
 func TestSetupModelRefusesAReadyRuntimeBeforeReadingTheBody(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 	cookie := f.session(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
@@ -382,7 +386,8 @@ func TestSetupModelRefusesAReadyRuntimeBeforeReadingTheBody(t *testing.T) {
 	}
 }
 
-func assertNoCredentialWritten(t *testing.T, f *fixture) {	t.Helper()
+func assertNoCredentialWritten(t *testing.T, f *fixture) {
+	t.Helper()
 
 	secretPath := filepath.Join(f.runtime.Layout().SecretsDir(), "model.key")
 	if _, err := os.Stat(secretPath); err == nil {
@@ -391,4 +396,13 @@ func assertNoCredentialWritten(t *testing.T, f *fixture) {	t.Helper()
 	if _, err := os.Stat(f.runtime.ModelConfigPath()); err == nil {
 		t.Fatal("a model configuration was written by a request that must not write one")
 	}
+}
+
+func newModelFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := newFixture(t, nil)
+	if err := f.runtime.SelectGame("rimworld"); err != nil {
+		t.Fatal(err)
+	}
+	return f
 }

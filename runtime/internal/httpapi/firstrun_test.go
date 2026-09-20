@@ -3,7 +3,6 @@ package httpapi
 import (
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,20 +26,14 @@ func TestFirstRunOverHTTPReachesReady(t *testing.T) {
 		t.Fatal("a fresh root did not explain what is missing")
 	}
 
-	// 2. The shipped configuration arrived before any of this: the form is only
-	//    safe to submit because a root that could not be seeded is blocked.
-	if status.AgentConfigPath != f.runtime.AgentConfigPath() {
-		t.Fatalf("agent config path = %q", status.AgentConfigPath)
+	// The explicit game selection prepares assets before model configuration.
+	selected := f.do(t, http.MethodPost, "/api/setup/game", `{"game_id":"rimworld"}`, cookie)
+	if selected.Code != 200 {
+		t.Fatal(selected.Body.String())
 	}
+	status = decodeBody[statusResponse](t, selected)
 	if _, err := os.Stat(status.AgentConfigPath); err != nil {
-		t.Fatalf("the shipped agent configuration is not in place: %v", err)
-	}
-	definitions, err := filepath.Glob(filepath.Join(status.ConfigDir, "games", "*", "definitions", "*.json"))
-	if err != nil {
 		t.Fatal(err)
-	}
-	if len(definitions) == 0 {
-		t.Fatalf("no definition was seeded under %s", status.ConfigDir)
 	}
 
 	// 3. The form asks what it may offer.
@@ -102,7 +95,7 @@ func TestFirstRunOverHTTPReachesReady(t *testing.T) {
 // Reopening the same root is the restart the first run promises: the
 // configuration and the seeded tree both stay, and nothing is seeded twice.
 func TestRestartAfterFirstRunKeepsTheConfiguration(t *testing.T) {
-	f := newFixture(t, nil)
+	f := newModelFixture(t)
 	cookie := f.session(t)
 
 	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{

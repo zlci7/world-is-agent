@@ -174,15 +174,26 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSetupOptions(w, r)
 	case "/api/setup/model":
 		s.handleSetupModel(w, r)
+	case "/api/setup/games":
+		s.handleSetupGames(w, r)
+	case "/api/setup/game":
+		s.handleSetupGame(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "no such route")
 	}
 }
 
 type statusResponse struct {
-	State  string `json:"state"`
-	Ready  bool   `json:"ready"`
-	Reason string `json:"reason,omitempty"`
+	State               string                     `json:"state"`
+	Ready               bool                       `json:"ready"`
+	Reason              string                     `json:"reason,omitempty"`
+	ReasonCode          *string                    `json:"reason_code"`
+	LoadedGame          *bootstrap.Game            `json:"loaded_game"`
+	ConfiguredGame      *bootstrap.Game            `json:"configured_game"`
+	RestartRequired     bool                       `json:"restart_required"`
+	Adapters            any                        `json:"adapters"`
+	ConnectionCount     int                        `json:"connection_count"`
+	LastConnectionError *bootstrap.ConnectionError `json:"last_connection_error"`
 
 	DataRoot        string `json:"data_root"`
 	ConfigDir       string `json:"config_dir"`
@@ -202,24 +213,28 @@ type statusResponse struct {
 func (s *Server) statusPayload() statusResponse {
 	runtime := s.options.Runtime
 	layout := runtime.Layout()
+	snapshot := runtime.Snapshot()
 	response := statusResponse{
-		State:           string(runtime.State()),
-		Ready:           runtime.Ready(),
-		Reason:          runtime.Reason(),
-		DataRoot:        layout.Root(),
-		ConfigDir:       layout.ConfigDir(),
-		ModelConfigPath: runtime.ModelConfigPath(),
-		AgentConfigPath: runtime.AgentConfigPath(),
-		TracePath:       s.tracePath,
-		GRPCAddr:        s.options.GRPCAddr,
-		Version:         s.options.Version,
+		State:               string(snapshot.State),
+		Ready:               snapshot.Ready,
+		Reason:              snapshot.Reason,
+		LoadedGame:          snapshot.LoadedGame,
+		ConfiguredGame:      snapshot.ConfiguredGame,
+		RestartRequired:     snapshot.RestartRequired,
+		Adapters:            snapshot.Adapters,
+		ConnectionCount:     snapshot.ConnectionCount,
+		LastConnectionError: snapshot.LastConnectionError,
+		DataRoot:            layout.Root(),
+		ConfigDir:           layout.ConfigDir(),
+		ModelConfigPath:     runtime.ModelConfigPath(),
+		AgentConfigPath:     snapshot.AgentConfigPath,
+		TracePath:           s.tracePath,
+		GRPCAddr:            s.options.GRPCAddr,
+		Version:             s.options.Version,
 	}
-	// A missing or broken model configuration is exactly what the client has to
-	// report, so it is a field rather than a failed request.
-	if summary, err := llm.DescribeConfig(runtime.ModelConfigPath()); err != nil {
-		response.ModelError = err.Error()
-	} else {
-		response.Model = &summary
+	response.Model, response.ModelError = snapshot.Model, snapshot.ModelError
+	if snapshot.ReasonCode != "" {
+		response.ReasonCode = &snapshot.ReasonCode
 	}
 	return response
 }
@@ -292,22 +307,10 @@ func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The state decides first, before the body is read and before anything is
-	// probed. Only one state can be resolved by configuring a model, so the other
-	// two are answered from the reason: a blocked root refuses every result, and a
-	// running core keeps the configuration it already installed. Probing first
-	// would spend a real model call, and write the credential it is checked for,
-	// on a submission that is going to be refused either way.
-	switch state := s.options.Runtime.State(); state {
-	case bootstrap.StateBlocked:
-		writeError(w, http.StatusBadRequest, "setup_blocked", s.options.Runtime.Reason())
-		return
-	case bootstrap.StateReady:
-		writeError(w, http.StatusBadRequest, "already_configured",
-			"the agent core is already configured; changing the model requires a restart")
+	if err := s.options.Runtime.ModelSetupAllowed(); err != nil {
+		writeSetupError(w, err, "model_setup_failed")
 		return
 	}
-
 	body, ok := decodeSetupRequest(w, r)
 	if !ok {
 		return
@@ -331,7 +334,7 @@ func (s *Server) handleSetupModel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The core state carries the reason, so the client can show what is
 		// missing rather than a bare failure.
-		writeError(w, http.StatusBadRequest, "model_setup_failed", err.Error())
+		writeSetupError(w, err, "model_setup_failed")
 		return
 	}
 

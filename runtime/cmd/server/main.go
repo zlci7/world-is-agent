@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 	"net"
@@ -14,6 +13,7 @@ import (
 	"gameagent/runtime/internal/bootstrap"
 	"gameagent/runtime/internal/browser"
 	"gameagent/runtime/internal/dataroot"
+	"gameagent/runtime/internal/gateway"
 	"gameagent/runtime/internal/httpapi"
 
 	"google.golang.org/grpc"
@@ -65,13 +65,8 @@ func main() {
 		}
 	}()
 
-	process, err := newGatewayRuntime(context.Background(), runtime)
-	if err != nil {
-		log.Fatalf("open task runtime failed: %v", err)
-	}
-
 	grpcServer := grpc.NewServer()
-	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, process.gateway)
+	protocolv1alpha2.RegisterGameAgentGatewayServer(grpcServer, runtime)
 
 	listener, err := net.Listen("tcp", *grpcAddr)
 	if err != nil {
@@ -91,9 +86,10 @@ func main() {
 	<-stop
 
 	log.Println("shutting down GameAgent Runtime")
-	if err := process.shutdown(context.Background(), grpcServer); err != nil {
+	if err := runtime.Close(); err != nil {
 		log.Printf("shutdown task runtime: %v", err)
 	}
+	gateway.ShutdownGRPC(grpcServer)
 }
 
 // startControlPlane serves the local client. A control plane that cannot start is

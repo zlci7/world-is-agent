@@ -1,0 +1,18 @@
+{
+  "v0.1.0": {
+    "game_id": "stardew-valley",
+    "identity_files": {
+      "game.json": {
+        "schema_version": "v1alpha1",
+        "game_id": "stardew-valley",
+        "source_version": "phase7.1-fixture"
+      },
+      "archetype-town-villager.json": {
+        "schema_version": "v1alpha1",
+        "game_id": "stardew-valley",
+        "definition_id": "archetype:town_villager",
+        "source_version": "phase7.1-fixture"
+      }
+    }
+  }
+}

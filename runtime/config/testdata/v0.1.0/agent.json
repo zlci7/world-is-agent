@@ -1,0 +1,27 @@
+{
+  "task": {
+    "enabled": true
+  },
+  "turn_timeout_ms": 270000,
+  "llm_timeout_ms": 60000,
+  "observe_timeout_ms": 3000,
+  "action_timeout_ms": 3000,
+  "action_start_timeout_ms": 3000,
+  "async_action_timeout_ms": 190000,
+  "max_steps": 5,
+  "max_tool_calls_per_step": 4,
+  "max_tool_calls_per_turn": 6,
+  "max_async_actions_per_turn": 1,
+  "max_parallel_tool_calls": 4,
+  "max_tool_result_output_tokens": 8192,
+  "max_tool_result_output_depth": 4,
+  "max_tool_result_output_fields": 64,
+  "max_tool_result_output_array_items": 32,
+  "definition_catalog_root": "config/games",
+  "prompt": {
+    "language": "Simplified Chinese",
+    "npc_style": "自然、简短、符合 Stardew Valley NPC 的语气",
+    "max_speak_chars": 60,
+    "tool_instruction": "Use available tools only when the NPC should take an environment action. Choose tools from their descriptions and input schemas. A task wake means the task's scheduled moment has arrived: read Task Context, travel to the agreed meeting landmark with move_to_landmark, and once the NPC has arrived register wait_for_player so the adapter owns the meeting window. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more environment action is needed."
+  }
+}

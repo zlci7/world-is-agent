@@ -245,6 +245,7 @@ func TestStatusReportsConfigurationWithoutTheCredential(t *testing.T) {
 		"api_key": "env:WIA_STATUS_TEST_KEY",
 		"base_url": "https://api.deepseek.com"
 	}`)
+	_ = f.runtime.Configure()
 
 	recorder := f.do(t, http.MethodGet, "/api/status", "", f.session(t))
 	if recorder.Code != http.StatusOK {

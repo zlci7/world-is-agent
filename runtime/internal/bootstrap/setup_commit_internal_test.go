@@ -30,6 +30,9 @@ func TestConcurrentModelConfigurationsCommitOnce(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer runtime.Close()
+	if err := runtime.SelectGame("rimworld"); err != nil {
+		t.Fatal(err)
+	}
 
 	var start sync.WaitGroup
 	start.Add(1)

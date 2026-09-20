@@ -1,15 +1,4 @@
-// Package bootstrap turns configuration on disk into a running agent core.
-//
-// It exists because two startup concerns are not the same concern:
-//
-//   - Bootstrap owns the data root, the configuration files and the stores. It
-//     always succeeds for a writable data root, even when nothing is configured.
-//   - The agent core needs a usable model configuration. A missing or broken
-//     model configuration is a state the Runtime reports, not a reason to exit:
-//     the process must stay alive so the user can fix it and Configure again.
-//
-// Nothing outside this package resolves runtime-owned paths, so the Runtime no
-// longer depends on the process working directory.
+// Package bootstrap owns configuration commits, runtime publication and shutdown.
 package bootstrap
 
 import (
@@ -18,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,6 +17,7 @@ import (
 	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/dataroot"
 	"gameagent/runtime/internal/definition"
+	"gameagent/runtime/internal/gateway"
 	"gameagent/runtime/internal/llm"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
@@ -41,16 +31,9 @@ import (
 const (
 	modelConfigFile = "model.json"
 	agentConfigFile = "agent.json"
-	// modelSecretFile is where the first-run flow stores the credential. The model
-	// configuration references it relatively, so the two move together with the
-	// data root.
 	modelSecretFile = "model.key"
 )
 
-// ModelSetup is a candidate model configuration from the first-run flow. APIKey
-// is transient: it is written to the secrets directory and never returned,
-// logged or traced. A zero window means the caller did not choose one, and the
-// shipped default for the provider is written instead.
 type ModelSetup struct {
 	Provider            string
 	Model               string
@@ -73,44 +56,434 @@ type modelConfig struct {
 	MaxOutputTokens     int    `json:"max_output_tokens,omitempty"`
 }
 
-// ApplyModelConfiguration stores a model configuration and installs the agent
-// core from it.
-//
-// The credential is written first and the configuration that references it
-// second: a configuration naming a file that is not there leaves a root whose
-// credential is missing, which is a worse state to recover from than having
-// written neither.
-//
-// It refuses to run while a real core is installed, because Configure is a no-op
-// in that state: writing anyway would leave the files and the running core
-// disagreeing about which model is in use.
+type State string
+
+const (
+	StateNeedsConfiguration State = "needs_configuration"
+	StateBlocked            State = "blocked"
+	StateReady              State = "ready"
+)
+
+type Game struct {
+	ID    string  `json:"id"`
+	Title *string `json:"title"`
+}
+
+type Snapshot struct {
+	State               State                    `json:"state"`
+	Ready               bool                     `json:"ready"`
+	Reason              string                   `json:"reason,omitempty"`
+	ReasonCode          string                   `json:"-"`
+	LoadedGame          *Game                    `json:"loaded_game"`
+	ConfiguredGame      *Game                    `json:"configured_game"`
+	RestartRequired     bool                     `json:"restart_required"`
+	Model               *llm.ConfigSummary       `json:"model,omitempty"`
+	ModelError          string                   `json:"model_error,omitempty"`
+	AgentConfigPath     string                   `json:"agent_config_path"`
+	Adapters            []gateway.ConnectionInfo `json:"adapters"`
+	ConnectionCount     int                      `json:"connection_count"`
+	LastConnectionError *ConnectionError         `json:"last_connection_error"`
+}
+
+type runtimeBundle struct {
+	config    agent.Config
+	loop      *agent.Loop
+	history   memory.HistoryStore
+	gateway   *gateway.Server
+	taskStore *task.SQLiteStore
+}
+
+// setupMu owns all slow preparation and commits. mu protects only the published
+// snapshot; readers never wait for model or asset IO.
+type Runtime struct {
+	protocolv1alpha2.UnimplementedGameAgentGatewayServer
+	setupMu             sync.Mutex
+	mu                  sync.RWMutex
+	layout              dataroot.Layout
+	modelPath           string
+	overridePath        string
+	recorder            trace.Recorder
+	snapshot            Snapshot
+	bundle              *runtimeBundle
+	closed              bool
+	lastConnectionError *ConnectionError
+	// Test seams exercise the publication boundary and cleanup failures.
+	testBeforePublish func() error
+	testCleanup       func(*runtimeBundle) error
+	pendingCleanup    *runtimeBundle
+}
+
+func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
+	root, err := dataroot.Resolve(explicitRoot, env)
+	if err != nil {
+		return nil, err
+	}
+	layout := dataroot.New(root)
+	if err := layout.Ensure(); err != nil {
+		return nil, err
+	}
+	recorder, err := trace.NewJSONLRecorder(layout.TracePath(), trace.JSONLRecorderOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("open trace storage: %w", err)
+	}
+	r := &Runtime{layout: layout, recorder: recorder}
+	r.modelPath = resolveConfigPath(env, llm.ConfigEnvName, root, layout.ConfigPath(modelConfigFile))
+	if value := strings.TrimSpace(env.Getenv(agent.ConfigEnvName)); value != "" {
+		r.overridePath = dataroot.ResolvePath(root, value)
+	}
+	r.snapshot.State = StateNeedsConfiguration
+	_ = r.Configure()
+	return r, nil
+}
+
+func (r *Runtime) Snapshot() Snapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := r.snapshot
+	result.LoadedGame = cloneGame(result.LoadedGame)
+	result.ConfiguredGame = cloneGame(result.ConfiguredGame)
+	if result.Model != nil {
+		copy := *result.Model
+		result.Model = &copy
+	}
+	result.Adapters = []gateway.ConnectionInfo{}
+	if result.Ready && r.bundle != nil {
+		result.Adapters = r.bundle.gateway.Connections()
+	}
+	result.ConnectionCount = len(result.Adapters)
+	if r.lastConnectionError != nil {
+		copy := *r.lastConnectionError
+		result.LastConnectionError = &copy
+	}
+	return result
+}
+func cloneGame(game *Game) *Game {
+	if game == nil {
+		return nil
+	}
+	result := *game
+	if game.Title != nil {
+		title := *game.Title
+		result.Title = &title
+	}
+	return &result
+}
+func shippedGame(id string) (*Game, error) {
+	games, err := config.Games()
+	if err != nil {
+		return nil, err
+	}
+	for _, game := range games {
+		if game.ID == id {
+			title := game.Title
+			return &Game{ID: id, Title: &title}, nil
+		}
+	}
+	return nil, &config.Error{Code: "invalid_game", Err: fmt.Errorf("unknown game %q", id)}
+}
+func (r *Runtime) publishFailure(next Snapshot, state State, code string, err error) error {
+	next.State, next.Ready, next.ReasonCode, next.Reason = state, false, code, err.Error()
+	r.mu.Lock()
+	r.snapshot = next
+	r.mu.Unlock()
+	return err
+}
+
+type initializationError struct {
+	err    error
+	unsafe bool
+}
+
+func (e *initializationError) Error() string { return e.err.Error() }
+func (e *initializationError) Unwrap() error { return e.err }
+func errorCode(err error, fallback string) string {
+	var e *config.Error
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	return fallback
+}
+func (r *Runtime) readSelection() (*Game, error) {
+	data, err := os.ReadFile(r.layout.ConfigPath("active-game.json"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, &config.Error{Code: "game_not_selected", Err: errors.New("choose a game to configure this Runtime")}
+		}
+		return nil, &config.Error{Code: "storage_unavailable", Err: err}
+	}
+	var document struct {
+		GameID string `json:"game_id"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil || strings.TrimSpace(document.GameID) == "" {
+		return nil, &config.Error{Code: "game_selection_invalid", Err: errors.New("the game selection is invalid; choose a game again")}
+	}
+	game, err := shippedGame(document.GameID)
+	if err != nil {
+		return &Game{ID: document.GameID}, err
+	}
+	return game, nil
+}
+
+func (r *Runtime) Configure() error {
+	r.setupMu.Lock()
+	defer r.setupMu.Unlock()
+	return r.configureLocked()
+}
+func (r *Runtime) configureLocked() error {
+	r.mu.RLock()
+	installed, closed, blocked, reason := r.bundle != nil, r.closed, r.snapshot.State == StateBlocked, r.snapshot.Reason
+	r.mu.RUnlock()
+	if closed || blocked {
+		return errors.New(reason)
+	}
+	if installed {
+		return nil
+	}
+	game, err := r.readSelection()
+	next := Snapshot{ConfiguredGame: game, AgentConfigPath: r.overridePath}
+	summary, summaryErr := llm.DescribeConfig(r.modelPath)
+	if summaryErr == nil {
+		next.Model = &summary
+	} else {
+		next.ModelError = summaryErr.Error()
+	}
+	fail := func(state State, code string, err error) error { return r.publishFailure(next, state, code, err) }
+	if err != nil {
+		code := errorCode(err, "storage_unavailable")
+		state := StateNeedsConfiguration
+		if code == "storage_unavailable" {
+			state = StateBlocked
+		}
+		return fail(state, code, err)
+	}
+	if err := config.AssetsStatus(r.layout.ConfigDir(), game.ID); err != nil {
+		code := errorCode(err, "profile_invalid")
+		state := StateNeedsConfiguration
+		if code == "storage_unavailable" {
+			state = StateBlocked
+		}
+		return fail(state, code, err)
+	}
+	path := r.layout.ConfigPath(filepath.Join("games", game.ID, agentConfigFile))
+	if r.overridePath != "" {
+		path = r.overridePath
+	}
+	next.AgentConfigPath = path
+	cfg, err := strictAgentConfig(path)
+	if err != nil {
+		code, state := "profile_invalid", StateNeedsConfiguration
+		if r.overridePath != "" {
+			code, state = "override_configuration_invalid", StateBlocked
+		}
+		return fail(state, code, err)
+	}
+	cfg = resolveConfigPaths(r.layout.Root(), cfg)
+	if err := r.validateOverrideRoot(cfg); err != nil {
+		return fail(StateBlocked, "override_configuration_invalid", err)
+	}
+	catalog, err := definition.LoadGameCatalogFromDir(cfg.DefinitionCatalogRoot, game.ID)
+	if err != nil {
+		return fail(StateNeedsConfiguration, "profile_invalid", err)
+	}
+	provider, _, err := llm.NewProviderFromConfigFile(r.modelPath)
+	if err != nil {
+		return fail(StateNeedsConfiguration, "model_configuration_required", errors.New(modelReason(r.modelPath, err)))
+	}
+	candidate, err := r.prepareBundle(cfg, catalog, provider)
+	if err == nil && r.testBeforePublish != nil {
+		if err = r.testBeforePublish(); err != nil {
+			err = r.abortCandidate(candidate, err)
+		}
+	}
+	if err != nil {
+		state := StateNeedsConfiguration
+		var failure *initializationError
+		if errors.As(err, &failure) && failure.unsafe {
+			state = StateBlocked
+		}
+		return fail(state, "initialization_failed", err)
+	}
+	next.LoadedGame = cloneGame(game)
+	next.State, next.Ready = StateReady, true
+	r.mu.Lock()
+	r.bundle, r.snapshot = candidate, next
+	r.mu.Unlock()
+	return nil
+}
+
+func strictAgentConfig(path string) (agent.Config, error) {
+	if _, err := os.Stat(path); err != nil {
+		return agent.Config{}, err
+	}
+	return agent.LoadConfigFile(path)
+}
+
+func (r *Runtime) validateOverrideRoot(cfg agent.Config) error {
+	if r.overridePath == "" || cfg.DefinitionCatalogRoot == filepath.Join(r.layout.ConfigDir(), "games") {
+		return nil
+	}
+	info, err := os.Stat(cfg.DefinitionCatalogRoot)
+	if err != nil {
+		return fmt.Errorf("override definition catalog root: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("override definition catalog root %s must be a directory", cfg.DefinitionCatalogRoot)
+	}
+	return nil
+}
+
+func (r *Runtime) rejectOverride(err error) error {
+	next := r.Snapshot()
+	if !next.Ready {
+		r.publishFailure(next, StateBlocked, "override_configuration_invalid", err)
+	}
+	return &config.Error{Code: "override_configuration_invalid", Err: err}
+}
+
+func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, provider model.Provider) (*runtimeBundle, error) {
+	if err := os.MkdirAll(cfg.MemoryStore.Root, 0o755); err != nil {
+		return nil, err
+	}
+	history := memory.NewSQLiteHistoryStore(memory.SQLiteStoreOptions{
+		Root: cfg.MemoryStore.Root, BusyTimeout: cfg.MemoryStore.BusyTimeout,
+		MaxRecordsPerEntity:           cfg.MemoryStore.MaxRecordsPerEntity,
+		MaxProjectionBatchesPerEntity: cfg.MemoryStore.MaxProjectionBatchesPerEntity,
+	}, cfg.History, memory.WithHistoryIndexLimits(cfg.HistoryIndex))
+	candidate := &runtimeBundle{config: cfg, history: history}
+	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history))
+	options := []gateway.ServerOption{gateway.WithConnectionReady(func() { r.mu.Lock(); r.lastConnectionError = nil; r.mu.Unlock() })}
+	if cfg.Task.Enabled {
+		storeOptions := cfg.Task.StoreOptions
+		storeOptions.Path = cfg.Task.DBPath
+		store, err := task.OpenSQLiteStore(context.Background(), storeOptions)
+		if err != nil {
+			return nil, err
+		}
+		candidate.taskStore = store
+		options = append(options, gateway.WithTaskService(task.NewService(store)), gateway.WithTaskResultHistory(history))
+	}
+	candidate.gateway = gateway.NewServer(r, options...)
+	if cfg.Task.Enabled {
+		dispatch := task.DispatcherConfig{ScanInterval: cfg.Task.ScanInterval, BatchSize: cfg.Task.DispatchBatch, RetryMin: cfg.Task.RetryMin, RetryMax: cfg.Task.RetryMax}
+		if err := candidate.gateway.StartTaskDispatcher(context.Background(), dispatch, nil, nil); err != nil {
+			return nil, r.abortCandidate(candidate, err)
+		}
+	}
+	return candidate, nil
+}
+
+func (r *Runtime) SelectGame(id string) error {
+	r.setupMu.Lock()
+	defer r.setupMu.Unlock()
+	if err := r.gameSetupAllowed(); err != nil {
+		return err
+	}
+	if _, err := shippedGame(id); err != nil {
+		return err
+	}
+	prepared, err := config.PrepareGame(r.layout.ConfigDir(), id)
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
+	cfg := prepared.AgentConfig
+	if r.overridePath != "" {
+		cfg, err = strictAgentConfig(r.overridePath)
+		if err != nil {
+			return r.rejectOverride(err)
+		}
+	}
+	cfg = resolveConfigPaths(r.layout.Root(), cfg)
+	if err := r.validateOverrideRoot(cfg); err != nil {
+		return r.rejectOverride(err)
+	}
+	if cfg.DefinitionCatalogRoot != filepath.Join(r.layout.ConfigDir(), "games") {
+		if _, err := definition.LoadGameCatalogFromDir(cfg.DefinitionCatalogRoot, id); err != nil {
+			return &config.Error{Code: "profile_invalid", Err: err}
+		}
+	}
+	if err := prepared.CommitAssets(); err != nil {
+		return err
+	}
+	// Another process may have created a valid but different file while assets
+	// were prepared. Validate the effective on-disk content before selection.
+	actualPath := r.layout.ConfigPath(filepath.Join("games", id, agentConfigFile))
+	if r.overridePath != "" {
+		actualPath = r.overridePath
+	}
+	actual, err := strictAgentConfig(actualPath)
+	if err != nil {
+		return &config.Error{Code: "profile_invalid", Err: err}
+	}
+	actual = resolveConfigPaths(r.layout.Root(), actual)
+	if _, err := definition.LoadGameCatalogFromDir(actual.DefinitionCatalogRoot, id); err != nil {
+		return &config.Error{Code: "profile_invalid", Err: err}
+	}
+	data, _ := json.Marshal(struct {
+		GameID string `json:"game_id"`
+	}{id})
+	if err := config.WriteFile(r.layout.ConfigPath("active-game.json"), append(data, '\n')); err != nil {
+		return &config.Error{Code: "game_setup_failed", Err: err}
+	}
+	game, _ := shippedGame(id)
+	r.mu.Lock()
+	if r.bundle != nil {
+		r.snapshot.ConfiguredGame = game
+		r.snapshot.RestartRequired = r.snapshot.LoadedGame.ID != id
+	}
+	r.mu.Unlock()
+	_ = r.configureLocked()
+	return nil
+}
+func (r *Runtime) gameSetupAllowed() error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed || r.snapshot.State == StateBlocked {
+		return &config.Error{Code: "setup_blocked", Err: errors.New(r.snapshot.Reason)}
+	}
+	return nil
+}
+
+// ModelSetupAllowed is checked before HTTP reads a credential and again under
+// the coordinator write lock before persisting it.
+func (r *Runtime) ModelSetupAllowed() error {
+	snapshot := r.Snapshot()
+	if snapshot.State == StateBlocked {
+		return &config.Error{Code: "setup_blocked", Err: errors.New(snapshot.Reason)}
+	}
+	if snapshot.Ready {
+		return &config.Error{Code: "already_configured", Err: errors.New("changing the model requires a restart")}
+	}
+	if snapshot.ReasonCode != "model_configuration_required" && snapshot.ReasonCode != "initialization_failed" {
+		return &config.Error{Code: snapshot.ReasonCode, Err: errors.New(snapshot.Reason)}
+	}
+	return nil
+}
 func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
+	r.setupMu.Lock()
+	defer r.setupMu.Unlock()
+	if err := r.ModelSetupAllowed(); err != nil {
+		return err
+	}
+	// Revalidate disk assets after a potentially slow HTTP model probe.
+	if err := r.configureLocked(); err == nil {
+		return &config.Error{Code: "already_configured", Err: errors.New("the agent core is already configured")}
+	}
+	if err := r.ModelSetupAllowed(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(setup.Provider) == "" {
 		return errors.New("a model provider is required")
 	}
 	if strings.TrimSpace(setup.APIKey) == "" {
 		return errors.New("an API key is required")
 	}
-
-	// One commit at a time, from the check to the installed core. The lock is
-	// separate from r.mu so that a commit does not block status reads for the
-	// duration of two file writes.
-	r.setupMu.Lock()
-	defer r.setupMu.Unlock()
-
-	r.mu.Lock()
-	installed := r.loop != nil && !r.placeholder
-	r.mu.Unlock()
-	if installed {
-		return errors.New("the agent core is already configured; changing the model requires a restart")
-	}
-
 	secretPath := filepath.Join(r.layout.SecretsDir(), modelSecretFile)
 	if err := secret.Write(secretPath, setup.APIKey); err != nil {
 		return fmt.Errorf("store the API key: %w", err)
 	}
 
-	reference, err := filepath.Rel(r.layout.ConfigDir(), secretPath)
+	reference, err := filepath.Rel(filepath.Dir(r.modelPath), secretPath)
 	if err != nil {
 		return fmt.Errorf("reference the API key file: %w", err)
 	}
@@ -138,199 +511,8 @@ func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
 		return fmt.Errorf("write the model configuration: %w", err)
 	}
 
-	return r.Configure()
-}
-
-// seedDefaults is a variable so a test can make initialization fail. A fresh root
-// that cannot be given the shipped configuration must not reach ready, and that
-// cannot be provoked on a data root that behaves.
-var seedDefaults = config.Seed
-
-// State reports how far the Runtime got.
-type State string
-
-const (
-	// StateNeedsConfiguration means Bootstrap is running but the agent core is
-	// not. Reason says what is missing, and configuring a model can resolve it.
-	StateNeedsConfiguration State = "needs_configuration"
-	// StateBlocked means the data root has a configuration problem that
-	// configuring a model cannot resolve, so the core will not become ready in
-	// this process. It is separate from StateNeedsConfiguration because the two
-	// ask the user for opposite things: one asks for a model, the other asks for
-	// a restart with the initialization problem fixed.
-	StateBlocked State = "blocked"
-	// StateReady means the agent core is serving turns.
-	StateReady State = "ready"
-)
-
-// Runtime is the agent core holder. The gateway only ever sees this value, so
-// installing or replacing the core never requires rewiring the transport.
-type Runtime struct {
-	mu        sync.RWMutex
-	layout    dataroot.Layout
-	agentCfg  agent.Config
-	recorder  trace.Recorder
-	store     memory.HistoryStore
-	modelPath string
-	agentPath string
-	loop      *agent.Loop
-	// placeholder marks a core that exists only to report an unusable
-	// configuration, so Configure may replace it.
-	placeholder bool
-	state       State
-	reason      string
-	blocked     bool
-	// setupMu serialises the whole model configuration commit. Checking that no
-	// core is installed and installing one cannot be separated by another
-	// submission: two concurrent saves would otherwise both pass the check and
-	// both write, leaving the credential on disk belonging to a different model
-	// than the core that is running.
-	setupMu sync.Mutex
-}
-
-// Open resolves the data root, loads what configuration exists and opens the
-// stores. It fails only when the Runtime cannot run at all: the data root is
-// unusable, or a store cannot be opened. An unusable agent or model
-// configuration is reported through State and Reason instead, because the user
-// has to be able to see the error.
-//
-// Open also attempts to install the agent core, so State and Reason are accurate
-// as soon as it returns. Call Configure again once the model configuration has
-// been written.
-func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
-	root, err := dataroot.Resolve(explicitRoot, env)
-	if err != nil {
-		return nil, err
-	}
-	layout := dataroot.New(root)
-	if err := layout.Ensure(); err != nil {
-		return nil, err
-	}
-
-	// A fresh data root starts from the shipped configuration. This runs before
-	// anything reads the agent configuration, and does nothing once the root has
-	// one.
-	//
-	// A failure here blocks the core rather than being logged and forgotten. The
-	// agent configuration loader treats a missing file as "use the defaults", so a
-	// root whose shipped configuration could not be prepared would otherwise
-	// configure a key, reach ready, and run an agent with no definitions and a
-	// smaller step budget -- exactly the state seeding exists to prevent, and one
-	// nothing later in the flow would notice.
-	blocked, blockedReason := false, ""
-	if wroteSeed, err := seedDefaults(layout.ConfigDir(), strings.TrimSpace(env.Getenv(agent.ConfigEnvName)) != ""); err != nil {
-		blocked, blockedReason = true, fmt.Sprintf("the shipped configuration could not be prepared: %v", err)
-		log.Printf("seed shipped configuration failed: %v", err)
-	} else if wroteSeed {
-		log.Printf("GameAgent seeded default configuration into %s", layout.ConfigDir())
-	}
-
-	// Reported as a state rather than exited on: the process has to stay up so the
-	// client can show why the configuration was refused.
-	r := &Runtime{layout: layout, state: StateNeedsConfiguration}
-	if blocked {
-		r.state, r.reason, r.blocked = StateBlocked, blockedReason, true
-	}
-	agentPath := resolveConfigPath(env, agent.ConfigEnvName, root, layout.ConfigPath(agentConfigFile))
-	r.modelPath = resolveConfigPath(env, llm.ConfigEnvName, root, layout.ConfigPath(modelConfigFile))
-	r.agentPath = agentPath
-
-	agentConfig, err := agent.LoadConfigFile(agentPath)
-	if err != nil {
-		r.state = StateBlocked
-		r.reason = fmt.Sprintf("agent configuration at %s is unusable: %v", agentPath, err)
-		r.blocked = true
-		agentConfig = agent.DefaultConfig()
-	}
-	r.agentCfg = resolveConfigPaths(root, agentConfig)
-
-	recorder, err := trace.NewJSONLRecorder(layout.TracePath(), trace.JSONLRecorderOptions{})
-	if err != nil {
-		// A missing trace must not stop the Runtime, but it must not be silent
-		// either: the trace is what the client shows.
-		log.Printf("create trace recorder failed: %v, fallback to noop", err)
-		r.recorder = trace.NoopRecorder{}
-	} else {
-		r.recorder = recorder
-	}
-
-	r.store = memory.NewSQLiteHistoryStore(memory.SQLiteStoreOptions{
-		Root:                          r.agentCfg.MemoryStore.Root,
-		BusyTimeout:                   r.agentCfg.MemoryStore.BusyTimeout,
-		MaxRecordsPerEntity:           r.agentCfg.MemoryStore.MaxRecordsPerEntity,
-		MaxProjectionBatchesPerEntity: r.agentCfg.MemoryStore.MaxProjectionBatchesPerEntity,
-	}, r.agentCfg.History, memory.WithHistoryIndexLimits(r.agentCfg.HistoryIndex))
-
-	// The returned error is the reason the core is not ready, which is a state,
-	// not a failure to open the Runtime.
-	_ = r.Configure()
-	return r, nil
-}
-
-// Configure installs the agent core. It reads the model configuration, which is
-// the one file the first-run flow replaces, and keeps the agent configuration it
-// loaded at startup. Repeating it while a real core is installed is a no-op.
-//
-// When the configuration is unusable, Configure installs a core that fails every
-// model call with the reason. A turn must still reach its terminal state: the
-// adapter releases the interaction on TurnCompletion, and a turn that never
-// completes would block the next interaction with that NPC.
-func (r *Runtime) Configure() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.loop != nil && !r.placeholder {
-		return nil
-	}
-	if r.blocked {
-		r.installUnavailable()
-		return errors.New(r.reason)
-	}
-
-	provider, _, err := llm.NewProviderFromConfigFile(r.modelPath)
-	if err != nil {
-		r.state = StateNeedsConfiguration
-		r.reason = modelReason(r.modelPath, err)
-		r.installUnavailable()
-		return errors.New(r.reason)
-	}
-
-	var catalog definition.Catalog
-	if root := r.agentCfg.DefinitionCatalogRoot; root != "" {
-		catalog, err = definition.LoadCatalogFromDir(root)
-		if err != nil {
-			r.state = StateNeedsConfiguration
-			r.reason = fmt.Sprintf("definition catalog at %s is unusable: %v", root, err)
-			r.installUnavailable()
-			return errors.New(r.reason)
-		}
-	}
-
-	r.loop = agent.NewLoop(provider, r.recorder, r.agentCfg,
-		agent.WithDefinitionCatalog(catalog),
-		agent.WithHistoryStore(r.store),
-	)
-	r.placeholder = false
-	r.state = StateReady
-	r.reason = ""
+	_ = r.configureLocked()
 	return nil
-}
-
-func (r *Runtime) installUnavailable() {
-	r.loop = agent.NewLoop(unavailableProvider{reason: r.reason}, r.recorder, r.agentCfg,
-		agent.WithHistoryStore(r.store),
-	)
-	r.placeholder = true
-}
-
-// unavailableProvider stands in for a model that is not configured yet. It keeps
-// the turn lifecycle intact so the failure is reported instead of silently
-// hanging the interaction.
-type unavailableProvider struct {
-	reason string
-}
-
-func (p unavailableProvider) Generate(context.Context, model.Request) (model.Response, error) {
-	return model.Response{}, fmt.Errorf("agent core is not ready: %s", p.reason)
 }
 
 // HandleEvent serves one adapter GameEvent. When the core is not configured the
@@ -362,62 +544,58 @@ func (r *Runtime) MaintainHistory(ctx context.Context, key session.AgentSessionK
 	core.MaintainHistory(ctx, key, currentTime)
 }
 
-// HistoryStore is the memory backend the gateway publishes task results into. It
-// outlives any single core, so it is available before the core is ready.
-func (r *Runtime) HistoryStore() memory.HistoryStore { return r.store }
-
-// Layout is the resolved data root layout.
-func (r *Runtime) Layout() dataroot.Layout { return r.layout }
-
-// AgentConfig is the resolved agent configuration, with every runtime-owned path
-// already interpreted against the data root.
-func (r *Runtime) AgentConfig() agent.Config { return r.agentCfg }
-
-// ModelConfigPath is where the agent core expects the model configuration.
-func (r *Runtime) ModelConfigPath() string { return r.modelPath }
-
-// AgentConfigPath is where the Runtime read the agent configuration from.
-func (r *Runtime) AgentConfigPath() string { return r.agentPath }
-
-// State reports whether the agent core is serving turns.
-func (r *Runtime) State() State {
+func (r *Runtime) HistoryStore() memory.HistoryStore {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.state
-}
-
-// Ready reports whether the agent core can serve turns. Downstream components that
-// consume durable state, such as the task dispatcher, must not act while it is false.
-func (r *Runtime) Ready() bool { return r.State() == StateReady }
-
-// Reason explains a state that is not StateReady.
-func (r *Runtime) Reason() string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.reason
-}
-
-// Close releases the trace recorder.
-func (r *Runtime) Close() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.recorder == nil {
+	if r.bundle == nil {
 		return nil
 	}
-	recorder := r.recorder
-	r.recorder = nil
-	return recorder.Close(context.Background())
+	return r.bundle.history
 }
-
+func (r *Runtime) Layout() dataroot.Layout { return r.layout }
+func (r *Runtime) AgentConfig() agent.Config {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.bundle == nil {
+		return agent.Config{}
+	}
+	return r.bundle.config
+}
+func (r *Runtime) ModelConfigPath() string { return r.modelPath }
+func (r *Runtime) AgentConfigPath() string { return r.Snapshot().AgentConfigPath }
+func (r *Runtime) State() State            { return r.Snapshot().State }
+func (r *Runtime) Ready() bool             { r.mu.RLock(); defer r.mu.RUnlock(); return r.snapshot.Ready }
+func (r *Runtime) Reason() string          { return r.Snapshot().Reason }
+func (r *Runtime) Close() error {
+	r.setupMu.Lock()
+	defer r.setupMu.Unlock()
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil
+	}
+	r.closed = true
+	r.snapshot.Ready = false
+	r.snapshot.State, r.snapshot.ReasonCode, r.snapshot.Reason = StateBlocked, "initialization_failed", "Runtime is shutting down"
+	bundle := r.bundle
+	r.mu.Unlock()
+	var result error
+	if bundle != nil {
+		result = closeBundle(bundle)
+	}
+	if r.pendingCleanup != nil {
+		result = errors.Join(result, closeBundle(r.pendingCleanup))
+	}
+	return errors.Join(result, r.recorder.Close(context.Background()))
+}
 func (r *Runtime) core() (*agent.Loop, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if r.loop == nil {
-		return nil, fmt.Errorf("agent core is not ready: %s", r.reason)
+	if !r.snapshot.Ready || r.bundle == nil {
+		return nil, fmt.Errorf("agent core is not ready: %s", r.snapshot.Reason)
 	}
-	return r.loop, nil
+	return r.bundle.loop, nil
 }
-
 func resolveConfigPath(env dataroot.Env, name, root, fallback string) string {
 	if value := strings.TrimSpace(env.Getenv(name)); value != "" {
 		return dataroot.ResolvePath(root, value)
@@ -439,4 +617,21 @@ func modelReason(path string, err error) string {
 		return fmt.Sprintf("model configuration not found at %s", path)
 	}
 	return fmt.Sprintf("model configuration at %s is unusable: %v", path, err)
+}
+func closeBundle(bundle *runtimeBundle) error {
+	result := bundle.gateway.Close(context.Background())
+	if bundle.taskStore != nil {
+		result = errors.Join(result, bundle.taskStore.Close())
+	}
+	return result
+}
+func (r *Runtime) abortCandidate(candidate *runtimeBundle, cause error) error {
+	cleanup := closeBundle(candidate)
+	if r.testCleanup != nil {
+		cleanup = errors.Join(cleanup, r.testCleanup(candidate))
+	}
+	if cleanup != nil {
+		r.pendingCleanup = candidate
+	}
+	return &initializationError{err: errors.Join(cause, cleanup), unsafe: cleanup != nil}
 }

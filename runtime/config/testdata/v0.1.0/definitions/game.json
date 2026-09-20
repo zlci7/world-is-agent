@@ -1,0 +1,20 @@
+{
+  "schema_version": "v1alpha1",
+  "game_id": "stardew-valley",
+  "title": "Stardew Valley",
+  "summary": "A farming life sim set around Pelican Town, where daily routines, seasons, relationships, and local places shape each interaction.",
+  "world_rules": [
+    "A year has four seasons, and each season has 28 days.",
+    "Villagers follow daily schedules and react to the current place, time, and relationship context.",
+    "The player character is a farmer living near Pelican Town."
+  ],
+  "lore": [
+    "Pelican Town is a small rural community in Stardew Valley.",
+    "The mines, mountain lake, town square, forest, and beach are familiar local places."
+  ],
+  "narrative_constraints": [
+    "Stay grounded in the current observation and event.",
+    "Keep dialogue concise and in character for a Stardew Valley NPC."
+  ],
+  "source_version": "phase7.1-fixture"
+}

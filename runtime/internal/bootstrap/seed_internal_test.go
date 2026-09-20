@@ -1,58 +1,36 @@
 package bootstrap
 
 import (
-	"errors"
-	"path/filepath"
-	"strings"
-	"testing"
-
 	"gameagent/runtime/internal/dataroot"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
-// A root whose shipped configuration could not be prepared must not reach ready,
-// even once a valid model configuration exists. Otherwise the user is shown a
-// ready Runtime that is running the fallback agent configuration: no definitions,
-// a smaller step budget, and nothing later in the flow that would notice.
-func TestAFailedSeedBlocksTheCoreEvenWithAValidModelConfiguration(t *testing.T) {
-	original := seedDefaults
-	seedDefaults = func(string, bool) (bool, error) {
-		return false, errors.New("shipped configuration is unusable")
-	}
-	defer func() { seedDefaults = original }()
-
+func TestMissingProfileAssetsNeverUseDefaultConfig(t *testing.T) {
 	root := t.TempDir()
-	env := dataroot.Env{
-		GOOS:    "linux",
-		Getenv:  func(string) string { return "" },
-		HomeDir: func() (string, error) { return root, nil },
-	}
-	runtime, err := Open(root, env)
+	env := dataroot.Env{GOOS: "linux", Getenv: func(string) string { return "" }, HomeDir: func() (string, error) { return root, nil }}
+	r, err := Open(root, env)
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatal(err)
 	}
-	defer runtime.Close()
-
-	// Blocking, not refusing to run: the client still has to be able to say what
-	// went wrong, and must be able to tell this apart from a root that is merely
-	// waiting for a model configuration.
-	if runtime.State() != StateBlocked {
-		t.Fatalf("state = %q, want %q", runtime.State(), StateBlocked)
+	defer r.Close()
+	if err := os.WriteFile(filepath.Join(root, "config", "active-game.json"), []byte(`{"game_id":"rimworld"}`), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if runtime.Ready() {
-		t.Fatal("a root that could not be seeded reported ready")
+	if err := os.WriteFile(r.ModelConfigPath(), []byte(`{"provider":"fake"}`), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(runtime.Reason(), "shipped configuration") {
-		t.Fatalf("reason = %q, want it to name the initialization failure", runtime.Reason())
+	if err := r.Configure(); err == nil {
+		t.Fatal("missing assets configured a core")
 	}
-
-	// A perfectly good model configuration must not clear it.
-	if err := runtime.ApplyModelConfiguration(ModelSetup{Provider: "deepseek", APIKey: "sk-valid"}); err == nil {
-		t.Fatal("a valid model configuration configured a core on a root with no shipped configuration")
+	if got := r.Snapshot(); got.Ready || got.LoadedGame != nil || got.ReasonCode != "profile_assets_missing" {
+		t.Fatalf("%+v", got)
 	}
-	if runtime.Ready() {
-		t.Fatal("the core became ready after a failed seed")
+	if err := r.SelectGame("rimworld"); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := filepath.Abs(root); err != nil {
-		t.Fatalf("root: %v", err)
+	if !r.Ready() {
+		t.Fatal(r.Reason())
 	}
 }

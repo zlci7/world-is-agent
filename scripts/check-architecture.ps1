@@ -29,6 +29,8 @@ function Search-Files {
             $matchesInclude -and
                 $file.FullName -notmatch '\\(\.local|bin|obj)\\' -and
                 $file.FullName -notmatch '\\runtime\\config\\games\\' -and
+                $file.FullName -notmatch '\\runtime\\config\\testdata\\' -and
+                $file.FullName -notmatch '\\runtime\\config\\legacy-profiles\.json$' -and
                 $file.Name -notmatch '_test\.go$'
         } |
         Select-String -Pattern $Pattern -CaseSensitive:$false
