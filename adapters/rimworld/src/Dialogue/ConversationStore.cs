@@ -19,6 +19,16 @@ namespace Wia.RimWorld.Dialogue
         /// from the conversation merely being open.
         /// </summary>
         public bool AwaitingPresentation;
+
+        /// <summary>
+        /// The event whose turn this conversation is currently serving.
+        ///
+        /// AwaitingPresentation is a fact about one turn, but everything the Runtime sends back -
+        /// ActionRequest, EventAck, TurnCompletion - arrives tagged with an event id. Without this
+        /// field a message about an older turn is indistinguishable from one about the current turn,
+        /// and a late notification for event N can act on state that event N+1 already owns.
+        /// </summary>
+        public string CurrentEventId;
     }
 
     /// <summary>
@@ -59,6 +69,7 @@ namespace Wia.RimWorld.Dialogue
                 WorldId = worldId,
                 EntityId = entityId,
                 AwaitingPresentation = true,
+                CurrentEventId = eventId,
             };
 
             lock (this.gate)
@@ -84,10 +95,36 @@ namespace Wia.RimWorld.Dialogue
             lock (this.gate)
             {
                 // A follow-up event starts a new turn for this conversation, so it is again waiting to
-                // see whether that turn presents anything.
+                // see whether that turn presents anything - and it now owns the conversation's
+                // current-turn slot, which retires anything still in flight for the previous event.
                 conversation.AwaitingPresentation = true;
+                conversation.CurrentEventId = eventId;
                 this.open[conversation.ConversationId] = conversation;
                 this.BindLocked(conversation, eventId);
+            }
+        }
+
+        /// <summary>
+        /// True when this event is the one the conversation is currently serving. Anything the
+        /// Runtime sends back about an older event is stale: the conversation has moved on, and
+        /// acting on it would reach into a turn that is no longer the one in flight.
+        /// </summary>
+        public bool IsCurrentEvent(string eventId)
+        {
+            if (string.IsNullOrEmpty(eventId))
+            {
+                return false;
+            }
+
+            Conversation conversation;
+            if (!this.TryResolve(eventId, out conversation))
+            {
+                return false;
+            }
+
+            lock (this.gate)
+            {
+                return string.Equals(conversation.CurrentEventId, eventId, StringComparison.Ordinal);
             }
         }
 
@@ -169,7 +206,8 @@ namespace Wia.RimWorld.Dialogue
 
         /// <summary>
         /// Records that the conversation's current turn has shown a line. Called when
-        /// present_dialogue succeeds.
+        /// present_dialogue succeeds, which only happens for the event the conversation is currently
+        /// serving - <see cref="DialogueService.Execute"/> rejects anything else first.
         /// </summary>
         public void MarkPresented(string conversationId)
         {
@@ -197,6 +235,10 @@ namespace Wia.RimWorld.Dialogue
         /// colonist answering "already talking" forever with nothing for the player to close. A turn
         /// that did present something is left open: the window is up and the reply is what starts the
         /// next turn.
+        ///
+        /// A notification about an event the conversation has already moved past settles nothing.
+        /// The player can answer a window before the completion for the turn that opened it arrives,
+        /// and that completion must not act on the state its successor now owns.
         /// </summary>
         public bool CompleteTurn(string eventId)
         {
@@ -209,7 +251,9 @@ namespace Wia.RimWorld.Dialogue
             lock (this.gate)
             {
                 Conversation tracked;
-                if (!this.open.TryGetValue(conversation.ConversationId, out tracked) || !tracked.AwaitingPresentation)
+                if (!this.open.TryGetValue(conversation.ConversationId, out tracked) ||
+                    !string.Equals(tracked.CurrentEventId, eventId, StringComparison.Ordinal) ||
+                    !tracked.AwaitingPresentation)
                 {
                     return false;
                 }

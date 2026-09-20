@@ -150,6 +150,16 @@ namespace Wia.RimWorld.Dialogue
                     request, "conversation_closed", "the conversation has already ended");
             }
 
+            if (!this.conversations.IsCurrentEvent(request.SourceEventId))
+            {
+                // The Runtime does not send a second ActionRequest for a turn it already acted on,
+                // but a late one is protocol-legal and carries an older event id. Presenting it would
+                // replace the window the current turn put up with the previous turn's line, under the
+                // same conversation id.
+                return ProtocolMapper.BuildRejected(
+                    request, "stale_source_event", "the conversation has already moved on to a newer event");
+            }
+
             if (!string.Equals(conversation.EntityId, request.EntityId, StringComparison.Ordinal))
             {
                 return ProtocolMapper.BuildRejected(
@@ -214,6 +224,13 @@ namespace Wia.RimWorld.Dialogue
         {
             Conversation conversation;
             if (!this.conversations.TryResolve(eventId, out conversation))
+            {
+                return;
+            }
+
+            // Only the event the conversation is currently serving may tear it down. A late failure
+            // report for an earlier turn says nothing about the turn that replaced it.
+            if (!this.conversations.IsCurrentEvent(eventId))
             {
                 return;
             }

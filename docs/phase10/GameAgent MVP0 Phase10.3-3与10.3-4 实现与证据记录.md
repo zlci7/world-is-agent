@@ -391,3 +391,55 @@ docs/STATUS.md 的 Automatic reconnect 一行仍写 "future work"，
 ```
 
 据此 **Phase10.3 Second Real Game Adapter — Accepted**，下一步进入 10.4 Game Profile Selection。
+
+## 10. 验收后修正：stale TurnCompletion
+
+验收之后的一轮复核发现 §8 那个修法还留了一个时序缺口，已修。这不改变 10.3 的验收结论。
+
+### 缺口
+
+`AwaitingPresentation` 是**会话级**事实，而 Runtime 回来的一切（ActionRequest、EventAck、
+TurnCompletion）都带 **event_id**。两者粒度不一致，于是存在这个合法时序：
+
+```text
+Begin(event1)           → AwaitingPresentation = true
+present_dialogue        → MarkPresented        → false    窗口已显示
+玩家即时回复 Bind(event2) → AwaitingPresentation = true     ← 又变回 true
+event1 的 Completed 迟到 → CompleteTurn(event1)
+                        → 看到 true → 以为 event1 没有 present
+                        → 关掉了正被 event2 使用的会话
+```
+
+后果不是"卡死"，但确实是错的：会话被关掉而窗口还在，此时再点同一名殖民者会因为
+`TryGetOpenForEntity` 查不到而**另开一个会话**——同一名殖民者可以有两个窗口。
+
+同一缺口还有第二种表现：迟到或重复的 `ActionRequest(source_event_id=event1)` 在 event2
+已经开始之后到达，`TryResolve` 与 `IsOpen` 都会通过，于是它会把当前回合刚显示的台词
+**替换成上一个回合的台词**。
+
+### 修法
+
+给 `Conversation` 加 `CurrentEventId`，`Begin` 与 `Bind` 都更新它；凡是"按 event 回来"的操作
+都要求事件匹配：
+
+```text
+CompleteTurn(eventId)   非当前事件 → 不收摊（迟到的完成不影响新回合）
+AbandonEvent(eventId)   非当前事件 → 不收摊（旧回合的失败与当前回合无关）
+Execute(request)        source_event_id 非当前事件 → REJECTED stale_source_event
+IsCurrentEvent(eventId) 供上述判断使用
+```
+
+`CurrentEventId` 只由主线程写（`Begin` 来自 gizmo、`Bind` 来自窗口回复），读的一方在锁内，
+因此不需要额外同步。
+
+### 回归用例
+
+```text
+AStaleCompletionDoesNotSettleTheTurnThatReplacedIt
+    Begin(event1) → MarkPresented → Bind(event2) → CompleteTurn(event1)
+    断言：返回 false、会话仍 open
+    这条在修复前会失败——旧实现不看事件，会关掉会话并返回 true
+
+OnlyTheEventTheConversationIsServingIsCurrent
+    Bind 之后旧事件不再是当前事件；未绑定过的事件与 null 都不是
+```

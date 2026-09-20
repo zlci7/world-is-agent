@@ -400,6 +400,46 @@ namespace WiaRimWorld.Projection.Tests
         }
 
         [Fact]
+        public void AStaleCompletionDoesNotSettleTheTurnThatReplacedIt()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation conversation = store.Begin("world-1", "pawn:A", "event-1");
+            store.MarkPresented(conversation.ConversationId);
+
+            // The player answers the window before the completion for the turn that opened it
+            // arrives, which starts a second turn on the same conversation.
+            store.Bind("event-2", conversation);
+
+            // Turn one's completion is about a turn that is no longer in flight. AwaitingPresentation
+            // is true again - for turn two - so acting on it would close a conversation whose second
+            // turn has not run yet. This is the race the event-id check exists for.
+            Assert.False(store.CompleteTurn("event-1"));
+            Assert.True(store.IsOpen(conversation.ConversationId));
+
+            // The turn that actually is in flight still settles normally.
+            Assert.True(store.CompleteTurn("event-2"));
+            Assert.False(store.IsOpen(conversation.ConversationId));
+        }
+
+        [Fact]
+        public void OnlyTheEventTheConversationIsServingIsCurrent()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation conversation = store.Begin("world-1", "pawn:A", "event-1");
+
+            Assert.True(store.IsCurrentEvent("event-1"));
+
+            store.Bind("event-2", conversation);
+
+            Assert.False(store.IsCurrentEvent("event-1"));
+            Assert.True(store.IsCurrentEvent("event-2"));
+
+            // An event id that was never bound, or none at all, is never current.
+            Assert.False(store.IsCurrentEvent("event-missing"));
+            Assert.False(store.IsCurrentEvent(null));
+        }
+
+        [Fact]
         public void UnknownAndEmptyEventIdsDoNotResolve()
         {
             ConversationStore store = new ConversationStore();
