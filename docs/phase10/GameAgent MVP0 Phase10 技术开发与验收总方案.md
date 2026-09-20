@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3 已定稿，10.3-1 已实现并验收**（见 [10.3 方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)、[10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)），10.3-2 的身份与时钟部分已取得实机证据（同记录 §7、§8），**10.3-3 与 10.3-4 已实现并实机验收**（见 [10.3-3/10.3-4 实现与证据记录](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)）；**10.4 Game Profile 选择已立方案**，执行位置在 10.5 之前（见 [10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)）；10.5、10.6 未开工
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3 已定稿，10.3-1 已实现并验收**（见 [10.3 方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)、[10.3-1 实机验收记录](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)），10.3-2 的身份与时钟部分已实机验收、商队部分未验证（见 [10.3-2 实机验收记录](GameAgent%20MVP0%20Phase10.3-2%20实机验收记录.md)），**10.3-3 与 10.3-4 已实现并实机验收**（见 [10.3-3/10.3-4 实现与证据记录](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)）；**10.4 Game Profile 选择已立方案**，执行位置在 10.5 之前（见 [10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)）；10.5、10.6 未开工
 > **Date:** 2026-09-18
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
@@ -572,7 +572,7 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 
 10.3 的退出条件：
 
-1. 第二个 Adapter 能在独立仓库中构建、运行并与 Runtime 建立连接。
+1. 第二个 Adapter 能脱离 monorepo 目录布局独立构建、运行并与 Runtime 建立连接。（物理上的独立 Git 仓库是 10.5，不在本条内。）
 2. Runtime Core 未新增该游戏的任何专属分支（`check-architecture.ps1` 断言不被削弱，需覆盖新 Adapter）。
 3. 该游戏至少完成一条"游戏事件 → AgentTurn → 能力执行 → 结果回灌"的真实闭环。
 4. §4.5 的 tool_policy 提升判定已给出结论，并记录支持该结论的第二个 Adapter 实际 policy 需求。
@@ -640,7 +640,7 @@ Adapter 是事实来源                   能力、schema、description、执行
 | # | 决策 | 结论 |
 | --- | --- | --- |
 | 1 | 阶段重排 | 旧 Phase10 → Phase11，旧 Phase11 → Phase12；Phase10 为 Ecosystem & Productization |
-| 2 | Phase B 拆仓 | 授权，包含在 10.3 |
+| 2 | Phase B 拆仓 | 已授权；独立为 10.5，排在 10.4 之后 |
 | 3 | 客户端形态 | 本地 Web UI：Vue 3 + TypeScript + Vite，产物 `//go:embed` 进 runtime 二进制；CLI 保留开发与无头入口；不做桌面打包 |
 | 4 | 发行形态 | 只做 Portable Release（免安装 ZIP / 单个 runtime 二进制），不做 Installer |
 | 5 | 平台范围 | 只服务同一台电脑上的本地浏览器；不做 Mobile、LAN、远程访问；手机形态留给未来的独立项目，不在 WIA 预埋 LAN/server 模式 |

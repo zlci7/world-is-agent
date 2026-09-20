@@ -49,7 +49,13 @@ scripts/install-rimworld-adapter.ps1                        白名单增加 Patc
 11   两个 Pawn 的 Memory 互不串扰
      ✅ 两个实体在同一 world 下引用**不同的 history source id**（§3.3），
         且 Runtime 的 history maintenance 分别以两个 AgentSessionKey 记账
-     ⚠️ 同条件 10 的保留意见：证据到"来源不同"为止，没有做 memory.db 的逐行比对
+     ✅ 检索在 SQL 层就按实体收窄：`runtime/internal/memory/sqlite_search.go:343` 的查询带
+        `WHERE h.game_id=? AND h.world_id=? AND h.entity_id=?`，schema 上也有
+        `(game_id, world_id, entity_id, sequence)` 索引（`sqlite_migrations.go:31`）。
+        属于另一个实体的记忆记录不可能被这条上下文选中——这比抽一次样本更强。
+     ⚠️ 仍未做 memory.db 的逐行 dump：本机没有 sqlite3 客户端。曾尝试用
+        `BuildProjectionBatchKey` 复算 history source id 来反证归属，复算值与 trace 中的取值
+        不一致（16 种 kind/version/turn 组合都不匹配），因此那条捷径不作为证据提出
 
 12   state.rimworld 有 schema_version，且字段数量与长度上限固定生效
      ✅ 离线测试：SchemaVersionIsReported、EveryFieldIsBoundedNoMatterHowLargeTheInputIs、
@@ -77,7 +83,8 @@ scripts/install-rimworld-adapter.ps1                        白名单增加 Patc
 17   展示成功即 Action SUCCEEDED；关闭窗口不产生回复事件，也不存在悬挂 Action
      ✅ 实机：每次 present_dialogue 都返回 status=Succeeded，并且是在窗口出现时返回的
      ✅ 实机：按 Esc 关闭窗口后，新增 turn 数为 0，没有 player_said_to_npc、没有新的 ActionResult
-     ✅ 离线测试覆盖两种合法形态与全部非法形态（PresentDialogueParserTests，21 个用例）
+     ✅ 离线测试覆盖两种合法形态与全部非法形态（PresentDialogueParserTests，22 个用例），
+        其中 `3 options + allow_free_text=false` 是本轮 CR 补上的回归用例
 
 18   tool_policy 复用结论已记录
      ✅ 方案 §9.3。本阶段给该结论增加了第二个真实消费者
@@ -201,4 +208,101 @@ check-architecture     通过（Runtime 与 protocol 零 game-specific 改动）
 不产生任何非玩家触发的事件；tick 与世界变化只更新 projection
 不协商 gameagent.tasks.v1，因此不发送 WorldBinding / WorldClock / Checkpoint
 不收录：全部 Hediff / Thought / Skill / Relation / Inventory、附近所有 Pawn、整个世界地图
+```
+
+## 7. CR 修正轮次
+
+首次交付后的一轮代码评审指出三个必须修的问题与两个准确性收尾，均已处理。
+
+### 7.1 `present_dialogue` 与 Stardew 的语义分歧（必修）
+
+原实现按 `reply_options` 的条数分形态，于是：
+
+```text
+reply_options = 3 条 + allow_free_text = false   → 本适配器接受
+```
+
+而 Stardew 的 `ProtocolMapper.Core.RequirePresentDialogueArgument` 是按 `allow_free_text` 分形态的：
+
+```csharp
+if ( allowFreeText && replyOptions.Length != MaxReplyOptions) throw;
+if (!allowFreeText && replyOptions.Length != 0)             throw;
+```
+
+也就是说这个形态在 Stardew 被拒。**这正是本阶段最重要的论点被削弱的地方**：两个 Adapter 复用的是
+同一个 capability contract，那么接受与拒绝的形状必须一致。修法是把判断改成按 `allow_free_text`
+分支，与 Stardew 逐行同构，并补一条回归用例
+`ThreeOptionsWithFreeTextRefusedIsRejected`（该用例在修复前会失败）。
+
+### 7.2 Conversation 生命周期（必修）
+
+三处，都属于同一件事：会话状态必须跟得上"这次事件到底成没成"。
+
+```text
+1  closed 不得被旧 source_event_id 重开
+   Execute 过去只做 TryResolve 就直接开窗。event binding 有意在 Close 后保留（为了让迟到的
+   ActionRequest 拿到明确答复而不是让 Runtime 一直等），但保留 binding ≠ 会话还活着。
+   现在补上 IsOpen 检查，不满足返回 REJECTED conversation_closed。
+
+2  同一 Pawn 不得并发开多个会话
+   BeginConversation 现在先查该 entity 是否已有 open conversation，有则拒绝并告诉玩家。
+   否则连点会连开多个会话，而 Runtime 在同一 entity lane 上一次只跑一个 turn，
+   多出来的排队或被丢弃，玩家看到的却是更早那次点击的窗口。
+
+3  event 真正失败时要收摊
+   EventAck.REJECTED、TurnCompletion FAILED/CANCELLED、以及 detached write 失败，
+   现在统一走 DialogueService.AbandonEvent：关掉 store 里的会话、关掉窗口、给玩家一条消息。
+   EventAck.DUPLICATE 不收摊——那说明 Runtime 已经收下这个事件、turn 正在跑。
+```
+
+这一条同时消掉了原实现里最难看的一种沉默：点击被交给了一个活跃会话（于是 calller 回答"已受理"），
+随后写入失败，玩家等一个永远不会来的 turn。原代码注释自己写着"a click that does nothing is the
+worst possible answer"，而现在发送路径也确实按这句话做了。
+
+### 7.3 `game.json` 的事实错误（必修）
+
+```text
+删除  "The colony exists on one map at a time..."
+      RimWorld 可以同时存在多个 colony map、临时 quest map 与 caravan，这条是错的
+改为  "A colonist may be present on a map or travelling off-map in a caravan;
+       different colonists may be on different maps."
+
+弱化  "Skills and traits ... are learned and acquired during play, not chosen by the player"
+      traits 与背景在 Pawn 生成时就确定，skills 也可能有初始值
+改为  "Traits, backgrounds and skills are properties of the generated colonist,
+       and they shape how that colonist works and speaks."
+```
+
+GameDefinition 是给模型看的事实源，这里的事实错误比 README 的笔误更值得修。
+
+### 7.4 P2 收尾
+
+```text
+测试名  EveryFieldIsBoundedNoMatterHowLargeTheInputIs
+        → ConfiguredTextFieldsAndCollectionsAreBounded
+        entity id / map id / def name 本来就没有设长度上限（它们只由游戏自身的标识符填充），
+        旧名字比实现声称得更多
+```
+
+### 7.5 修正后的实机复验
+
+在修正后的构建上重跑（全新 dev data root，真实模型调用）：
+
+```text
+点击 gizmo → 恰好 1 个 turn，event accepted，Observation revision=1，present_dialogue Succeeded
+窗口显示该殖民者的台词与 3 个回复
+回复        → 恰好 1 个 turn，event accepted，Observation revision=2
+窗口开着时再点 gizmo → 0 个新 turn（并发保护生效）
+```
+
+台词仍取自本人投影：Feeb（22 岁、健康一瘸一拐）说"我在，身上这伤还没好，走快了也疼。
+
+### 7.6 完整回归
+
+```text
+go test ./... -p 1 -count=1                全部包 ok，退出码 0
+dotnet test adapters/rimworld/tests/...    36 通过 / 0 失败
+check-standalone-build.ps1                 三项全过
+check-architecture.ps1                     通过
+git diff --check                           干净
 ```
