@@ -1,71 +1,80 @@
 # World Is Agent
 
-**World Is Agent（WIA）** 是一个开源的游戏原生 Agent Runtime。游戏通过 Adapter 上报事件与环境观察，Runtime 为游戏角色提供身份、上下文、记忆、模型决策和受约束的工具执行能力。
+**让游戏里的角色拥有身份、记忆，并根据正在发生的事情自主作出回应。**
 
-![World Is Agent](docs/images/world-is-agent.jpg)
+World Is Agent（WIA）在本机运行，通过游戏 Adapter 接收实时状态、调用大语言模型，再把角色的对话或行动交回游戏执行。模型配置、游戏切换和运行记录都可以在本地 Web 控制台中管理。
 
-## 包含内容
+## 你可以用它做什么
 
-- 基于 Go 的 Runtime，提供 gRPC 双向流和本地 Web 控制台。
-- Protocol v1alpha2，定义事件、观察、能力、动作和回合完成协议。
-- 按游戏、世界和实体隔离的持久化记忆，以及 JSONL 回合 Trace。
-- 与模型服务商解耦的接口，当前支持 DeepSeek 和 OpenAI。
-- 内置 `stardew-valley` 与 `rimworld` Game Profile、Prompt 和 Definitions。
+- 让游戏角色结合身份、当前环境和历史记忆进行对话与决策。
+- 在 Web 控制台中选择游戏、配置模型并查看最近的 Agent 回合。
+- 在同一个 Runtime 进程中切换游戏，保留各游戏已经记录的历史。
+- 使用 DeepSeek 或 OpenAI，也可以配置兼容接口的 Base URL。
 
-一个 Runtime 进程同一时间加载一个 Game Profile。当前游戏的多个 Adapter 可以作为独立 Environment Session 连接；其它游戏的 Adapter 会在环境就绪和能力发现之前被拒绝。
+## 支持的游戏
 
-## 快速开始
+| 游戏 | Adapter | 运行环境 | 安装说明 |
+| --- | --- | --- | --- |
+| Stardew Valley | 0.1.1 | Windows、SMAPI | [Stardew Valley Adapter](https://github.com/zlci7/world-is-agent-adapters/tree/main/stardew-valley) |
+| RimWorld | 0.1.0 | RimWorld 1.6、Windows x64 | [RimWorld Adapter](https://github.com/zlci7/world-is-agent-adapters/tree/main/rimworld) |
 
-构建 Windows 便携版 Runtime：
+Runtime 和游戏 Adapter 分开发布。安装 WIA 时需要一个 Runtime，以及与你所玩游戏匹配的 Adapter。
+
+## 使用前准备
+
+- Windows x64。
+- 已安装的 Stardew Valley 或 RimWorld。
+- 对应游戏的 WIA Adapter。
+- DeepSeek 或 OpenAI API Key。
+
+## 开始使用
+
+1. 从 [Releases](https://github.com/zlci7/world-is-agent/releases) 下载 `world-is-agent-v0.2.0-windows-amd64.zip` 并解压。
+2. 从 [官方 Adapter 仓库](https://github.com/zlci7/world-is-agent-adapters) 安装对应游戏的 Adapter。
+3. 运行 `wia-runtime.exe`，浏览器会自动打开本地控制台。
+4. 在页面中选择游戏，填写模型服务商、模型和 API Key。
+5. 等待状态变为 **Ready**，然后启动游戏并加载存档。
+
+如果 Releases 页面中还没有对应版本，说明该版本尚未正式发布。不要混用不匹配的 Runtime 和 Adapter 版本。
+
+## Runtime 怎样连接游戏
+
+网页不需要填写游戏安装目录。Adapter 安装在游戏的 Mod 目录中，游戏启动后会自动连接本机的 `127.0.0.1:50051`。
+
+建议先启动 Runtime、选择游戏并等待 **Ready**，再启动游戏。连接暂时中断时，当前版本的 Stardew Valley 和 RimWorld Adapter 会自动重试。
+
+在 Web 控制台中使用 **Switch game（切换游戏）** 会取消正在执行的回合、保留已经写入的历史，并等待新游戏的 Adapter 连接。使用 **Model settings（模型设置）** 可以更换模型服务商、模型、API Key 和 Base URL；新配置通过检查后才会生效。
+
+## 本地数据与 API Key
+
+Runtime 默认把数据保存在：
+
+```text
+%LOCALAPPDATA%\WorldIsAgent\
+├── config\     游戏与模型配置
+├── secrets\    API Key 文件
+└── data\       回合 Trace
+```
+
+API Key 不会写入普通配置文件，也不会由网页返回。当前版本使用本地文件保存密钥，尚未接入系统密钥链。
+
+## 当前发布状态
+
+Stardew Valley 与 RimWorld 的基础实机闭环已经通过。Runtime 0.2.0、Stardew Adapter 0.1.1 和 RimWorld Adapter 0.1.0 正在完成发布前的运行时切换、自动重连和模型修改验收；对应 tag 与 Release 在验收完成后发布。
+
+## 开发者入口
+
+从源码构建 Windows Runtime：
 
 ```powershell
 .\scripts\release-runtime.ps1
 ```
 
-解压 `dist\world-is-agent-v<version>-windows-amd64.zip`，运行 `wia-runtime.exe`，然后在自动打开的 Web 控制台中完成配置：
-
-1. 选择 Stardew Valley 或 RimWorld。Runtime 会在数据目录中准备缺失的内置 Profile 文件。
-2. 根据页面提示配置模型服务商和 API Key。
-3. 等待状态变为 **Ready**，再启动对应的游戏和 Adapter。
-
-**Switch game（切换游戏）** 会在当前 Runtime 进程中应用另一个 Game Profile，取消正在执行的回合并保留已有历史记录，随后由对应 Adapter 自动重连。**Model settings（模型设置）** 可以修改服务商、模型、API Key 和可选的 Base URL；新配置通过连通性检查后才会生效。
-
-自动重连需要 Stardew Adapter 0.1.1 或 RimWorld Adapter 0.1.0。Runtime 发布包不包含游戏 Adapter，请从独立的 [world-is-agent-adapters](https://github.com/zlci7/world-is-agent-adapters) 仓库构建并安装。详细步骤参见[官方 Adapter](docs/development/guide.md#official-adapters)。
-
-开发环境可以运行：
-
-```powershell
-.\scripts\start-runtime.ps1
-```
-
-脚本优先使用 `WIA_DATA_ROOT` 指定的数据目录，否则使用 `runtime/.local/runtime-data`，并且不会自动选择游戏。更多信息参见[开发指南](docs/development/guide.md)。
-
-## 技术栈
-
-`Golang` · `gRPC` · `Protobuf` · `SQLite` · `C#` · `SMAPI` · `LLM Tool Calling` · `JSON Schema`
-
-## 仓库结构
-
-```text
-runtime/      Runtime、内置 Game Profile、Prompt 和 Definitions
-protocol/     Protobuf 协议与生成代码
-console/      本地 Web 控制台
-docs/         架构、状态、开发指南和历史文档
-```
-
-本仓库负责 Runtime、Console、Protocol 和 Runtime 内置的 Game Profile。官方游戏 Adapter 位于独立的 [world-is-agent-adapters](https://github.com/zlci7/world-is-agent-adapters) 仓库。
-
-## 文档
-
 - [系统架构](ARCHITECTURE.md)
 - [当前状态](docs/STATUS.md)
 - [开发指南](docs/development/guide.md)
 - [测试与验收](docs/development/testing.md)
-- [文档索引](docs/README.md)
-
-## 当前状态
-
-Runtime 已支持 Game Profile 选择、多游戏启动、运行时切换游戏和模型配置，官方 Stardew Valley 与 RimWorld Adapter 已拆分到独立仓库。两个游戏的基础实机闭环已经通过；运行时切换游戏、自动重连和修改模型仍需在正式发布前完成一次聚焦实机验收。
+- [Protocol](protocol/README.md)
 
 ## 许可证
 
