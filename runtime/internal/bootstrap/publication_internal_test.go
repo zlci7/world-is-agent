@@ -2,8 +2,10 @@ package bootstrap
 
 import (
 	"errors"
+	"gameagent/runtime/internal/llm"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -120,7 +122,11 @@ func TestConcurrentGameAndModelCommitsKeepLoadedProfileAndSavedSelectionCoherent
 	if r.AgentConfig().Task.Enabled != (got.LoadedGame.ID == "stardew-valley") {
 		t.Fatal("loaded policy and identity differ")
 	}
-	if _, err := os.Stat(filepath.Join(root, "secrets", "model.key")); err != nil {
+	cfg, err := llm.LoadConfig(r.ModelConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(r.ModelConfigPath()), strings.TrimPrefix(cfg.APIKey, "file:"))); err != nil {
 		t.Fatal(err)
 	}
 }

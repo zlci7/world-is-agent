@@ -58,7 +58,7 @@ func newWorldTestStream(t *testing.T, server *Server, extensions []string) (*wor
 	t.Cleanup(cancel)
 	stream := &worldTestStream{captureStream: captureStream{sent: make(chan *protocol.RuntimeMessage, 32)}, incoming: make(chan *protocol.AdapterMessage, 32), ctx: ctx, cancel: cancel, server: server}
 	done := make(chan error, 1)
-	go func() { done <- server.Connect(stream) }()
+	go func() { defer cancel(); done <- server.Connect(stream) }()
 	stream.incoming <- &protocol.AdapterMessage{Payload: &protocol.AdapterMessage_Hello{Hello: &protocol.AdapterHello{GameId: "sim", SessionId: "connection", SupportedExtensions: extensions}}}
 	return stream, done
 }

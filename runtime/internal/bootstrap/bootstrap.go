@@ -18,6 +18,7 @@ import (
 	"gameagent/runtime/internal/dataroot"
 	"gameagent/runtime/internal/definition"
 	"gameagent/runtime/internal/gateway"
+	"gameagent/runtime/internal/idgen"
 	"gameagent/runtime/internal/llm"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
@@ -62,6 +63,7 @@ const (
 	StateNeedsConfiguration State = "needs_configuration"
 	StateBlocked            State = "blocked"
 	StateReady              State = "ready"
+	StateReconfiguring      State = "reconfiguring"
 )
 
 type Game struct {
@@ -87,6 +89,8 @@ type Snapshot struct {
 
 type runtimeBundle struct {
 	config    agent.Config
+	catalog   definition.Catalog
+	provider  model.Provider
 	loop      *agent.Loop
 	history   memory.HistoryStore
 	gateway   *gateway.Server
@@ -105,6 +109,7 @@ type Runtime struct {
 	recorder            trace.Recorder
 	snapshot            Snapshot
 	bundle              *runtimeBundle
+	streams             *gateway.StreamGroup
 	closed              bool
 	lastConnectionError *ConnectionError
 	// Test seams exercise the publication boundary and cleanup failures.
@@ -126,7 +131,7 @@ func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open trace storage: %w", err)
 	}
-	r := &Runtime{layout: layout, recorder: recorder}
+	r := &Runtime{layout: layout, recorder: recorder, streams: &gateway.StreamGroup{}}
 	r.modelPath = resolveConfigPath(env, llm.ConfigEnvName, root, layout.ConfigPath(modelConfigFile))
 	if value := strings.TrimSpace(env.Getenv(agent.ConfigEnvName)); value != "" {
 		r.overridePath = dataroot.ResolvePath(root, value)
@@ -349,7 +354,7 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 		MaxRecordsPerEntity:           cfg.MemoryStore.MaxRecordsPerEntity,
 		MaxProjectionBatchesPerEntity: cfg.MemoryStore.MaxProjectionBatchesPerEntity,
 	}, cfg.History, memory.WithHistoryIndexLimits(cfg.HistoryIndex))
-	candidate := &runtimeBundle{config: cfg, history: history}
+	candidate := &runtimeBundle{config: cfg, catalog: catalog, provider: provider, history: history}
 	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history))
 	options := []gateway.ServerOption{gateway.WithConnectionReady(func() { r.mu.Lock(); r.lastConnectionError = nil; r.mu.Unlock() })}
 	if cfg.Task.Enabled {
@@ -362,7 +367,7 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 		candidate.taskStore = store
 		options = append(options, gateway.WithTaskService(task.NewService(store)), gateway.WithTaskResultHistory(history))
 	}
-	candidate.gateway = gateway.NewServer(r, options...)
+	candidate.gateway = gateway.NewServer(candidate.loop, options...)
 	if cfg.Task.Enabled {
 		dispatch := task.DispatcherConfig{ScanInterval: cfg.Task.ScanInterval, BatchSize: cfg.Task.DispatchBatch, RetryMin: cfg.Task.RetryMin, RetryMax: cfg.Task.RetryMax}
 		if err := candidate.gateway.StartTaskDispatcher(context.Background(), dispatch, nil, nil); err != nil {
@@ -422,18 +427,31 @@ func (r *Runtime) SelectGame(id string) error {
 	data, _ := json.Marshal(struct {
 		GameID string `json:"game_id"`
 	}{id})
-	if err := config.WriteFile(r.layout.ConfigPath("active-game.json"), append(data, '\n')); err != nil {
-		return &config.Error{Code: "game_setup_failed", Err: err}
+	commit := func() error { return config.WriteFile(r.layout.ConfigPath("active-game.json"), append(data, '\n')) }
+	r.mu.RLock()
+	installed := r.bundle != nil
+	r.mu.RUnlock()
+	if !installed {
+		if err := commit(); err != nil {
+			return &config.Error{Code: "game_setup_failed", Err: err}
+		}
+		_ = r.configureLocked()
+		return nil
+	}
+	catalog, err := definition.LoadGameCatalogFromDir(actual.DefinitionCatalogRoot, id)
+	if err != nil {
+		return err
+	}
+	provider, _, err := llm.NewProviderFromConfigFile(r.modelPath)
+	if err != nil {
+		return err
+	}
+	summary, err := llm.DescribeConfig(r.modelPath)
+	if err != nil {
+		return err
 	}
 	game, _ := shippedGame(id)
-	r.mu.Lock()
-	if r.bundle != nil {
-		r.snapshot.ConfiguredGame = game
-		r.snapshot.RestartRequired = r.snapshot.LoadedGame.ID != id
-	}
-	r.mu.Unlock()
-	_ = r.configureLocked()
-	return nil
+	return r.replaceLocked(actual, catalog, provider, Snapshot{ConfiguredGame: game, AgentConfigPath: actualPath, Model: &summary}, commit)
 }
 func (r *Runtime) gameSetupAllowed() error {
 	r.mu.RLock()
@@ -452,7 +470,7 @@ func (r *Runtime) ModelSetupAllowed() error {
 		return &config.Error{Code: "setup_blocked", Err: errors.New(snapshot.Reason)}
 	}
 	if snapshot.Ready {
-		return &config.Error{Code: "already_configured", Err: errors.New("changing the model requires a restart")}
+		return nil
 	}
 	if snapshot.ReasonCode != "model_configuration_required" && snapshot.ReasonCode != "initialization_failed" {
 		return &config.Error{Code: snapshot.ReasonCode, Err: errors.New(snapshot.Reason)}
@@ -465,20 +483,27 @@ func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
 	if err := r.ModelSetupAllowed(); err != nil {
 		return err
 	}
-	// Revalidate disk assets after a potentially slow HTTP model probe.
-	if err := r.configureLocked(); err == nil {
-		return &config.Error{Code: "already_configured", Err: errors.New("the agent core is already configured")}
-	}
-	if err := r.ModelSetupAllowed(); err != nil {
-		return err
-	}
 	if strings.TrimSpace(setup.Provider) == "" {
 		return errors.New("a model provider is required")
 	}
 	if strings.TrimSpace(setup.APIKey) == "" {
 		return errors.New("an API key is required")
 	}
-	secretPath := filepath.Join(r.layout.SecretsDir(), modelSecretFile)
+	game, err := r.readSelection()
+	if err != nil {
+		return err
+	}
+	cfg, catalog, path, err := r.loadGame(game.ID)
+	if err != nil {
+		return err
+	}
+	secretPath := filepath.Join(r.layout.SecretsDir(), idgen.New("model")+".key")
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(secretPath)
+		}
+	}()
 	if err := secret.Write(secretPath, setup.APIKey); err != nil {
 		return fmt.Errorf("store the API key: %w", err)
 	}
@@ -507,12 +532,28 @@ func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
 	if err != nil {
 		return fmt.Errorf("encode the model configuration: %w", err)
 	}
-	if err := config.WriteFile(r.modelPath, append(document, '\n')); err != nil {
-		return fmt.Errorf("write the model configuration: %w", err)
+	stagePath := r.modelPath + "." + idgen.New("candidate")
+	defer os.Remove(stagePath)
+	if err := config.WriteFile(stagePath, append(document, '\n')); err != nil {
+		return err
 	}
-
-	_ = r.configureLocked()
-	return nil
+	provider, _, err := llm.NewProviderFromConfigFile(stagePath)
+	if err != nil {
+		return err
+	}
+	summary, err := llm.DescribeConfig(stagePath)
+	if err != nil {
+		return err
+	}
+	next := Snapshot{ConfiguredGame: game, AgentConfigPath: path, Model: &summary}
+	err = r.replaceLocked(cfg, catalog, provider, next, func() error {
+		if err := config.WriteFile(r.modelPath, append(document, '\n')); err != nil {
+			return err
+		}
+		committed = true
+		return nil
+	})
+	return err
 }
 
 // HandleEvent serves one adapter GameEvent. When the core is not configured the
@@ -580,6 +621,7 @@ func (r *Runtime) Close() error {
 	bundle := r.bundle
 	r.mu.Unlock()
 	var result error
+	r.streams.Close()
 	if bundle != nil {
 		result = closeBundle(bundle)
 	}
@@ -619,7 +661,10 @@ func modelReason(path string, err error) string {
 	return fmt.Sprintf("model configuration at %s is unusable: %v", path, err)
 }
 func closeBundle(bundle *runtimeBundle) error {
-	result := bundle.gateway.Close(context.Background())
+	var result error
+	if bundle.gateway != nil {
+		result = bundle.gateway.Close(context.Background())
+	}
 	if bundle.taskStore != nil {
 		result = errors.Join(result, bundle.taskStore.Close())
 	}

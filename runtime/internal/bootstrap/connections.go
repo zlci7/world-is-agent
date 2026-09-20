@@ -14,9 +14,20 @@ type ConnectionError struct {
 	Message        string `json:"message"`
 }
 
-// Connect chooses one complete runtime bundle after Hello. The bundle remains
-// fixed for this stream, including when the next launch's game is changed.
+// Connect binds the complete RPC to the generation chosen before Hello.
 func (r *Runtime) Connect(stream protocol.GameAgentGateway_ConnectServer) error {
+	r.mu.RLock()
+	streams, bundle := r.streams, r.bundle
+	expected := ""
+	if r.snapshot.Ready && r.snapshot.LoadedGame != nil {
+		expected = r.snapshot.LoadedGame.ID
+	}
+	r.mu.RUnlock()
+	return streams.Run(stream, func(stream protocol.GameAgentGateway_ConnectServer) error {
+		return r.connect(stream, bundle, expected)
+	})
+}
+func (r *Runtime) connect(stream protocol.GameAgentGateway_ConnectServer, bundle *runtimeBundle, expected string) error {
 	first, err := stream.Recv()
 	if err != nil {
 		return err
@@ -26,12 +37,8 @@ func (r *Runtime) Connect(stream protocol.GameAgentGateway_ConnectServer) error 
 		return fmt.Errorf("expected adapter hello as first message")
 	}
 	r.mu.Lock()
-	bundle := r.bundle
-	expected, code, message := "", "", ""
-	if r.snapshot.LoadedGame != nil {
-		expected = r.snapshot.LoadedGame.ID
-	}
-	if !r.snapshot.Ready || bundle == nil {
+	code, message := "", ""
+	if expected == "" || bundle == nil {
 		code, message = "runtime_not_ready", "finish Runtime setup before connecting the game"
 	} else if hello.GameId != expected {
 		code, message = "game_mismatch", fmt.Sprintf("Runtime loaded game %q; adapter reported %q", expected, hello.GameId)

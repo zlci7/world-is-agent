@@ -8,7 +8,7 @@ import (
 	"gameagent/runtime/internal/bootstrap"
 )
 
-func TestSelectionInitializesOnceAndRestartLoadsNextGame(t *testing.T) {
+func TestSelectionAppliesImmediatelyAndRestartRetainsGame(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, "model.json", validModelConfig)
 	r, err := bootstrap.Open(root, stubEnv(nil))
@@ -32,11 +32,11 @@ func TestSelectionInitializesOnceAndRestartLoadsNextGame(t *testing.T) {
 	if err := r.SelectGame("stardew-valley"); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Snapshot(); !got.Ready || !got.RestartRequired || got.LoadedGame.ID != "rimworld" || got.ConfiguredGame.ID != "stardew-valley" {
+	if got := r.Snapshot(); !got.Ready || got.RestartRequired || got.LoadedGame.ID != "stardew-valley" || got.ConfiguredGame.ID != "stardew-valley" {
 		t.Fatalf("next selection: %+v", got)
 	}
-	if r.HistoryStore() != originalHistory || r.AgentConfig().Task.Enabled {
-		t.Fatal("selection replaced live components")
+	if r.HistoryStore() == originalHistory || !r.AgentConfig().Task.Enabled {
+		t.Fatal("selection did not replace live components")
 	}
 	if err := r.SelectGame("rimworld"); err != nil {
 		t.Fatal(err)

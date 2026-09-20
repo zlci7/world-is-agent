@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"fmt"
+	"gameagent/runtime/internal/llm"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,12 +12,7 @@ import (
 	"gameagent/runtime/internal/dataroot"
 )
 
-// The commit writes the credential and the configuration that references it and
-// then installs a core from them. Two submissions that both pass the
-// not-yet-configured check would both write, and the core that ends up running
-// could be reading a credential the other one replaced: the check and the install
-// have to be one commit, not two steps that happen to be adjacent.
-func TestConcurrentModelConfigurationsCommitOnce(t *testing.T) {
+func TestConcurrentModelConfigurationsCommitCoherently(t *testing.T) {
 	const contenders = 8
 
 	root := t.TempDir()
@@ -62,8 +58,8 @@ func TestConcurrentModelConfigurationsCommitOnce(t *testing.T) {
 			winners = append(winners, index)
 		}
 	}
-	if len(winners) != 1 {
-		t.Fatalf("%d of %d concurrent commits succeeded, want exactly one: %v", len(winners), contenders, results)
+	if len(winners) != contenders {
+		t.Fatalf("%d of %d concurrent commits succeeded, want every serialized commit: %v", len(winners), contenders, results)
 	}
 
 	// The invariant is not which submission won but that the two files agree:
@@ -74,7 +70,11 @@ func TestConcurrentModelConfigurationsCommitOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the model configuration: %v", err)
 	}
-	stored, err := os.ReadFile(filepath.Join(runtime.Layout().SecretsDir(), "model.key"))
+	cfg, err := llm.LoadConfig(runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(filepath.Join(filepath.Dir(runtime.ModelConfigPath()), strings.TrimPrefix(cfg.APIKey, "file:")))
 	if err != nil {
 		t.Fatalf("read the stored credential: %v", err)
 	}

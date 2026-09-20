@@ -22,6 +22,8 @@ import (
 type Server struct {
 	protocolv1alpha2.UnimplementedGameAgentGatewayServer
 
+	streams         StreamGroup
+	closeErr        error
 	agentLoop       eventHandler
 	worlds          *WorldRegistry
 	dispatcher      *task.Dispatcher
@@ -90,14 +92,16 @@ func (s *Server) StopTaskAdmission() {
 }
 
 func (s *Server) Close(ctx context.Context) error {
+	s.streams.Stop()
 	s.StopTaskAdmission()
+	s.streams.Close()
 	s.mu.Lock()
 	connections := make([]*worldConnection, 0, len(s.connections))
 	for c := range s.connections {
 		connections = append(connections, c)
 	}
 	s.mu.Unlock()
-	var result error
+	result := s.closeErr
 	for _, c := range connections {
 		result = errors.Join(result, s.closeConnection(ctx, c))
 	}
@@ -119,6 +123,13 @@ func (s *Server) closeConnection(ctx context.Context, c *worldConnection) error 
 // 它先完成 Environment Bootstrap，发现 Adapter 提供的 capabilities，
 // 然后进入 recvLoop 持续分发 GameEvent / Observation / ActionResult。
 func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer) error {
+	return s.streams.Run(stream, s.connect)
+}
+
+func (s *Server) connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer) error {
+	backgroundCtx, cancelBackground := context.WithCancel(stream.Context())
+	var background sync.WaitGroup
+	defer func() { cancelBackground(); background.Wait() }()
 	firstMessage, err := stream.Recv()
 	if err != nil {
 		return err
@@ -215,6 +226,9 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 	defer func() {
 		if err := s.closeConnection(context.Background(), connection); err != nil {
 			log.Printf("task disconnect: %s", logSafeError(err))
+			s.mu.Lock()
+			s.closeErr = errors.Join(s.closeErr, err)
+			s.mu.Unlock()
 		}
 		s.mu.Lock()
 		delete(s.connections, connection)
@@ -269,7 +283,11 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 					return err
 				}
 				if s.worlds.takeSaveReobserve(head.Binding.World) {
-					go s.reobserveSavedOperations(context.WithoutCancel(stream.Context()), head, payload.WorldBinding.GetEntities())
+					background.Add(1)
+					go func() {
+						defer background.Done()
+						s.reobserveSavedOperations(backgroundCtx, head, payload.WorldBinding.GetEntities())
+					}()
 				}
 			}
 		case *protocolv1alpha2.AdapterMessage_WorldClock:

@@ -2,16 +2,25 @@ package bootstrap_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/bootstrap"
+	"gameagent/runtime/internal/dataroot"
+	"gameagent/runtime/internal/memory"
+	"gameagent/runtime/internal/session"
+	"gameagent/runtime/internal/task"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	"path/filepath"
 )
 
 func TestConnectRejectsBeforeReadyWithoutStartingCapabilityDiscovery(t *testing.T) {
@@ -117,18 +126,18 @@ func TestConnectCountsOnlyCompletedLiveHandshakesAndClearsLastErrorOnSuccess(t *
 	_, _ = second.Recv()
 }
 
-func TestConnectAdmissionUsesLoadedGameAfterNextGameIsConfigured(t *testing.T) {
+func TestConnectAdmissionUsesAppliedGame(t *testing.T) {
 	runtime := readyRuntime(t, "rimworld")
 	if err := runtime.SelectGame("stardew-valley"); err != nil {
 		t.Fatal(err)
 	}
-	if got := runtime.Snapshot(); got.LoadedGame.ID != "rimworld" || got.ConfiguredGame.ID != "stardew-valley" || !got.RestartRequired {
+	if got := runtime.Snapshot(); got.LoadedGame.ID != "stardew-valley" || got.ConfiguredGame.ID != "stardew-valley" || got.RestartRequired {
 		t.Fatalf("snapshot after selection = %+v", got)
 	}
 	client, cleanup := runtimeGatewayClient(t, runtime)
 	defer cleanup()
 
-	stream, cancel := connectRuntimeReady(t, client, "rimworld", "loaded-game")
+	stream, cancel := connectRuntimeReady(t, client, "stardew-valley", "loaded-game")
 	defer cancel()
 	waitConnectionCount(t, runtime, 1)
 	_ = stream
@@ -241,4 +250,210 @@ func waitConnectionCount(t *testing.T, runtime *bootstrap.Runtime, want int) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("connection count = %d, want %d; snapshot = %+v", runtime.Snapshot().ConnectionCount, want, runtime.Snapshot())
+}
+
+func TestLiveReplacementRetiresIdleAndPartialHandshakeStreams(t *testing.T) {
+	runtime := readyRuntime(t, "rimworld")
+	client, cleanup := runtimeGatewayClient(t, runtime)
+	defer cleanup()
+	idle, cancel := connectRuntimeReady(t, client, "rimworld", "idle")
+	defer cancel()
+	waitConnectionCount(t, runtime, 1)
+	partial := openRuntimeStream(t, client, "rimworld", "partial")
+	recvRuntime(t, partial)
+	recvRuntime(t, partial)
+	if err := runtime.SelectGame("stardew-valley"); err != nil {
+		t.Fatal(err)
+	}
+	for _, stream := range []protocol.GameAgentGateway_ConnectClient{idle, partial} {
+		done := make(chan error, 1)
+		go func() { _, err := stream.Recv(); done <- err }()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("retired stream accepted messages")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("retired stream remained open")
+		}
+	}
+	replacement, stop := connectRuntimeReady(t, client, "stardew-valley", "replacement")
+	defer stop()
+	_ = replacement
+	waitConnectionCount(t, runtime, 1)
+}
+
+func TestReadyModelReplacementRequiresNewCredentialAndPreservesReadyOnValidationFailure(t *testing.T) {
+	runtime := readyRuntime(t, "rimworld")
+	before := runtime.HistoryStore()
+	if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "fake", Model: "second", APIKey: "test-new-key"}); err != nil {
+		t.Fatal(err)
+	}
+	if !runtime.Ready() || runtime.Snapshot().Model.Model != "second" || runtime.HistoryStore() == before {
+		t.Fatal("model replacement not published")
+	}
+	for _, setup := range []bootstrap.ModelSetup{{Provider: "fake", Model: "third"}, {Provider: "unsupported", APIKey: "test-bad-key"}} {
+		if err := runtime.ApplyModelConfiguration(setup); err == nil {
+			t.Fatal("invalid candidate accepted")
+		}
+		if !runtime.Ready() || runtime.Snapshot().Model.Model != "second" {
+			t.Fatal("invalid candidate disrupted runtime")
+		}
+	}
+}
+
+func TestLiveReplacementCancelsActiveTurnAndPreservesTerminalHistory(t *testing.T) {
+	runtime := readyRuntime(t, "rimworld")
+	client, cleanup := runtimeGatewayClient(t, runtime)
+	defer cleanup()
+	stream, cancel := connectRuntimeReady(t, client, "rimworld", "active")
+	defer cancel()
+	event := &protocol.GameEvent{EventId: "live-turn", EventType: "interaction", WorldId: "test-world", TargetEntityId: "colonist", Entities: []*protocol.EntityRef{{EntityId: "colonist", EntityType: "colonist", DefinitionId: "archetype:colonist"}}}
+	if err := stream.Send(&protocol.AdapterMessage{MessageId: "event", Payload: &protocol.AdapterMessage_Event{Event: event}}); err != nil {
+		t.Fatal(err)
+	}
+	if recvRuntime(t, stream).GetEventAck().GetStatus() != protocol.EventAckStatus_EVENT_ACK_STATUS_ACCEPTED {
+		t.Fatal("event not accepted")
+	}
+	if recvRuntime(t, stream).GetObserve() == nil {
+		t.Fatal("turn did not start")
+	}
+	started := time.Now()
+	if err := runtime.SelectGame("stardew-valley"); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(started) > 2*time.Second {
+		t.Fatal("switch waited for observe timeout")
+	}
+	if err := runtime.SelectGame("rimworld"); err != nil {
+		t.Fatal(err)
+	}
+	store := runtime.HistoryStore()
+	snapshot, err := store.BeginHistorySnapshot(context.Background(), session.AgentSessionKey{GameID: "rimworld", WorldID: "test-world", EntityID: "colonist"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.ReleaseHistorySnapshot(snapshot)
+	page, err := store.ReadHistorySnapshot(context.Background(), snapshot, 0, memory.HistoryReadLimits{Records: 10, Bytes: 1 << 20})
+	if err != nil || len(page.Sources) != 1 {
+		t.Fatalf("terminal history missing: %+v %v", page, err)
+	}
+	if page.Sources[0].Batch.Event.ID != "live-turn" || page.Sources[0].Batch.Terminal.Status == "" {
+		t.Fatal("terminal history not retained")
+	}
+}
+
+func TestLiveModelReplacementUsesNewProviderForNewStream(t *testing.T) {
+	runtime := readyRuntime(t, "rimworld")
+	client, cleanup := runtimeGatewayClient(t, runtime)
+	defer cleanup()
+	type request struct {
+		Model string `json:"model"`
+		Key   string
+	}
+	requests := make(chan request, 4)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body request
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		body.Key = r.Header.Get("Authorization")
+		requests <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
+	}))
+	defer endpoint.Close()
+	var previous protocol.GameAgentGateway_ConnectClient
+	for _, name := range []string{"first", "second"} {
+		if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "deepseek", Model: name, APIKey: "test-" + name, BaseURL: endpoint.URL}); err != nil {
+			t.Fatal(err)
+		}
+		if previous != nil {
+			for {
+				msg, err := previous.Recv()
+				if err != nil {
+					break
+				}
+				if msg.GetObserve() != nil {
+					t.Fatal("retired generation requested an observation")
+				}
+			}
+		}
+		stream, cancel := connectRuntimeReady(t, client, "rimworld", name)
+		defer cancel()
+		previous = stream
+		event := &protocol.GameEvent{EventId: name, EventType: "interaction", WorldId: "model-world", TargetEntityId: "colonist", Entities: []*protocol.EntityRef{{EntityId: "colonist", EntityType: "colonist", DefinitionId: "archetype:colonist"}}}
+		if err := stream.Send(&protocol.AdapterMessage{Payload: &protocol.AdapterMessage_Event{Event: event}}); err != nil {
+			t.Fatal(err)
+		}
+		recvRuntime(t, stream)
+		observe := recvRuntime(t, stream)
+		if observe.GetObserve() == nil {
+			t.Fatal("turn did not observe")
+		}
+		if err := stream.Send(&protocol.AdapterMessage{CorrelationId: observe.MessageId, Payload: &protocol.AdapterMessage_Observation{Observation: &protocol.Observation{WorldId: "model-world", EntityId: "colonist", Revision: 1}}}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case got := <-requests:
+			if got.Model != name || got.Key != "Bearer test-"+name {
+				t.Fatalf("provider generation mismatch: %s", got.Model)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("active model was not called")
+		}
+	}
+}
+
+func TestInitialReplacementFailureRecoversStreamAdmission(t *testing.T) {
+	for _, recovery := range []string{"configure", "select-game"} {
+		t.Run(recovery, func(t *testing.T) {
+			root := t.TempDir()
+			prepareSelected(t, root, "stardew-valley")
+			writeConfig(t, root, "model.json", validModelConfig)
+			cfg, err := agent.LoadConfigFile(filepath.Join(root, "config", "games", "stardew-valley", "agent.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			options := cfg.Task.StoreOptions
+			options.Path = dataroot.ResolvePath(root, cfg.Task.DBPath)
+			conflict, err := task.OpenSQLiteStore(context.Background(), options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conflict.Close()
+			runtime, err := bootstrap.Open(root, stubEnv(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer runtime.Close()
+			if got := runtime.Snapshot(); got.Ready || got.ReasonCode != "initialization_failed" {
+				t.Fatalf("startup did not expose task lock conflict: %+v", got)
+			}
+			if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "fake", Model: "candidate", APIKey: "test-candidate-key"}); err == nil {
+				t.Fatal("replacement ignored task lock conflict")
+			}
+			if got := runtime.Snapshot(); got.State != bootstrap.StateNeedsConfiguration || got.Ready {
+				t.Fatalf("failure is not recoverable: %+v", got)
+			}
+			if err := conflict.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if recovery == "configure" {
+				err = runtime.Configure()
+			} else {
+				err = runtime.SelectGame("stardew-valley")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !runtime.Ready() {
+				t.Fatal(runtime.Reason())
+			}
+			client, cleanup := runtimeGatewayClient(t, runtime)
+			defer cleanup()
+			stream, cancel := connectRuntimeReady(t, client, "stardew-valley", "recovered")
+			defer cancel()
+			_ = stream
+			waitConnectionCount(t, runtime, 1)
+		})
+	}
 }

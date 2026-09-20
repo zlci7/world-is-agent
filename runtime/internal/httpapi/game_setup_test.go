@@ -42,7 +42,7 @@ func TestGameSelectionStatusAndSecurity(t *testing.T) {
 	}
 }
 
-func TestGameSelectionWithModelAndRestartStatus(t *testing.T) {
+func TestGameSelectionWithModelAppliesImmediately(t *testing.T) {
 	f := newFixture(t, nil)
 	cookie := f.session(t)
 	if err := os.WriteFile(f.runtime.ModelConfigPath(), []byte(`{"provider":"fake"}`), 0600); err != nil {
@@ -61,7 +61,7 @@ func TestGameSelectionWithModelAndRestartStatus(t *testing.T) {
 		t.Fatal(second.Body.String())
 	}
 	status = decodeBody[map[string]any](t, second)
-	if status["restart_required"] != true || status["loaded_game"].(map[string]any)["id"] != "rimworld" || status["configured_game"].(map[string]any)["id"] != "stardew-valley" {
+	if status["restart_required"] != false || status["loaded_game"].(map[string]any)["id"] != "stardew-valley" || status["configured_game"].(map[string]any)["id"] != "stardew-valley" {
 		t.Fatalf("next: %+v", status)
 	}
 }

@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gameagent/runtime/internal/bootstrap"
 	"gameagent/runtime/internal/dataroot"
+	"gameagent/runtime/internal/llm"
 )
 
 // providerStub answers one model request. The first-run flow only needs to know
@@ -122,7 +124,11 @@ func TestSetupModelCommitsAndReportsTheNewState(t *testing.T) {
 	if strings.Contains(string(written), "sk-from-the-wizard") {
 		t.Fatalf("the written configuration holds the credential: %s", written)
 	}
-	stored, err := os.ReadFile(filepath.Join(f.runtime.Layout().SecretsDir(), "model.key"))
+	cfg, err := llm.LoadConfig(f.runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(filepath.Join(filepath.Dir(f.runtime.ModelConfigPath()), strings.TrimPrefix(cfg.APIKey, "file:")))
 	if err != nil {
 		t.Fatalf("read the stored credential: %v", err)
 	}
@@ -323,74 +329,37 @@ func TestSetupOptionsIsNotReachableWithAPost(t *testing.T) {
 	}
 }
 
-// A running core keeps the configuration it installed. The refusal has to come
-// from the state rather than from a failed probe or a failed install, so it is
-// answered before the body is read: a malformed body still reports the state,
-// which a body-first handler would report as an invalid body instead.
-func TestSetupModelRefusesAReadyRuntimeBeforeReadingTheBody(t *testing.T) {
+func TestSetupModelUpdatesAReadyRuntimeAndRejectsInvalidBodies(t *testing.T) {
 	f := newModelFixture(t)
 	cookie := f.session(t)
-
-	recorder := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
-		"provider": "deepseek", "model": "first-model", "base_url": acceptingProvider(t).URL, "api_key": "sk-first",
-	}), cookie)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("first setup status = %d: %s", recorder.Code, recorder.Body.String())
+	for _, name := range []string{"first-model", "second-model"} {
+		response := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{"provider": "deepseek", "model": name, "base_url": acceptingProvider(t).URL, "api_key": "test-key"}), cookie)
+		if response.Code != http.StatusOK {
+			t.Fatal(response.Body.String())
+		}
+		if got := decodeBody[statusResponse](t, response); !got.Ready || got.Model.Model != name {
+			t.Fatal("model not applied")
+		}
 	}
-	firstConfig, err := os.ReadFile(f.runtime.ModelConfigPath())
-	if err != nil {
-		t.Fatal(err)
+	before, _ := os.ReadFile(f.runtime.ModelConfigPath())
+	response := f.do(t, http.MethodPost, "/api/setup/model", "{", cookie)
+	if response.Code != http.StatusBadRequest || decodeBody[errorResponse](t, response).Error.Code != "invalid_body" {
+		t.Fatal(response.Body.String())
 	}
-
-	// A body that cannot be parsed at all: the state is the reason, not the body.
-	recorder = f.do(t, http.MethodPost, "/api/setup/model", "{", cookie)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
-	}
-	response := decodeBody[errorResponse](t, recorder)
-	if response.Error.Code != "already_configured" {
-		t.Fatalf("code = %q, want already_configured", response.Error.Code)
-	}
-	if !strings.Contains(response.Error.Message, "restart") {
-		t.Fatalf("message = %q, want it to ask for a restart", response.Error.Message)
-	}
-
-	// Even a well-formed replacement is refused, and it does not reach the
-	// provider or the files.
-	replacement := acceptingProvider(t)
-	recorder = f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{
-		"provider": "deepseek", "model": "second-model", "base_url": replacement.URL, "api_key": "sk-second",
-	}), cookie)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("replacement status = %d, want 400: %s", recorder.Code, recorder.Body.String())
-	}
-	if got := decodeBody[errorResponse](t, recorder).Error.Code; got != "already_configured" {
-		t.Fatalf("replacement code = %q", got)
-	}
-	current, err := os.ReadFile(f.runtime.ModelConfigPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(current) != string(firstConfig) {
-		t.Fatalf("the configuration changed after a refused replacement:\n%s", current)
-	}
-	stored, err := os.ReadFile(filepath.Join(f.runtime.Layout().SecretsDir(), "model.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(stored)) != "sk-first" {
-		t.Fatalf("stored credential = %q, want the one that was installed", stored)
-	}
-	if !f.runtime.Ready() {
-		t.Fatal("the core stopped being ready after a refused replacement")
+	after, _ := os.ReadFile(f.runtime.ModelConfigPath())
+	if string(before) != string(after) || !f.runtime.Ready() {
+		t.Fatal("invalid body changed model")
 	}
 }
 
 func assertNoCredentialWritten(t *testing.T, f *fixture) {
 	t.Helper()
 
-	secretPath := filepath.Join(f.runtime.Layout().SecretsDir(), "model.key")
-	if _, err := os.Stat(secretPath); err == nil {
+	entries, err := os.ReadDir(f.runtime.Layout().SecretsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
 		t.Fatal("a credential was written by a request that must not write one")
 	}
 	if _, err := os.Stat(f.runtime.ModelConfigPath()); err == nil {
@@ -405,4 +374,56 @@ func newModelFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	return f
+}
+
+func TestReadyModelProbeKeepsCurrentInstanceUntilCandidateAccepted(t *testing.T) {
+	f := newModelFixture(t)
+	cookie := f.session(t)
+	first := f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{"provider": "deepseek", "model": "first", "base_url": acceptingProvider(t).URL, "api_key": "test-first-key"}), cookie)
+	if first.Code != http.StatusOK {
+		t.Fatal(first.Body.String())
+	}
+	history := f.runtime.HistoryStore()
+	before, _ := os.ReadFile(f.runtime.ModelConfigPath())
+	entered, release := make(chan struct{}), make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if r.Header.Get("Authorization") != "Bearer test-second-key" || body.Model != "second" {
+			t.Error("probe did not receive submitted candidate")
+		}
+		close(entered)
+		<-release
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid key"}}`))
+	}))
+	defer provider.Close()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- f.do(t, http.MethodPost, "/api/setup/model", setupBody(map[string]any{"provider": "deepseek", "model": "second", "base_url": provider.URL, "api_key": "test-second-key"}), cookie)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("probe did not begin")
+	}
+	if !f.runtime.Ready() || f.runtime.HistoryStore() != history || f.runtime.Snapshot().Model.Model != "first" {
+		t.Error("probe disrupted current instance")
+	}
+	during, _ := os.ReadFile(f.runtime.ModelConfigPath())
+	if string(before) != string(during) {
+		t.Error("probe changed disk configuration")
+	}
+	close(release)
+	response := <-done
+	if response.Code != http.StatusBadRequest {
+		t.Fatal(response.Body.String())
+	}
+	after, _ := os.ReadFile(f.runtime.ModelConfigPath())
+	if string(before) != string(after) || f.runtime.HistoryStore() != history || !f.runtime.Ready() {
+		t.Fatal("failed probe changed current instance")
+	}
 }

@@ -293,13 +293,13 @@ func TestApplyModelConfigurationMakesAFreshRootReady(t *testing.T) {
 	if err := json.Unmarshal(written, &document); err != nil {
 		t.Fatalf("parse the written configuration: %v", err)
 	}
-	if reference, _ := document["api_key"].(string); reference != "file:../secrets/model.key" {
+	if reference, _ := document["api_key"].(string); !strings.HasPrefix(reference, "file:../secrets/model_") {
 		t.Fatalf("api_key = %q, want a relative reference to the secret", reference)
 	}
 
 	// And it resolves: the credential is readable where the configuration says.
-	layout := runtime.Layout()
-	value, err := secret.Read(filepath.Join(layout.SecretsDir(), "model.key"))
+	reference := strings.TrimPrefix(document["api_key"].(string), "file:")
+	value, err := secret.Read(filepath.Join(filepath.Dir(runtime.ModelConfigPath()), reference))
 	if err != nil {
 		t.Fatalf("read the stored credential: %v", err)
 	}
@@ -314,41 +314,28 @@ func TestApplyModelConfigurationMakesAFreshRootReady(t *testing.T) {
 	}
 }
 
-func TestApplyModelConfigurationRefusesToReplaceARunningCore(t *testing.T) {
-	root := t.TempDir()
-	runtime, err := bootstrap.Open(root, stubEnv(nil))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	defer runtime.Close()
-	if err := runtime.SelectGame("rimworld"); err != nil {
+func TestApplyModelConfigurationReplacesARunningCore(t *testing.T) {
+	runtime := readyRuntime(t, "rimworld")
+	if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "deepseek", Model: "first", APIKey: "test-first"}); err != nil {
 		t.Fatal(err)
 	}
-
-	if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "deepseek", Model: "first-model", APIKey: "sk-first"}); err != nil {
-		t.Fatalf("first ApplyModelConfiguration: %v", err)
-	}
-	before, err := os.ReadFile(runtime.ModelConfigPath())
+	first, err := llm.LoadConfig(runtime.ModelConfigPath())
 	if err != nil {
-		t.Fatalf("read the configuration: %v", err)
+		t.Fatal(err)
 	}
-
-	// Configure is a no-op once a real core is installed, so writing here would
-	// leave the files and the running core disagreeing.
-	err = runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "deepseek", Model: "second-model", APIKey: "sk-second"})
-
-	if err == nil {
-		t.Fatal("a second configuration replaced a running core")
+	if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "deepseek", Model: "second", APIKey: "test-second"}); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "restart") {
-		t.Fatalf("error = %v, want it to say a restart is needed", err)
+	second, err := llm.LoadConfig(runtime.ModelConfigPath())
+	if err != nil {
+		t.Fatal(err)
 	}
-	after, readErr := os.ReadFile(runtime.ModelConfigPath())
-	if readErr != nil {
-		t.Fatalf("re-read the configuration: %v", readErr)
+	if first.APIKey == second.APIKey || second.Model != "second" || runtime.Snapshot().Model.Model != "second" {
+		t.Fatal("replacement credential or model not committed")
 	}
-	if string(before) != string(after) {
-		t.Fatal("the refused call still changed the configuration")
+	oldKey, err := secret.Read(filepath.Join(filepath.Dir(runtime.ModelConfigPath()), strings.TrimPrefix(first.APIKey, "file:")))
+	if err != nil || oldKey != "test-first" {
+		t.Fatal("replacement overwrote previous credential")
 	}
 }
 

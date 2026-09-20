@@ -364,7 +364,11 @@ func (e *streamEnvironment) sendGuarded(ctx context.Context, msg *protocolv1alph
 			return io.EOF
 		default:
 		}
-		go func() { defer func() { <-e.sendSlot }(); result <- e.stream.Send(msg) }()
+		finish := func() {}
+		if owner, ok := e.stream.(interface{ beginSend() func() }); ok {
+			finish = owner.beginSend()
+		}
+		go func() { defer finish(); defer func() { <-e.sendSlot }(); result <- e.stream.Send(msg) }()
 		return nil
 	}
 	var err error
