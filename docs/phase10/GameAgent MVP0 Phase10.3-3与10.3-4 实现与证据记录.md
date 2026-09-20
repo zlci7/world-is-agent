@@ -35,9 +35,10 @@ scripts/install-rimworld-adapter.ps1                        白名单增加 Patc
      ✅ 绑定：EntityRef.definition_id 固定为 archetype:colonist（ProtocolMapper.ColonistDefinitionId）
 
      ✅ 正向实机：gizmo 出现在玩家自己的殖民者身上，且 Runtime 连接时可用、断开时置灰并给出原因
-     ⚠️ 负向未直接观测：验收用的殖民地地图上没有敌人、囚犯或访客，因此"他们身上没有 gizmo"
-        这件事本次没有被观察到，它目前只有代码层面的保证（CompGetGizmosExtra 自己判 eligibility，
-        而不是依赖 comp 挂在哪个 def 上）。补测需要一局带囚犯或袭击的存档。
+     ⬜ 负向未验证，**经用户决定不再要求**：验收过程中始终没有一局带囚犯、访客或袭击者的存档，
+        因此"他们身上没有 gizmo"没有被观察到。这一条以代码保证为准——`WiaDialogueComp.
+        CompGetGizmosExtra()` 自己判 eligibility，不依赖 comp 挂在哪个 def 上——但它**不是**
+        实机已验证项，本文不把它记成已验证。若将来引入一局带囚犯的存档，补一次即可闭合。
 
 10   两个 Pawn 的 Context 中实例 traits/背景互不串扰（以 Context trace 为准）
      ✅ 三个实体各自产生独立 turn，trace 中每条记录都带自己的 entity_id
@@ -367,7 +368,26 @@ docs/STATUS.md 的 Automatic reconnect 一行仍写 "future work"，
 ```text
 退出条件 6 的远行队部分   已闭合：Map → 远行队 → Map 一次完整往返，entity_id 不变，
                           证据见 10.3-2 实机验收记录 §4
-退出条件 9 的负向         仍需要地图上存在囚犯或袭击者
+退出条件 9 的负向         未验证，经用户决定不再要求（见 §9）
 ```
 
-退出条件 9 负向的实机步骤见仓库外的 `wia-103-remaining-tests.md` §4，由用户在实机执行后补齐证据。
+## 9. 验收结论
+
+用户于 2026-09-20 复核后决定：**10.3 认定验收通过**，条件 9 的负向部分不再要求。
+
+这里如实区分两件事：**豁免不是验证**。条件 9 的负向没有实机证据，它在本文与
+`docs/STATUS.md` 中都记为未覆盖，只是不再作为 10.3 的阻塞项。
+
+```text
+10.3-1  Skeleton                ✅ 实机验收
+10.3-2  Identity + Time         ✅ 实机验收（条件 5–8 全部闭合）
+10.3-3  Instance Projection     ✅ 实机验收（条件 12、13 离线证；10、11 结构性证据；
+                                   9 负向未验证且豁免）
+10.3-4  Dialogue                ✅ 实机验收（条件 14–18 全部闭合）
+
+跨阶段不变量
+        Runtime 的 Go 代码与 protocol  本轮零 game-specific 改动
+        tool_policy 的第二消费者        已成立，结论继续保留在 extensions（方案 §9.3）
+```
+
+据此 **Phase10.3 Second Real Game Adapter — Accepted**，下一步进入 10.4 Game Profile Selection。
