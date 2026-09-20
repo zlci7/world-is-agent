@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**，条件 9 负向未验证并经用户决定豁免；**10.4 Game Profile 选择与 10.5 官方 Adapter 仓库拆分已完成实现及自动验证，用户 CR 与联合实机产品验收待完成**（[10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)、[10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)）；GitHub 上传未执行；10.6 未开工
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**，条件 9 负向未验证并经用户决定豁免；**10.4 Game Profile 选择与 10.5 官方 Adapter 仓库拆分已完成实现及自动验证，用户报告游戏实机基线测试通过**（[10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)、[10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)）；两个仓库源码已推送 GitHub；运行中游戏切换与模型设置按 [Live Settings 规格](../superpowers/specs/2026-09-20-runtime-live-settings.md) 开发验收；10.6 未开工
 > **Date:** 2026-09-20
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用

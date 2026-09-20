@@ -48,6 +48,9 @@ What you need
 
 The Runtime checks the key with the provider before it saves anything, so a
 wrong key is reported on the page and nothing is written to disk.
+Use Model settings to change the provider or model while the Runtime is running.
+Supply an API key for each update. Enter a custom base URL when needed; an empty
+base URL uses the provider default. A failed check keeps the current model.
 
 
 Connecting the game
@@ -60,7 +63,7 @@ game in the console and wait for Ready before starting it.
 For Stardew Valley:
 
   1. Install SMAPI (https://smapi.io) if you have not already.
-  2. Build or package the Stardew adapter from the separate local
+  2. Build or package the Stardew adapter from the official
      world-is-agent-adapters repository, under stardew-valley, and install its
      output as a mod folder so that
      Mods\GameAgentStardew\manifest.json exists. The adapter is built from
@@ -79,8 +82,10 @@ RimWorld is supported by the separate adapter repository's rimworld project.
 Its adapter is installed as a RimWorld mod and is Windows x64 only. Each game
 directory contains its own build, package, and installation instructions.
 
-One Runtime process loads one game. Choosing another game while Ready saves it
-as Next Game; the current game stays active until the Runtime restarts. An
+Use Stardew Adapter 0.1.1 or RimWorld Adapter 0.1.0 for automatic reconnection.
+
+One Runtime process loads one game at a time. Switch game applies another
+profile immediately, cancels active turns and retains recorded history. An
 adapter for another game is rejected. Multiple adapters for the current game may
 connect as separate sessions, but that does not make concurrent writes to one
 save safe.
@@ -112,7 +117,7 @@ choose a data root on a filesystem that supports hard links.
 Status and limits
 -----------------
 
-This is an experimental 0.1.0 build. The console shows runtime state and a
+This is an experimental 0.2.0 build. The console shows runtime state and a
 summary of recent agent turns; it does not yet offer per-turn detail, task or
 memory views, or dependency diagnostics. See docs/STATUS.md in the repository
 for the current validation scope and known limits.

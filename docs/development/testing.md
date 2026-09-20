@@ -120,19 +120,19 @@ Each game also provides `tests/check-standalone-build.ps1`. It copies only that 
 
 For dialogue validation, confirm the NPC line appears through Stardew's native dialogue flow, then reply choices or free text appear afterward.
 
-## Joint Phase 10.4/10.5 Real-Game Acceptance
+## Live Settings Real-Game Acceptance
 
-Use one dedicated data root and record status, Runtime logs, adapter logs, and turn traces. This remains manual acceptance; automated tests do not establish it.
+The user reported the Phase10.4/10.5 real-game baseline passed. The following checks validate the live-settings build. Use Runtime 0.2.0, Stardew Adapter 0.1.1, and the existing RimWorld Adapter with a dedicated data root. Record Runtime and adapter logs plus `data/traces.jsonl`.
 
-1. With an empty root, choose Stardew Valley, configure the model, reach Ready, then start Stardew and complete one turn. Confirm Current Game is Stardew Valley with one connection.
-2. While Ready, choose RimWorld. Confirm Next Game is RimWorld and restart is required, while Stardew stays connected and can complete another turn with the loaded Stardew profile.
-3. Restart the Runtime, reach Ready, start RimWorld, and complete a colonist dialogue turn. Confirm Current Game is RimWorld and no Next Game is shown.
-4. Repeat the switch in the other direction: save Stardew while RimWorld is Ready, confirm RimWorld remains active until restart, restart, and complete a Stardew turn.
-5. For each loaded game, connect a second adapter reporting the same `game_id`. Confirm both streams complete bootstrap and the connection count increases. They are separate EnvironmentSessions; this does not guarantee safe concurrent writes to one save.
-6. Connect or simulate an adapter for the other game. Confirm `game_mismatch`, no `EnvironmentReady` or capability discovery, no active connection, and no event or task work.
-7. Connect before Ready. Confirm `runtime_not_ready` and zero active connections. Once Ready, establish a new connection: RimWorld retries every five seconds; Stardew uses `gameagent_runtime_reconnect` or a game restart.
+1. Choose Stardew Valley, configure a model and wait for Ready. Start Stardew and complete one dialogue turn. Confirm Current Game and the live connection match.
+2. While a turn is active, switch to RimWorld. Confirm that the turn is canceled, its recorded history remains, the Runtime PID and console URL stay unchanged, and Ready reports RimWorld without a restart prompt.
+3. Start RimWorld and complete a colonist dialogue. Switch back to Stardew while both games remain open. The matching Stardew adapter reconnects automatically and can complete another turn; the other game is rejected with `game_mismatch`.
+4. Open Model settings while Ready. Confirm the existing provider and model are shown, no key is filled, and Cancel leaves the configuration unchanged. Enter the new model, key and any custom base URL. Save; the Runtime checks the candidate, replaces the active instance, and the adapter reconnects. Confirm the next dialogue uses the new model.
+5. Submit an invalid key. Confirm a readable error, the form remains editable, and the old model can still complete a dialogue. Closing the form clears the typed key.
+6. Refresh the console and restart the Runtime once. Confirm the selected game and model persist, and the key is absent from browser-visible status and traces.
+7. Connect before Ready and during reconfiguration: neither admits game work. Matching adapters reconnect after Ready. Same-game streams remain separate EnvironmentSessions; this does not guarantee concurrent writes to the same save.
 
-Use the adapters built and installed from the independent Adapter repository. Keep earlier Stardew and RimWorld observations as dated adapter baselines; they do not replace this final combined acceptance.
+Automatic retry repeats the Protocol bootstrap and world binding; it does not replay an interrupted ordinary turn. Actual game dialogue and action reset require these focused real-game checks in addition to automated lifecycle tests.
 
 ## Architecture Check
 

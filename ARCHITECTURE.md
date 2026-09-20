@@ -167,7 +167,7 @@ Current architecture limits:
 - Same-agent FIFO scheduling is validated within one live EnvironmentSession.
 - Cross-stream recovery and durable continuation are future work.
 - Memory is independent of the game save: records from an abandoned branch can become visible again when comparable game time catches up.
-- One Runtime process loads one Game Profile; a saved profile change takes effect after restart.
+- One Runtime process loads one Game Profile at a time. Game and model changes retire the current instance, cancel its turns and streams, drain owned work, and publish a complete replacement without restarting the process. Connections and event handlers remain bound to their instance generation.
 - Multiple same-game streams are separate EnvironmentSessions and do not provide a concurrent same-save write guarantee.
 
 ## Further Reading

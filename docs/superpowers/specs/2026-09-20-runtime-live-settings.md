@@ -4,7 +4,7 @@
 
 The console applies a selected game and model configuration in the running Runtime. HTTP and gRPC listeners retain their addresses and the browser session remains valid. One game is active at a time. Switching immediately cancels active turns and preserves recorded history. No manual Runtime restart is required.
 
-A model settings button is available after initial setup. The form shows the configured provider, model and base URL without exposing a credential. Each submission supplies an API key and probes the exact candidate before applying it. Invalid credentials or an unsuccessful probe leave the active configuration unchanged. Provider choices remain the existing supported providers; no multi-model routing is added.
+A model settings button is available after initial setup. The form shows the configured provider and model without exposing a credential. A custom base URL is entered explicitly for each submission; an empty input selects the provider default. Persisted base URLs are not returned because they can contain credentials. Each submission supplies an API key and probes the exact candidate before applying it. Invalid credentials or an unsuccessful probe leave the active configuration unchanged. Provider choices remain the existing supported providers; no multi-model routing is added.
 
 ## Runtime ownership
 

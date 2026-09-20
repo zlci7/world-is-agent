@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10.4 Game Profile 选择与多游戏产品形态技术方案
 
-> 方案状态：Accepted for Implementation；10.4 实现、自动验证与用户 CR 完成，待 10.4 + 10.5 联合实机验收。
+> 方案状态：10.4 实现、自动验证与用户 CR 完成；用户报告 10.4/10.5 游戏实机基线测试通过。本文保留重启切换的阶段设计；当前运行中切换与模型设置以 [Live Settings 规格](../superpowers/specs/2026-09-20-runtime-live-settings.md) 为准。
 > 日期：2026-09-20。
 > 前置：10.3 已正式 Accepted，条件 9 的负向部分未验证且经用户决定豁免，见 [10.3 验收记录](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)。
 > 上位文档：[Phase10 总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)。

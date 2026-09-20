@@ -35,7 +35,7 @@ world-is-agent-adapters
     stardew-valley/、rimworld/，以及实际接入时新增的其它官方 Adapter 目录。
 ```
 
-Phase A 已完成显式协议依赖、脚本参数化与脱离仓库构建验证。Phase B 已按 [10.5 官方 Adapter 仓库拆分方案](docs/phase10/GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md) 完成实现与自动验证，Stardew 与 RimWorld 已迁入独立的本地 `world-is-agent-adapters` Git 仓库。GitHub 上传、用户 CR 与 10.4/10.5 联合实机验收仍待完成。
+Phase A 已完成显式协议依赖、脚本参数化与脱离仓库构建验证。Phase B 已按 [10.5 官方 Adapter 仓库拆分方案](docs/phase10/GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md) 完成实现与自动验证，Stardew 与 RimWorld 已迁入独立的本地 `world-is-agent-adapters` Git 仓库。两个仓库源码已推送 GitHub，用户已报告 10.4/10.5 游戏实机基线测试通过。运行中切换游戏与模型配置按 [Live Settings 规格](docs/superpowers/specs/2026-09-20-runtime-live-settings.md) 实施，新增交互另行验收。
 
 - 主仓库名称为 `world-is-agent`；官方 Adapter 的本地目录为 `world-is-agent-adapters`，GitHub 远端为 `https://github.com/zlci7/world-is-agent-adapter.git`。
 - 两个仓库均以各自 `main` 分支为当前开发线；优先直接在当前 `main` 工作，不要求创建分支或 worktree。
@@ -69,7 +69,7 @@ Phase A 已完成显式协议依赖、脚本参数化与脱离仓库构建验证
 - 一个工作单元完成相关测试、直接受影响的回归、内部 CR 和 `git diff --check` 后即可继续；获得用户本地提交授权时按工作单元提交，不等待逐项人工验收。
 - 10.4 → 10.5 按已确认方案连续实施，在已授权开发范围内完成自动验证后集中进行产品验收。文档确认与实现通过分别记录，不把方案状态写成已完成能力。
 - 10.4 的配置提交、运行实例发布和关闭由一个进程级协调对象负责；HTTP 状态与 Gateway 准入使用同一份运行快照。网页可恢复的选择问题保留配置入口，当前网页无法安全恢复的故障才进入 `blocked`。
-- 一个 Runtime 进程加载一个 Game Profile，同游戏连接沿用多 EnvironmentSession 模型及既有世界所有权、generation 和重连规则。连接数量不代表存档加载或世界 Ready，不扩展同存档多实例并发写入保证。
+- 一个 Runtime 进程同一时刻加载一个 Game Profile。网页切换游戏或模型时取消当前回合并保留已记录历史，退役并排空旧实例后发布新实例；监听地址和网页会话保持不变。同游戏连接沿用多 EnvironmentSession 模型及既有世界所有权、generation 和重连规则。连接数量不代表存档加载或世界 Ready，不扩展同存档多实例并发写入保证。
 - 缺陷修复、文档一致性修正、既有行为的健壮性补强按上述方式直接完成；新增对外能力、改变产品行为或扩大范围时，先向用户确认范围与验收条件。
 - 交付时说明：改了什么、跑了哪些验证、结果如何、还有什么已知限制。内部自查与独立上下文审查应如实区分。
 - 需要实机验证的改动，交付时写清实机验证步骤和失败时的安全行为。自动化测试证明机制正确性，不替代实机结论，也不把只有 fake 通过记成实机通过。

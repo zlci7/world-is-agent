@@ -39,7 +39,7 @@ The data root must be on a filesystem that supports hard links. Profile preparat
 
 `-AgentConfig` is an explicit development override. A relative argument resolves from the repository root. If the parameter is omitted, the script respects an inherited `GAMEAGENT_AGENT_CONFIG`. Relative paths inside agent configuration continue to resolve from the data root.
 
-One process loads one profile. Selecting another game after Ready prepares and saves it, while the loaded profile remains active and the console reports that a restart is required. After restart, the saved game becomes current. Game installation paths belong to adapter build and install commands and are not collected by the Runtime console.
+One process loads one profile at a time. Selecting another game applies it in the running process: active turns are canceled, recorded history is retained, and the old connections are closed before the replacement instance is admitted. The HTTP and gRPC addresses and browser session remain valid. Model settings are available after setup; each submission requires an API key to be supplied and tests the candidate before applying it. Enter a custom base URL when needed, or leave it empty to use the provider default. A failed probe leaves the current instance unchanged. Game installation paths belong to adapter build and install commands and are not collected by the Runtime console.
 
 ## Local Client
 
@@ -63,7 +63,7 @@ Design and acceptance record: [Phase10.2-2 本地控制面](../phase10/GameAgent
 
 The Runtime is distributed as a portable package: extract it anywhere and run the executable with no arguments.
 
-Published versions are immutable. The repository still has `VERSION = 0.1.0` for local packaging; builds containing Phase 10.4 must not replace the published v0.1.0 release. The next release version will be chosen after joint Phase 10.4 and 10.5 acceptance, before updating `VERSION` and creating the release tag.
+Published versions are immutable. `VERSION = 0.2.0` identifies the live-settings acceptance build; it must not replace the published v0.1.0 archive. Publishing a release follows user acceptance.
 
 ```powershell
 .\scripts\release-runtime.ps1              # version from VERSION
@@ -84,8 +84,8 @@ Two things are deliberate. The package is staged in a temporary directory rather
 Verification is a run from outside the repository, not a unit test:
 
 ```powershell
-Expand-Archive dist/world-is-agent-v0.1.0-windows-amd64.zip -DestinationPath $env:TEMP\wia-check
-& "$env:TEMP\wia-check\world-is-agent-v0.1.0-windows-amd64\wia-runtime.exe" --data-root $env:TEMP\wia-check-root
+Expand-Archive dist/world-is-agent-v0.2.0-windows-amd64.zip -DestinationPath $env:TEMP\wia-check
+& "$env:TEMP\wia-check\world-is-agent-v0.2.0-windows-amd64\wia-runtime.exe" --data-root $env:TEMP\wia-check-root
 ```
 
 The binary must expose both embedded Game Profiles, serve the embedded client, and report the injected version on `/api/status` without any repository file, Node.js or Go on the path. A game-selection request must prepare the selected assets before the Runtime can reach Ready. `--data-root` keeps the check away from the data root a user already has; without it the Runtime uses the platform data directory.
@@ -106,7 +106,7 @@ $runtimeRoot = 'D:\src\world-is-agent'
 $protocolRepository = $runtimeRoot
 ```
 
-Each game pins its tested Protocol release in its own `protocol.version`. Both current adapter baselines are `0.1.0` and pin `protocol-v1alpha2.0`, which resolves locally to commit `950d417fcc64517d8d59c334a4cf96ec224bd61a`. Build, test, install, and release commands use explicit `ProtocolRepository` and `ProtocolDir` inputs. The source checkout can be obtained from `https://github.com/zlci7/world-is-agent.git`. Export the required tag's Protocol files; repeat this for each game if their pins differ. Tag publication belongs to the repository owner, and the required tag must be available before building.
+Each game pins its tested Protocol release in its own `protocol.version`. Stardew Adapter `0.1.1` and RimWorld Adapter `0.1.0` pin `protocol-v1alpha2.0`, which resolves locally to commit `950d417fcc64517d8d59c334a4cf96ec224bd61a`. Build, test, install, and release commands use explicit `ProtocolRepository` and `ProtocolDir` inputs. The source checkout can be obtained from `https://github.com/zlci7/world-is-agent.git`. Export the required tag's Protocol files; repeat this for each game if their pins differ. Tag publication belongs to the repository owner, and the required tag must be available before building.
 
 ```powershell
 $pin = (Get-Content -Raw -LiteralPath "$adapterRoot\stardew-valley\protocol.version").Trim()

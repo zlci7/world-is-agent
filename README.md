@@ -29,9 +29,9 @@ Extract `dist\world-is-agent-v<version>-windows-amd64.zip`, run `wia-runtime.exe
 2. Configure a model provider and API key if required.
 3. Wait for `Ready`, then start the matching game and adapter.
 
-Choosing another game while Ready saves it as **Next Game**. The current profile and active connections remain in use until the Runtime restarts.
+Choose **Switch game** to apply another profile in the running Runtime. Active turns are canceled, recorded history is retained, and the matching adapter reconnects. **Model settings** lets you change the provider, model, API key, and optional base URL; the candidate is tested before it is applied.
 
-The Runtime package does not include game adapters. Build and install them from [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter). See [Official Adapters](docs/development/guide.md#official-adapters).
+Automatic reconnection requires Stardew Adapter 0.1.1 or the current RimWorld Adapter 0.1.0. The Runtime package does not include game adapters. Build and install them from [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter). See [Official Adapters](docs/development/guide.md#official-adapters).
 
 For development, run `.\scripts\start-runtime.ps1`. It uses `WIA_DATA_ROOT` when set, otherwise `runtime/.local/runtime-data`, and does not select a game implicitly. See the [development guide](docs/development/guide.md).
 
@@ -60,7 +60,7 @@ Official adapters live in the independent [world-is-agent-adapter](https://githu
 
 ## Status
 
-Game Profile selection, multi-game Runtime bootstrap, and the official Adapter repository split are implemented with automated validation. User code review and the joint Phase 10.4/10.5 real-game acceptance are still pending. Earlier real-game observations are dated baselines and do not constitute switching acceptance for the split deliverables.
+Game Profile selection, multi-game Runtime bootstrap, and the official Adapter repository split are implemented. The user reported the Phase 10.4/10.5 real-game baseline passed. Live game switching and model settings have separate focused acceptance steps in the [testing guide](docs/development/testing.md).
 
 ## License
 
