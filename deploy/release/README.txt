@@ -60,8 +60,9 @@ game in the console and wait for Ready before starting it.
 For Stardew Valley:
 
   1. Install SMAPI (https://smapi.io) if you have not already.
-  2. Get the adapter from the World Is Agent source repository, under
-     adapters/stardew, and install its build output as a mod folder so that
+  2. Build or package the Stardew adapter from the separate local
+     world-is-agent-adapters repository, under stardew-valley, and install its
+     output as a mod folder so that
      Mods\GameAgentStardew\manifest.json exists. The adapter is built from
      source against your own game installation; there is no prebuilt mod to
      download yet.
@@ -74,8 +75,9 @@ already correct, so no edit is normally needed.
 Until an adapter is connected, the Runtime works but has nothing to show: the
 console lists agent turns, and turns come from the game.
 
-RimWorld is also supported by the source repository's adapters\rimworld project.
-Its adapter is installed as a RimWorld mod and is Windows x64 only.
+RimWorld is supported by the separate adapter repository's rimworld project.
+Its adapter is installed as a RimWorld mod and is Windows x64 only. Each game
+directory contains its own build, package, and installation instructions.
 
 One Runtime process loads one game. Choosing another game while Ready saves it
 as Next Game; the current game stays active until the Runtime restarts. An

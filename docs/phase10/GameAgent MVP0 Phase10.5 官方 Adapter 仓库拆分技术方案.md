@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10.5 官方 Adapter 仓库拆分技术方案
 
-> 方案状态：Accepted for Implementation；物理拆仓未执行，产品验收未完成。
+> 方案状态：实现与自动验证已完成；用户 CR 和 10.4/10.5 联合实机产品验收未完成，尚未 Accepted。
 > 日期：2026-09-20。
 > 上位文档：[Phase10 总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)。
 > 前置：[10.4 Game Profile 选择方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md) 的实现与自动验证完成。
@@ -192,7 +192,7 @@ GitHub 建仓、推送、tag 发布和 Release 上传由用户执行。本阶段
 
 ## 8. 验证矩阵
 
-以下为开发后的通过条件，当前尚无 10.5 执行结果。
+以下为实现后的验证矩阵。Stardew 独立验证通过 494 项测试及静态检查；RimWorld 独立验证通过 42 项测试、standalone build、打包、临时安装与负向探针。主仓库 `go test ./... -p 1 -count=1`、客户端 type-check/order、`npm ci` 与 build、Protocol static 与 generation、架构与 launcher 检查均通过。Runtime 便携包在独立临时目录启动并验证内嵌 UI、两套 profile、Stardew → RimWorld → Stardew 重启切换、Ready 状态下当前 profile 冻结与 pending selection。文件 symlink fixture 因当前主机权限无法创建，junction 覆盖通过。用户 CR 与联合实机验收仍待完成。
 
 | 验证 | 通过条件 |
 | --- | --- |
@@ -226,4 +226,4 @@ GitHub 建仓、推送、tag 发布和 Release 上传由用户执行。本阶段
 6. 当前文档与本地事实一致，10.3 历史验收口径和兼容标识保持不变。
 7. 本地迁移提交和发布产物可交付用户验收；GitHub 上传状态单独记录，不作为已自动完成事项。
 
-方案的 Accepted for Implementation 状态表示实施契约已确认。实现的 Accepted 状态以以上退出条件及统一验收记录为准。
+实现与自动验证完成不等于 Accepted。最终 Accepted 状态以用户 CR、主仓库完整验证和统一实机验收记录为准；本地两个仓库尚未上传 GitHub，也未创建远端 Release。

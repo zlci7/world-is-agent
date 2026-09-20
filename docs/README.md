@@ -12,7 +12,7 @@ Start here when you want the current repository state:
 - [Development Guide](development/guide.md)
 - [Testing Guide](development/testing.md)
 
-The Runtime currently embeds Stardew Valley and RimWorld Game Profiles. Phase 10.4 selection and switching are implemented with automated validation underway; real-game acceptance is still pending. The official adapters remain in this repository until the later repository split.
+The Runtime embeds Stardew Valley and RimWorld Game Profiles. Phase 10.4 selection and switching and the Phase 10.5 repository split have completed automated validation. Official adapters now live in the independent local `world-is-agent-adapters` Git repository. User code review and joint real-game acceptance remain pending.
 
 ## Architecture And Decisions
 

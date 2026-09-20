@@ -1,10 +1,10 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**（方案 [10.3 方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)；实机证据 [10.3-1](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)、[10.3-2](GameAgent%20MVP0%20Phase10.3-2%20实机验收记录.md)、[10.3-3/10.3-4](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)；条件 9 负向未验证、经用户决定豁免）；**10.4 Game Profile 选择与 10.5 官方 Adapter 仓库拆分方案为 Accepted for Implementation，实现未开始、产品验收未完成**（[10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)、[10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)）；顺序为 10.4 → 10.5，开发连续执行，产品集中验收；10.6 未开工
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**，条件 9 负向未验证并经用户决定豁免；**10.4 Game Profile 选择与 10.5 官方 Adapter 仓库拆分已完成实现及自动验证，用户 CR 与联合实机产品验收待完成**（[10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)、[10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)）；GitHub 上传未执行；10.6 未开工
 > **Date:** 2026-09-20
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
-> **Code Inspection Baseline:** `main` @ `a16d1d3`；10.4 与 10.5 尚待实现
+> **Code Inspection Baseline:** `main` @ `a16d1d3` 为方案起点；10.4 与 10.5 当前实现及自动验证已完成
 > **技术栈:** Go、SQLite、gRPC / Protobuf、C#、SMAPI、Vue 3 + TypeScript + Vite（构建期）、Go `net/http` 与 `//go:embed`（本地控制面与 UI 分发）
 > **Roadmap:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md)
 > **Architecture:** [Runtime 整体架构设计规范](../summary/GameAgent%20Runtime%20整体架构设计规范.md)
@@ -559,7 +559,7 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 | 3 | 10.5 官方 Adapter 仓库拆分 | 10.4 实现与自动验证完成；两个 Adapter 一起迁入 `world-is-agent-adapters` |
 | 4 | 10.6 Adapter 接入检查表 | 10.3 与 10.5 的实际验证经验 |
 
-10.4 与 10.5 的技术方案已确认。进入已授权的开发工作后，按内部工作单元连续开发、自测、回归和内部 CR，最终集中进行实机产品验收。内部编号不是逐项人工验收关卡；本地提交在用户授权范围内执行，GitHub 上传由用户完成。Accepted for Implementation 表示方案通过，实现的 Accepted 结论须有自动验证及实机验收证据。
+10.4 与 10.5 的技术方案已确认，实现与自动验证已完成。用户 CR 与集中实机产品验收仍待完成；GitHub 上传由用户执行。Accepted 结论须以联合实机验收证据为准。
 
 Game Profile 与 definitions 的所有权固定归 Runtime。10.4 先完成显式准备与选择，使 Runtime 发布包具备完整游戏配置；10.5 再迁出两个 Adapter 的源码和专属脚本。10.6 的检查表从真实接入及拆仓结果形成，不纳入本轮 10.4、10.5 的实现范围。
 

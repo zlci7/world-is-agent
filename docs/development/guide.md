@@ -17,7 +17,6 @@ Run commands from the repository root unless noted otherwise. Check commands liv
 ```text
 runtime/     Go runtime, gateway, loop, scheduling, memory, trace, providers, local control plane
 protocol/    Protobuf contract and generated bindings
-adapters/    Game-specific adapters
 console/     Local client (Vue 3 + TypeScript + Vite) and the Go package that embeds its build
 docs/        Status, guides, ADRs, phase plans, acceptance records
 scripts/     Local validation and helper scripts
@@ -25,7 +24,7 @@ scripts/     Local validation and helper scripts
 
 ## Repository Model
 
-WIA is organized as Runtime + Protocol + Adapter. The Runtime owns shipped Game Profiles, prompts, and definitions under `runtime/config/games/`; adapters own game translation and execution. Adapters depend on a versioned protocol rather than the monorepo layout. Both official adapters still live here; the physical repository split is pending. See [logical-separation.md](logical-separation.md).
+WIA is organized as Runtime + Protocol + Adapter across two independent local Git repositories. `world-is-agent` owns the Runtime, Console, Protocol, and shipped Game Profiles, prompts, and definitions under `runtime/config/games/`. `world-is-agent-adapters` owns the official game translation and execution implementations. See [logical-separation.md](logical-separation.md).
 
 ## Runtime Configuration And Game Selection
 
@@ -97,6 +96,44 @@ Adapters may wrap another mod's API and expose it as a Capability, so the agent 
 
 The normative rules — optional dependency, public-interface access, main-thread execution, external text validation, direct execution without player confirmation, and the landing checklist — live in [mod-capability-integration.md](mod-capability-integration.md). The first integration built on them is [Phase10.1 邮件能力方案](../phase10/GameAgent%20MVP0%20Phase10.1%20Mod%20邮件能力技术开发方案.md).
 
+## Official Adapters
+
+The official adapters are maintained in a separate local Git repository. Set its location explicitly; scripts do not assume that the two repositories are siblings.
+
+```powershell
+$adapterRoot = 'D:\src\world-is-agent-adapters'
+$runtimeRoot = 'D:\src\world-is-agent'
+$protocolRepository = $runtimeRoot
+```
+
+Each game pins its tested Protocol release in its own `protocol.version`. Both current adapter baselines are `0.1.0` and pin `protocol-v1alpha2.0`, which resolves locally to commit `950d417fcc64517d8d59c334a4cf96ec224bd61a`. Build, test, install, and release commands use explicit `ProtocolRepository` and `ProtocolDir` inputs. The source checkout can be obtained from `https://github.com/zlci7/world-is-agent.git`. Export the required tag's Protocol files; repeat this for each game if their pins differ. Tag publication belongs to the repository owner, and the required tag must be available before building.
+
+```powershell
+$pin = (Get-Content -Raw -LiteralPath "$adapterRoot\stardew-valley\protocol.version").Trim()
+git -C $protocolRepository rev-parse --verify "refs/tags/$pin^{commit}"
+$exportRoot = Join-Path $env:TEMP ('wia-protocol-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $exportRoot | Out-Null
+$archive = Join-Path $exportRoot 'protocol.zip'
+git -C $protocolRepository archive --format=zip --output=$archive "refs/tags/$pin" protocol
+Expand-Archive -LiteralPath $archive -DestinationPath $exportRoot
+$protocolDir = Join-Path $exportRoot 'protocol'
+```
+
+Use `$adapterRoot\stardew-valley\README.md` for Stardew Valley commands and `$adapterRoot\rimworld\README.md` for RimWorld commands. Each directory provides self-contained build, test, package, and install scripts. The adapter repository also provides the optional repository guard `scripts/check-architecture.ps1`.
+
+```powershell
+$gamePath = 'D:\SteamLibrary\steamapps\common\Stardew Valley'
+& "$adapterRoot\stardew-valley\scripts\build-adapter.ps1" -GamePath $gamePath -ProtocolRepository $protocolRepository -ProtocolDir $protocolDir
+& "$adapterRoot\stardew-valley\scripts\test-adapter.ps1" -GamePath $gamePath -ProtocolRepository $protocolRepository -ProtocolDir $protocolDir
+& "$adapterRoot\stardew-valley\scripts\install-stardew-adapter.ps1" -GamePath $gamePath -ProtocolRepository $protocolRepository -ProtocolDir $protocolDir
+
+& "$adapterRoot\rimworld\scripts\build-adapter.ps1" -ProtocolRepository $protocolRepository -ProtocolDir $protocolDir
+& "$adapterRoot\rimworld\scripts\test-adapter.ps1" -ProtocolRepository $protocolRepository -ProtocolDir $protocolDir
+& "$adapterRoot\rimworld\scripts\install-rimworld-adapter.ps1" -GamePath 'D:\Games\RimWorld' -ProtocolRepository $protocolRepository -ProtocolDir $protocolDir
+```
+
+Release scripts validate game-specific `-ReleaseTag` values. Stardew packaging requires the full adapter repository commit through `-SourceCommit`; RimWorld can read it from the current checkout. Exported source snapshots supply their original commit explicitly. The adapters are local deliverables today: no GitHub adapter repository or release has been uploaded.
+
 ## Documentation Expectations
 
 Update docs in the same change when behavior changes:
@@ -105,7 +142,7 @@ Update docs in the same change when behavior changes:
 - Public direction or positioning: update [../../README.md](../../README.md) and [../STATUS.md](../STATUS.md).
 - Architecture boundary or lifecycle concept: update [../../ARCHITECTURE.md](../../ARCHITECTURE.md) or the relevant ADR.
 - Setup or validation command: update [testing.md](testing.md).
-- Stardew-specific behavior: update [../../adapters/stardew/README.md](../../adapters/stardew/README.md).
+- Adapter-specific behavior: update the corresponding game README in the local `world-is-agent-adapters` repository.
 
 ## Naming
 

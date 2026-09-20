@@ -257,8 +257,8 @@ Phase A（逻辑分离，已完成）
     Adapter 可以包装第三方 mod，但遵守可选依赖、公开接口、主线程、文本校验、
     默认直接执行、不扩单 mod policy 字段。
 
-Phase B（物理拆仓，未授权）
-    出现第二个真实 Adapter 时优先拆仓，命名 wia-adapter-<game>。
+Phase B（物理拆仓，已完成自动验证）
+    官方 Adapter 位于独立的 world-is-agent-adapters 仓库，各游戏目录自足构建、测试、安装与打包。
 ```
 
 本规范不改变 Runtime / Protocol / Adapter 的分工：第三方 mod 是**游戏侧事实与能力的来源之一**，Adapter 负责翻译它，Runtime 始终不需要知道 mod 的存在。

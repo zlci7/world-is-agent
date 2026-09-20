@@ -42,51 +42,51 @@ powershell -ExecutionPolicy Bypass -File protocol/tests/check-go-generation.ps1
 
 Run these after editing `protocol/proto/gameagent.proto` or generated bindings.
 
-## Stardew Adapter Tests
+## Official Adapter Verification
+
+Official adapters are tested from the independent local `world-is-agent-adapters` repository. The full commands and game-specific dependencies are maintained in each game's README; both repositories may be anywhere on disk. As described in [Official Adapters](guide.md#official-adapters), each test receives a Protocol directory exported from that game's pinned tag rather than the Runtime working tree.
 
 ```powershell
-dotnet run --project adapters/stardew/tests/ProtocolMapper.Tests/ProtocolMapper.Tests.csproj
-dotnet run --project adapters/stardew/tests/ActionCancellationRegistry.Tests/ActionCancellationRegistry.Tests.csproj
-dotnet run --project adapters/stardew/tests/PlayerInteractProbe.Tests/PlayerInteractProbe.Tests.csproj
+$adapterRoot = 'D:\src\world-is-agent-adapters'
+$runtimeRoot = 'D:\src\world-is-agent'
+$gamePath = 'D:\SteamLibrary\steamapps\common\Stardew Valley'
+$protocolRepository = $runtimeRoot
+
+function Export-PinnedProtocol([string]$gameDirectory) {
+  $pin = (Get-Content -Raw -LiteralPath (Join-Path $gameDirectory 'protocol.version')).Trim()
+  $resolvedCommit = & git -C $protocolRepository rev-parse --verify "refs/tags/$pin^{commit}"
+  if ($LASTEXITCODE -ne 0) { throw "Protocol tag is unavailable: $pin" }
+  Write-Host "Protocol $pin resolves to $resolvedCommit"
+
+  $exportRoot = Join-Path $env:TEMP ('wia-protocol-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $exportRoot | Out-Null
+  $archive = Join-Path $exportRoot 'protocol.zip'
+  git -C $protocolRepository archive --format=zip --output=$archive "refs/tags/$pin" protocol
+  if ($LASTEXITCODE -ne 0) { throw "Failed to export Protocol tag: $pin" }
+  Expand-Archive -LiteralPath $archive -DestinationPath $exportRoot
+  return (Join-Path $exportRoot 'protocol')
+}
+
+$stardewDirectory = Join-Path $adapterRoot 'stardew-valley'
+$rimworldDirectory = Join-Path $adapterRoot 'rimworld'
+$stardewProtocolDir = Export-PinnedProtocol $stardewDirectory
+$rimworldProtocolDir = Export-PinnedProtocol $rimworldDirectory
+
+& "$stardewDirectory\scripts\test-adapter.ps1" `
+  -GamePath $gamePath `
+  -ProtocolRepository $protocolRepository `
+  -ProtocolDir $stardewProtocolDir
+
+& "$rimworldDirectory\scripts\test-adapter.ps1" `
+  -ProtocolRepository $protocolRepository `
+  -ProtocolDir $rimworldProtocolDir
+
+& "$adapterRoot\scripts\check-architecture.ps1"
 ```
 
-Adapter context static check:
+The two exports intentionally use separate variables. If the games pin different Protocol tags, each script still receives the exact contract declared by its own `protocol.version`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-context-static.ps1
-```
-
-## Stardew Adapter Build
-
-For a custom Stardew install path:
-
-```powershell
-$gamePath = "D:\SteamLibrary\steamapps\common\Stardew Valley"
-dotnet build adapters/stardew/GameAgent.Stardew.csproj `
-  --configuration Debug `
-  -p:GamePath="$gamePath"
-```
-
-The install helper can build and install when the project default `GamePath` resolves:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install-stardew-adapter.ps1 `
-  -GamePath "$gamePath" `
-  -ProjectPath adapters/stardew/GameAgent.Stardew.csproj
-```
-
-The helper takes `-ProjectPath`, `-GamePath`, `-OutputPath`, and `-ModsPath`; it assumes nothing about the surrounding repository layout. `-GamePath` controls both the build-time game references and the install target.
-
-Both `GamePath` and `WIA_PROTOCOL_DIR` resolve from an explicit `-p:` parameter or the environment variable of the same name, and fall back to a repository-relative path for local development only. A machine whose Stardew install or protocol checkout is elsewhere must set them explicitly.
-
-To verify the adapter builds without this repository's layout:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-standalone-build.ps1 `
-  -GamePath "$gamePath"
-```
-
-The script copies the adapter and protocol into a temporary directory outside the repository, builds there with an explicitly supplied protocol path, and then runs a negative probe that must fail. See [logical-separation.md](logical-separation.md).
+Each game also provides `tests/check-standalone-build.ps1`. It copies only that game directory and the explicit Protocol export to temporary locations, then exercises build, tests, release packaging, temporary installation, and negative dependency, content, tag, and version probes. Stardew requires `-GamePath`; RimWorld builds against its pinned reference package. The completed independent baselines are 494 Stardew tests plus static checks and 42 RimWorld tests plus standalone build, package, temporary-installation, and negative probes.
 
 ## Manual Stardew Smoke Test
 
@@ -115,12 +115,12 @@ The script copies the adapter and protocol into a temporary directory outside th
 4. Load a save with at least one reachable villager NPC.
 5. Interact with an NPC.
 6. Confirm SMAPI logs show Runtime connection, `GameEvent`, `EventAck`, `Observation`, `ActionRequest`, `ActionResult`, and `TurnCompletion`.
-7. Confirm `runtime/data/traces.jsonl` contains the matching AgentTurn trace.
+7. Confirm `<data root>/data/traces.jsonl` contains the matching AgentTurn trace.
 8. Confirm the browser tab lists that turn.
 
 For dialogue validation, confirm the NPC line appears through Stardew's native dialogue flow, then reply choices or free text appear afterward.
 
-## Phase 10.4 Real-Game Acceptance
+## Joint Phase 10.4/10.5 Real-Game Acceptance
 
 Use one dedicated data root and record status, Runtime logs, adapter logs, and turn traces. This remains manual acceptance; automated tests do not establish it.
 
@@ -132,7 +132,7 @@ Use one dedicated data root and record status, Runtime logs, adapter logs, and t
 6. Connect or simulate an adapter for the other game. Confirm `game_mismatch`, no `EnvironmentReady` or capability discovery, no active connection, and no event or task work.
 7. Connect before Ready. Confirm `runtime_not_ready` and zero active connections. Once Ready, establish a new connection: RimWorld retries every five seconds; Stardew uses `gameagent_runtime_reconnect` or a game restart.
 
-Keep earlier Stardew and RimWorld observations as dated adapter baselines. Record this run separately as Phase 10.4 acceptance.
+Use the adapters built and installed from the independent Adapter repository. Keep earlier Stardew and RimWorld observations as dated adapter baselines; they do not replace this final combined acceptance.
 
 ## Architecture Check
 
@@ -140,7 +140,7 @@ Keep earlier Stardew and RimWorld observations as dated adapter baselines. Recor
 powershell -ExecutionPolicy Bypass -File scripts/check-architecture.ps1
 ```
 
-This is a local architecture guardrail for dependency and naming drift. Treat failures in docs or test fixtures as review signals until the check is promoted into a stricter CI gate.
+This is the main-repository guard for Runtime and Protocol dependency and naming drift. The optional Adapter guard is `world-is-agent-adapters/scripts/check-architecture.ps1`.
 
 ## Documentation
 

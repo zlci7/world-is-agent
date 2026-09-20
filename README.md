@@ -10,7 +10,7 @@
 - Protocol v1alpha2 for events, observations, capabilities, actions, and turn completion.
 - Persistent, game/world/entity-scoped memory and JSONL turn traces.
 - Provider-neutral model support with DeepSeek and OpenAI implementations.
-- Experimental Stardew Valley and RimWorld adapters.
+- Game Profiles for the independently distributed official Stardew Valley and RimWorld adapters.
 - Embedded Runtime-owned Game Profiles for `stardew-valley` and `rimworld`.
 
 One Runtime process loads one Game Profile. Multiple adapters for the loaded game may connect as separate environment sessions; an adapter for another game is rejected before environment readiness and capability discovery.
@@ -31,7 +31,7 @@ Extract `dist\world-is-agent-v<version>-windows-amd64.zip`, run `wia-runtime.exe
 
 Choosing another game while Ready saves it as **Next Game**. The current profile and active connections remain in use until the Runtime restarts.
 
-The Runtime package does not include game adapters. Build and install them separately using the [Stardew adapter guide](adapters/stardew/README.md) or [RimWorld adapter guide](adapters/rimworld/README.md).
+The Runtime package does not include game adapters. Build and install them from the local `world-is-agent-adapters` repository. See [Official Adapters](docs/development/guide.md#official-adapters).
 
 For development, run `.\scripts\start-runtime.ps1`. It uses `WIA_DATA_ROOT` when set, otherwise `runtime/.local/runtime-data`, and does not select a game implicitly. See the [development guide](docs/development/guide.md).
 
@@ -44,12 +44,11 @@ For development, run `.\scripts\start-runtime.ps1`. It uses `WIA_DATA_ROOT` when
 ```text
 runtime/      Runtime, embedded Game Profiles, prompts, and definitions
 protocol/     Protobuf contracts and generated bindings
-adapters/     Stardew Valley and RimWorld adapters
 console/      Local browser client
 docs/         Architecture, status, development, and historical records
 ```
 
-The adapters remain in this repository. Their planned move to `world-is-agent-adapters` is a later productization step.
+Official adapters live in the independent `world-is-agent-adapters` Git repository. This repository contains the Runtime, Console, Protocol, and Runtime-owned Game Profiles.
 
 ## Documentation
 
@@ -61,7 +60,7 @@ The adapters remain in this repository. Their planned move to `world-is-agent-ad
 
 ## Status
 
-Game Profile selection and multi-game Runtime bootstrap are implemented. Automated validation covers the affected bootstrap, HTTP, configuration, definition, command, and gateway paths; full release and browser validation are being finalized. User acceptance with both real games is still pending. Earlier real-game observations are dated baselines and do not constitute Game Profile switching acceptance.
+Game Profile selection, multi-game Runtime bootstrap, and the official Adapter repository split are implemented with automated validation. User code review and the joint Phase 10.4/10.5 real-game acceptance are still pending. Earlier real-game observations are dated baselines and do not constitute switching acceptance for the split deliverables.
 
 ## License
 

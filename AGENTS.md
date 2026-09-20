@@ -35,13 +35,14 @@ world-is-agent-adapters
     stardew-valley/、rimworld/，以及实际接入时新增的其它官方 Adapter 目录。
 ```
 
-Phase A 已完成显式协议依赖、脚本参数化与脱离仓库构建验证。Phase B 在 [10.5 官方 Adapter 仓库拆分方案](docs/phase10/GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md) 中实施，Stardew 与 RimWorld 一起迁出；前置是 [10.4 Game Profile 选择方案](docs/phase10/GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md) 的实现与自动验证完成。物理拆仓尚未执行。
+Phase A 已完成显式协议依赖、脚本参数化与脱离仓库构建验证。Phase B 已按 [10.5 官方 Adapter 仓库拆分方案](docs/phase10/GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md) 完成实现与自动验证，Stardew 与 RimWorld 已迁入独立的本地 `world-is-agent-adapters` Git 仓库。GitHub 上传、用户 CR 与 10.4/10.5 联合实机验收仍待完成。
 
 - 主仓库名称固定为 `world-is-agent`，官方 Adapter 仓库名称固定为 `world-is-agent-adapters`。
+- 两个仓库均以各自 `main` 分支为当前开发线；优先直接在当前 `main` 工作，不要求创建分支或 worktree。
 - 每款游戏保留独立工程、依赖、源码、资产、测试、构建、安装和打包入口。目录共存不要求共享 Adapter 业务框架或统一 transport。
 - 单游戏目录的构建、测试、打包和安装入口保持自足。仓库根部辅助脚本仅提供可选统一调用或仓库检查；游戏入口不反向依赖它，不预建无实际用途的共享基础设施。
 - 每游戏 `VERSION` 为 Adapter 版本权威，tag 使用 `<game_id>-v<version>`，包名使用 `wia-adapter-<game_id>-v<version>.zip`。程序集信息版本、Hello 上报版本和适用的 Mod 版本字段与它一致；支持的游戏版本独立维护。
-- Protocol 定义保留在主仓库 `protocol/`；每个 Adapter 的 `protocol.version` 声明已测 tag，通过显式 `WIA_PROTOCOL_DIR` 依赖对应源码。独立验证记录解析后的 commit 并校验协议内容，不能依赖主仓库当前 HEAD 或隐式兄弟目录布局。
+- Protocol 定义保留在主仓库 `protocol/`；每个 Adapter 的 `protocol.version` 声明已测 tag，通过显式 `ProtocolRepository` 与 `ProtocolDir`（或对应环境变量）依赖对应源码。独立验证记录解析后的 commit 并校验协议内容，不能依赖主仓库当前 HEAD 或隐式兄弟目录布局。
 - Game Profile、prompt、definitions 与旧发布配置的迁移数据随 Runtime 发布，Adapter 仓库负责游戏翻译与执行。
 - 社区 Adapter 可以使用自己的仓库，并遵守版本化 Protocol 契约。
 - Mod 的 `UniqueID`、`EntryDll`、`AssemblyName`、安装目录及既有工程和命名空间是兼容契约，迁仓时保持不变。
@@ -203,7 +204,7 @@ game-specific Observation.state
 
 ## 验证要求
 
-- 修改 Protocol 时同步更新 static check、生成代码和相关 Runtime / Adapter 测试。
+- 修改 Protocol 时同步更新 static check、生成代码和相关 Runtime / Adapter 测试。Runtime 拥有的通用交互 fixture 位于 `protocol/tests/fixtures/player-interactions/`。
 - 修改 Runtime Tool / Scheduler / Loop 时覆盖通用 fake capability，避免只用 Stardew 工具名证明行为。
 - 修改 Adapter capability 时同步更新 `CapabilityCatalog` 测试和 static check。
 - 文档修改至少运行 `git diff --check`，并确认改动的链接仍然有效。

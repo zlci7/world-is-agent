@@ -51,7 +51,7 @@ Go      protocol/gen/go/    committed; regenerate with scripts/gen-go.ps1
 C#      not committed       generated at adapter build time by Grpc.Tools from proto/gameagent.proto
 ```
 
-Because C# types are generated at build time, an adapter build needs the proto source for the release it targets. See [../adapters/stardew/README.md](../adapters/stardew/README.md) for how the Stardew adapter locates it.
+Because C# types are generated at build time, an adapter build needs both an explicit `ProtocolRepository` Git checkout and an explicit `ProtocolDir` export whose contents match the adapter's `protocol.version` pin. The official adapter commands are documented in [Official Adapters](../docs/development/guide.md#official-adapters). The current local `protocol-v1alpha2.0` tag resolves to `950d417fcc64517d8d59c334a4cf96ec224bd61a`; remote tag availability is not assumed.
 
 ## Checks
 
