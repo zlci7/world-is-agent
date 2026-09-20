@@ -1,10 +1,10 @@
 # GameAgent MVP0 Phase10 技术开发与验收总方案
 
-> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**（方案 [10.3 方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)；实机证据 [10.3-1](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)、[10.3-2](GameAgent%20MVP0%20Phase10.3-2%20实机验收记录.md)、[10.3-3/10.3-4](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)；条件 9 负向未验证、经用户决定豁免）；**10.4 Game Profile 选择已立方案**，执行位置在 10.5 之前（见 [10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)）；10.5、10.6 未开工
-> **Date:** 2026-09-18
+> **Status:** 10.1 Mod 邮件能力已验收（缩减口径，见 [检查表](GameAgent%20MVP0%20Phase10%20验收检查表.md)）；**10.2 Client & Productization 已验收**（结论与逐条证据见 §3.8；子阶段 10.2-1 见 §3.2.2，10.2-2 见[10.2-2 方案](GameAgent%20MVP0%20Phase10.2-2%20本地控制面技术开发方案.md)，10.2-3 见[10.2-3 方案](GameAgent%20MVP0%20Phase10.2-3%20首次运行配置技术开发方案.md)，10.2-4 Portable Release 见 §3.6、§3.7）；10.2-5 运行状态可视化未开工；**10.3 已验收（Accepted，2026-09-20）**（方案 [10.3 方案](GameAgent%20MVP0%20Phase10.3%20RimWorld%20对话接入与世界实例实体技术方案.md)；实机证据 [10.3-1](GameAgent%20MVP0%20Phase10.3-1%20实机验收记录.md)、[10.3-2](GameAgent%20MVP0%20Phase10.3-2%20实机验收记录.md)、[10.3-3/10.3-4](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)；条件 9 负向未验证、经用户决定豁免）；**10.4 Game Profile 选择与 10.5 官方 Adapter 仓库拆分方案待文档验收，实现未开始**（[10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)、[10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)）；顺序为 10.4 → 10.5，开发连续执行，产品集中验收；10.6 未开工
+> **Date:** 2026-09-20
 > **Phase:** Phase10 Ecosystem & Productization（生态接入、产品化与跨游戏验证）
 > **目标:** 证明 WIA 的能力边界可以向外扩展——第三方 mod 能力可被 agent 自主调用、系统可以被外部用户装起来用、Adapter 架构可以被第二个真实游戏复用
-> **Code Inspection Baseline:** `main` @ `ef50436`；Phase A 与 Mod 邮件能力接入已授权
+> **Code Inspection Baseline:** `main` @ `d620fdf`；10.4 与 10.5 尚待实现
 > **技术栈:** Go、SQLite、gRPC / Protobuf、C#、SMAPI、Vue 3 + TypeScript + Vite（构建期）、Go `net/http` 与 `//go:embed`（本地控制面与 UI 分发）
 > **Roadmap:** [GameAgent 阶段规划](../summary/GameAgent%20阶段规划.md)
 > **Architecture:** [Runtime 整体架构设计规范](../summary/GameAgent%20Runtime%20整体架构设计规范.md)
@@ -44,7 +44,10 @@ MVP0 已经证明了"单一游戏 + 自有能力 + 本地开发"的闭环。Phas
 | --- | --- | --- |
 | 10.1 | Mod 能力接入与自治调用验证 | 能力来自第三方 mod 时，模型能自主选择、正确执行、失败可收敛 |
 | 10.2 | 客户端与产品化 | 一个外部用户能在不读源码的前提下装起来、跑起来、看见 agent 在做什么 |
-| 10.3 | 第二款真实游戏接入 | 同一 Runtime 不改核心即可承载第二个 Adapter，Adapter 接入有可复用的检查表 |
+| 10.3 | 第二款真实游戏接入 | 同一 Runtime 不改核心即可承载第二个真实 Adapter |
+| 10.4 | Game Profile 选择 | 新旧用户通过本地客户端选择游戏，整套配置一致生效 |
+| 10.5 | 官方 Adapter 仓库拆分 | 两个 Adapter 迁入 `world-is-agent-adapters`，与主仓库分别独立构建 |
+| 10.6 | Adapter 接入检查表 | 从已验证接入与迁仓经验形成第三方接入检查表 |
 
 ---
 
@@ -403,7 +406,7 @@ Adapter 按 Mod 形态单独安装（不进这个包）
 
 已按此形态产出并验证，见 §3.7 第 3 条。脚本为 `scripts/release-runtime.ps1`，版本号取自仓库根的 `VERSION` 并在链接期写入二进制。
 
-**Adapter 不进这个包，README 里说明如何获取。** adapter 是 C# 源码工程，需要从游戏安装目录引用 SMAPI 才能编译；且按仓库模型它将在 10.3 拆到 `wia-adapter-stardew-valley`，届时由那个仓库讲安装与配置。因此这里只发 Runtime，并在 README 里写清"没有 adapter 时 Runtime 能跑但没有 Turn 可看"——这比塞进一个需要本机游戏才能构建的 Mod 更诚实。
+**Runtime 与 Adapter 分别打包。** Runtime 包内嵌客户端与发布配置，Adapter 作为各游戏的 Mod 单独安装。Stardew 构建需要游戏与 SMAPI 引用；RimWorld 使用固定的引用程序集构建。10.5 将两个 Adapter 一起迁入 `world-is-agent-adapters`，由各游戏目录提供构建、安装与打包说明。当前发布入口在迁移验证完成后同步更新。
 
 理由：安装包会立刻引入注册表、卸载器、每平台打包器与代码签名，而这些都不服务于当前目标（"不读源码就能跑起来"）。免安装包 + 自动开浏览器已经满足。
 
@@ -458,22 +461,23 @@ Mobile / LAN / 手机浏览器形态     本阶段只服务同一台电脑上的
 
 > **同一 Runtime、同一协议，能在不修改 Runtime Core 的前提下承载第二个真实游戏。**
 
-这是对"Runtime owns cognition / Adapter owns translation"这条长期边界的**唯一真实检验**。协议当初是按多游戏设计的，但至今只有 Stardew 一个真实验证环境。
+10.3 已用 Stardew Valley 与 RimWorld 两个真实 Adapter 验证该边界。Accepted 结论包含明确记录的豁免项，见文首链接的验收记录。
 
-### 4.2 触发一个已规划的结构性动作
+### 4.2 官方 Adapter 仓库边界
 
-[AGENTS.md](../../AGENTS.md) 已写明：
+[AGENTS.md](../../AGENTS.md) 固定目标为两个仓库：
 
 ```text
-Phase B（物理拆仓）
-    Adapter 迁往独立仓库 wia-adapter-<game>。
-    触发条件：出现第二个真实 Adapter 时优先拆。
+world-is-agent
+    Runtime、Console、Protocol、Game Profile、prompt、definitions
+
+world-is-agent-adapters
+    stardew-valley/、rimworld/，每款游戏保留独立工程、依赖、测试、安装与打包
 ```
 
-**10.3 就是这个触发条件，且拆仓已获授权。但拆仓不是 10.3 的交付物**——10.3 只交付一个真实的
-第二游戏 Adapter（`wia-adapter-<game>` 命名），拆仓独立为 10.5，位置见 §4.7。
+10.3 提供第二个真实游戏 Adapter；10.4 完成多游戏配置选择与分发；10.5 将两个 Adapter 一起迁出主仓库。Protocol 保留在主仓库，Adapter 通过固定版本的显式路径依赖它。
 
-Phase A 已完成逻辑分离，拆仓应当是低风险目录搬迁 + 建仓，而非重构。
+Phase A 的逻辑分离成果作为迁仓基线，10.5 验证源码、测试工程、脚本和安装包均能脱离主仓库目录布局工作。
 
 ### 4.3 游戏选择标准
 
@@ -546,27 +550,18 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 完整游戏覆盖                    只覆盖证明泛化所需的最小能力集
 ```
 
-### 4.7 阶段编号与执行顺序
+### 4.7 执行顺序与统一验收
 
-编号即顺序：不存在"编号更大但执行更早"的阶段。四个阶段各自独立方案、独立验收、独立提交。
+| 顺序 | 阶段 | 前置与完成边界 |
+| --- | --- | --- |
+| 1 | 10.3 第二款真实游戏接入 | 已正式 Accepted；未验证与豁免项已记录 |
+| 2 | 10.4 Game Profile 选择 | 10.3 Accepted；配置、初始化、HTTP、客户端与发布包自动验证完成 |
+| 3 | 10.5 官方 Adapter 仓库拆分 | 10.4 实现与自动验证完成；两个 Adapter 一起迁入 `world-is-agent-adapters` |
+| 4 | 10.6 Adapter 接入检查表 | 10.3 与 10.5 的实际验证经验 |
 
-```text
-顺序  阶段                      编号               前置
-1     第二款真实游戏接入         10.3-1 → 10.3-4    —
-2     Game Profile 选择         10.4-1 → 10.4-4    10.3 退出条件全部达成
-3     Stardew Adapter 物理拆仓   10.5               10.4-2 的 definitions 归属结论
-4     Adapter 接入检查表         10.6               10.3 与 10.5
-```
+10.4 → 10.5 按内部工作单元连续开发、自测、回归和内部 CR，最终集中进行实机产品验收。内部编号不是逐项人工验收关卡；本地提交在用户授权范围内执行，GitHub 上传由用户完成。
 
-10.3 的交付物只有一个：第二个游戏的真实 Adapter。**拆仓与检查表不在 10.3 里**——它们是 10.3 触发、
-但各自独立的阶段：拆仓就是 AGENTS.md 的 Phase B，检查表由 10.3 与 10.5 的真实经历沉淀。
-
-**10.4 为什么排在 10.5 之前。** 拆仓必须先回答一个问题：游戏的 definitions 随 Adapter 仓库走，
-还是留在 Runtime 发布树？10.3 已把 definitions distribution 记为发布前必须解决的问题，
-而 profile 选择器正是那个按游戏定位定义的机制——两件事是同一个问题。先拆仓会让定义归属变成事后追认。
-反过来，10.4 也必须等 10.3：在第二个 profile 真实存在之前，多 profile 是在为不存在的需求设计。
-
-**10.6 必须在 10.3 与 10.5 之后。** 检查表应由真实经历沉淀，而不是先写规范再套用。
+Game Profile 与 definitions 的所有权固定归 Runtime。10.4 先完成显式准备与选择，使 Runtime 发布包具备完整游戏配置；10.5 再迁出两个 Adapter 的源码和专属脚本。10.6 的检查表从真实接入及拆仓结果形成，不纳入本轮 10.4、10.5 的实现范围。
 
 ### 4.8 退出条件
 
@@ -577,7 +572,21 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 3. 该游戏至少完成一条"游戏事件 → AgentTurn → 能力执行 → 结果回灌"的真实闭环。
 4. §4.5 的 tool_policy 提升判定已给出结论，并记录支持该结论的第二个 Adapter 实际 policy 需求。
 
-10.4、10.5、10.6 的退出条件写在各自的方案里。
+10.3 的正式验收以已记录的 Accepted 口径为准，条件 9 的负向豁免不作为已验证结果。10.4 与 10.5 的退出条件见各自方案；10.6 在其接入检查表方案中定义。
+
+### 4.9 10.4 Game Profile 选择
+
+用户选择游戏时，`POST /api/setup/game` 准备缺失的 Runtime 资产、校验完整性并保存 `active-game.json`。`assets_ready` 只描述配置资产，新用户继续配置模型，已有有效模型的用户直接初始化。
+
+首次完整初始化是 profile 的冻结点，Agent Core、catalog、memory 与 task 组件使用同一配置。Ready 后保存其它游戏仅改变下次启动选择。状态区分 `loaded_game`、`configured_game`、`restart_required` 和真实 Adapter 连接身份；Hello mismatch 在 EnvironmentReady 与能力发现前拒绝。
+
+旧 v0.1.0 配置按原发布游戏迁移，保留用户参数和原文件；模型、密钥与历史数据保持原位置。实施与验证矩阵见 [10.4 方案](GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md)。
+
+### 4.10 10.5 官方 Adapter 仓库拆分
+
+将 `adapters/stardew/` 与 `adapters/rimworld/` 分别迁入 `world-is-agent-adapters/stardew-valley/` 与 `world-is-agent-adapters/rimworld/`。各自的源码、游戏资产、测试、安装和打包脚本随迁；Game Profile、prompt、definitions 和 Protocol 留在主仓库。
+
+交付必须验证主仓库独立运行、两款 Adapter 分别独立构建、固定协议依赖与安装包完整性。完整迁移清单、顺序和退出条件见 [10.5 方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)。
 
 ---
 
@@ -592,7 +601,7 @@ Adapter 之间的能力共享框架      先证明边界，再谈抽象；过早
 10.2 其次        它把 10.1 的成果变成别人能看见、能复现的东西；也是 10.3 的调试基础（需要一个可观察面）
 10.3 再次        成本最高的一步，产出第二个真实 Adapter 与它触发的结论
 10.4 随后        只有第二个真实 profile 存在之后，"多 profile + 选择"才有实现依据
-10.5 然后        拆仓需要先知道游戏的 definitions 归谁，那个答案由 10.4 给出
+10.5 然后        两个 Adapter 一起迁入官方 Adapter 仓库，Runtime 已能独立准备和选择游戏配置
 10.6 最后        检查表由 10.3 与 10.5 的真实经历沉淀
 ```
 
@@ -640,22 +649,22 @@ Adapter 是事实来源                   能力、schema、description、执行
 | # | 决策 | 结论 |
 | --- | --- | --- |
 | 1 | 阶段重排 | 旧 Phase10 → Phase11，旧 Phase11 → Phase12；Phase10 为 Ecosystem & Productization |
-| 2 | Phase B 拆仓 | 已授权；独立为 10.5，排在 10.4 之后 |
+| 2 | Phase B 拆仓 | 10.5 将两个 Adapter 一起迁入 `world-is-agent-adapters`；主仓库保留配置和协议；顺序为 10.4 → 10.5，集中产品验收 |
 | 3 | 客户端形态 | 本地 Web UI：Vue 3 + TypeScript + Vite，产物 `//go:embed` 进 runtime 二进制；CLI 保留开发与无头入口；不做桌面打包 |
 | 4 | 发行形态 | 只做 Portable Release（免安装 ZIP / 单个 runtime 二进制），不做 Installer |
 | 5 | 平台范围 | 只服务同一台电脑上的本地浏览器；不做 Mobile、LAN、远程访问；手机形态留给未来的独立项目，不在 WIA 预埋 LAN/server 模式 |
 | 6 | 访问凭证 | 不让用户手工复制 token；启动后自动打开浏览器并自动完成凭证交接（§3.4.1） |
 | 7 | API Key | 允许在 Web UI 填写；只由 Go 后端持久化与读取，任何接口不回传明文，不落浏览器存储（§3.4.2） |
 | 8 | Data Root | 方案 2：`--data-root` > `WIA_DATA_ROOT` > 平台默认目录；统一一个 root，相对路径相对 root 解析；不做 exe 同级默认、不做 portable marker、不做双 root（§3.2.1） |
+| 9 | 第二个真实 Adapter | RimWorld 1.6，10.3 已 Accepted，范围与豁免见验收记录 |
+| 12 | `tool_policy` 归属 | 10.3 后继续使用 `Capability.extensions.gameagent.tool_policy`；本轮不提升为协议一等字段 |
 
 仍待确认：
 
 | # | 决策 | 影响 |
 | --- | --- | --- |
-| 9 | 10.3 的游戏与接入方式 | 决定成本与可行性；选择标准见 §4.3 |
 | 10 | 静态加密是否用 OS 密钥库（DPAPI 等） | 纵深防御增强项，不改变 §3.4.2 的硬约束；由 10.2 子方案决定 |
 | 11 | 10.1 读类 follow-up 是否本轮做 | 非硬验收；若 MFM 有低成本可读状态可顺带验证 |
-| 12 | `tool_policy` 是否提升为 `Capability.tool_policy` 一等字段 | 由第二个 Adapter 的实际 policy 需求判定，判据见 §4.5；这是 10.3 的退出条件之一，不是可选项 |
 | 13 | 自主触发 | **MVP0 不纳入。** durable task + 游戏时钟唤醒已由 Phase9 实机验证（§2.6.1），不再单独安排 mail-specific 后续；不引入 Background Trigger |
 
 ---
@@ -664,10 +673,10 @@ Adapter 是事实来源                   能力、schema、description、执行
 
 Phase10 完成需要同时满足：
 
-1. 三个子阶段各自的退出条件全部满足。
+1. 各阶段达到其方案明确的退出条件，验收范围与豁免以用户确认的记录为准。
 2. 至少一条"第三方 mod 能力被 agent 自主调用并产生真实游戏效果"的完整证据链。
 3. 外部用户可以不读源码地把系统跑起来，并看到 agent 的工作过程。
 4. 第二个真实游戏接入完成，且 Runtime Core 未出现该游戏专属分支。
-5. Stardew Adapter 完成物理拆仓，两个仓库独立构建通过。
+5. Stardew 与 RimWorld 两个 Adapter 完成物理拆仓，主仓库与两款 Adapter 分别独立构建、打包验证通过。
 6. 协议保持 additive，Mod 运行时标识未改动。
 7. 各子阶段的实机验证按其自身方案执行并记录，fake 与自动化结果不替代实机结论。

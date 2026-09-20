@@ -1,131 +1,55 @@
 # GameAgent MVP0 Phase10.4 Game Profile 选择与多游戏产品形态技术方案
 
-> 状态：**Accepted for Implementation**。前置条件已满足：10.3 已于 2026-09-20 正式 Accepted，
-> 其中条件 9 的负向部分**未验证、经用户决定豁免**，已在 10.3 验收记录中明确记录。
-> 上位文档：[Phase10 技术开发与验收总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md) §4、§3.5。
+> 状态：待文档验收；代码开发未开始。
+> 日期：2026-09-20。
+> 前置：10.3 已正式 Accepted，条件 9 的负向部分未验证且经用户决定豁免，见 [10.3 验收记录](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)。
+> 上位文档：[Phase10 总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)。
+> 后续：[10.5 官方 Adapter 仓库拆分方案](GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md)。
 
-## 1. 目标与范围
+## 1. 目标与边界
 
-### 1.1 做什么
+用户在本地客户端选择游戏，Runtime 准备对应的 Game Profile 并启动。首次配置完成后，当前游戏行为固定到进程结束；运行中保存的新选择在重启后生效。
 
-让用户**选择游戏**，并让 Runtime 按所选游戏加载整套行为配置。完成后，用户不需要知道
-`agent.json`、`GAMEAGENT_AGENT_CONFIG`、`definition_catalog_root` 的存在。
+Game Profile 包含 Agent 配置、prompt、工具调用预算、timeout、task policy、memory policy 和 definition catalog。切换必须使这些配置及其依赖组件一致生效。
 
-### 1.2 为什么必须等 10.3
+| 工作 | 归属 |
+| --- | --- |
+| 游戏选择、Runtime 配置资产准备、旧配置迁移 | 10.4 |
+| 首次初始化、重启切换、Selected / Next / Connected、连接拒绝 | 10.4 |
+| 两个官方 Adapter 迁入 `world-is-agent-adapters` | 10.5 |
+| Turn 详情、任务与记忆查看、能力可用性、依赖体检 | 10.2-5 |
+| 第三方 Adapter 接入检查表 | 10.6 |
 
-10.3 在 §18 明确把"game profile 重构"列为不做，在 §13.1 记录了这么做的技术原因：
-发布树中 `games/*/agent.json` 只允许存在一份，多一份会让 `Seed()` 报错、
-`bootstrap.Open()` 置 `StateBlocked`，**所有全新 data root 首次启动直接 blocked**。
+执行顺序为 10.4 → 10.5。文档验收后，开发按工作单元连续完成自动验证与内部审查，最终集中进行产品验收；内部编号不构成逐项人工验收关卡。
 
-那个约束在当时是正确取舍：只有一份真实 profile 时，引入"多份 + 选择规则"是在为不存在的需求设计。
-**当第二个 Adapter 真实闭环之后，理由才成立**——此时不再是"未来可能需要"，
-而是"两个真实游戏已经需要"。
+## 2. 配置布局与来源
 
-因此本阶段的第一条前置是：**10.3 的退出条件全部达成。**
+### 2.1 所有权与发布树
 
-### 1.3 为什么排在 10.5（拆仓）之前
-
-本阶段排在 10.5（拆仓）之前。理由是拆仓需要先知道一件事：
-
-> 游戏的 definitions 随 Adapter 仓库走，还是留在 Runtime 发布树？
-
-10.3 §17 已把这个"definitions distribution"记为**发布前必须解决**的问题，
-而 profile 选择器恰恰是那个必须"按游戏找到定义"的机制——两件事是同一个问题。
-先做 10.4，拆仓才有非任意的依据；反过来先拆仓，只会在拆完之后再决定定义放哪。
-
-若确实要先做 10.5，则 §3.5 必须单独提前完成。
-
-### 1.4 与其它子阶段的边界
+`world-is-agent` 保留 Runtime、Console、Protocol、Game Profile、prompt、definitions 与发布默认值。`world-is-agent-adapters` 中每个游戏目录负责游戏 API、Observation、Capability、动作执行和游戏内 UI。
 
 ```text
-10.2-5 运行状态可视化
-    拥有：AgentTurn 时间线细化、对话记录、任务与记忆查看、能力可用性、依赖体检
-    本阶段不重复这些
-
-10.4（本文）
-    拥有：Game Profile 选择、Selected / Connected 的身份语义、mismatch 处理、
-          以及缺失游戏 profile 的安装路径
-
-10.5 / 10.6
-    本阶段为 10.5 提供"definitions 归属"的结论；10.6 的检查表由 10.4
-    的接入经验补充，但检查表本身仍属 10.6
+world-is-agent/runtime/config/games/
+├── stardew-valley/
+│   ├── agent.json
+│   └── definitions/
+└── rimworld/
+    ├── agent.json
+    └── definitions/
 ```
 
-"游戏是否已连接"这一条同时出现在 10.2-5 的清单里。**本阶段只定义它的语义与 mismatch 判定**，
-更宽的查看面仍归 10.2-5。两者谁先落地都可以，但不得各建一套。
+RimWorld 的 `adapters/rimworld/profile/agent.json` 迁入上述发布树，内容沿用 10.3 基线。Stardew 的 `task.enabled=true`，RimWorld 的 `task.enabled=false`；本阶段保持两款游戏已经验证的 prompt 行为目标。
 
-## 2. 核心概念：切换的是 Game Profile，不是 Prompt
+发布树支持 N 份 profile。游戏列表按包含 `agent.json` 的游戏目录发现，game_id 取目录标识，并与 `definitions/game.json` 校验一致；显示名称取其 `title`。发布验证必须证明两款游戏的完整资产都进入 Runtime 二进制。
 
-### 2.1 Runtime 行为配置是一个整体
+游戏名称、默认值、定义和旧发布版本的归属映射属于配置数据。Runtime Core 通过 game_id 和结构化配置工作，不按具体游戏名称分支。
 
-```text
-Game Profile =
-    Agent config（prompt / tool instruction / max_steps / timeout）
-  + task policy（task.enabled 及由此决定的能力集）
-  + definition catalog（该游戏的定义与 archetype）
-  + seed 与默认值
-```
-
-### 2.2 两个 Adapter 的实际差异已经存在
-
-这不是假设，而是已经写在两份配置里的事实：
-
-```text
-Stardew Valley
-  task.enabled = true
-  max_steps = 5
-  有 durable task、有移动能力
-  prompt.tool_instruction 指向 move_to_landmark / wait_for_player
-
-RimWorld（10.3）
-  task.enabled = false
-  只有 present_dialogue
-  prompt.npc_style 与 tool_instruction 针对殖民者重写，max_speak_chars 60 → 120
-```
-
-两份配置**目前的差异只有 `task.enabled` 与 `prompt` 两项**：所有 timeout、`max_steps`、
-`max_tool_calls_*`、`definition_catalog_root`、`prompt.language` 完全相同。差距小并不削弱
-下面的结论——`task.enabled` 一项就已经决定了能力集与事件形状——但它意味着**本阶段不能靠
-"两份 profile 差很多"来论证**，论证要落在"这两个字段决定了不同的行为契约"上。
-
-### 2.3 因此明确不是
-
-```text
-选择 RimWorld
-→ 只替换一段 system prompt
-```
-
-只换 prompt 会立刻产生错误组合：RimWorld 的 profile 配 Stardew 的能力集、
-或 Stardew 的 profile 收到 RimWorld 的事件。**选择单位必须是整份 profile。**
-
-## 3. 配置结构变更
-
-### 3.1 现状与约束来源
+### 2.2 Data root
 
 ```text
 <data root>/config/
-├── agent.json                   ← 唯一激活的 agent 配置
-└── games/
-    └── stardew-valley/
-        ├── agent.json
-        └── definitions/
-```
-
-```text
-runtime/config/defaults.go
-    shippedProfile()   要求 games/*/agent.json 恰好一份，否则 Seed() 报错
-    seedDefinitions()  只复制各游戏的 definitions，不复制游戏目录下的其它文件
-    Seed()             锚点是 config/agent.json；锚点存在即直接返回
-```
-
-其中"锚点存在即返回"的规则是刻意的，包注释写明：逐文件补齐会 "silently become an upgrade mechanism"。
-**本阶段保留这条原则**，见 §3.5。
-
-### 3.2 目标结构
-
-```text
-<data root>/config/
-├── active-game.json             ← 新增：用户选择的游戏
+├── model.json
+├── active-game.json
 └── games/
     ├── stardew-valley/
     │   ├── agent.json
@@ -135,377 +59,321 @@ runtime/config/defaults.go
         └── definitions/
 ```
 
+`active-game.json` 的格式：
+
 ```json
-// active-game.json
 { "game_id": "rimworld" }
 ```
 
-**本阶段要把 RimWorld 的 profile 搬进发布树。** 10.3 §13.1 把它放在
-`adapters/rimworld/profile/agent.json`，理由是当时 `shippedProfile()` 要求
-`games/*/agent.json` **恰好一份**，放进 `games/` 会让每一个全新 data root 直接 blocked。
-10.4-1 移除那条约束之后，它应当迁到 `runtime/config/games/rimworld/agent.json`，也就是
-上面目标结构里的位置。
+启动只读取游戏选择与已有资产。首次选择负责准备配置；已准备的游戏不会在启动时因 Runtime 升级被静默改写。模型、密钥、trace、memory 与 task 数据沿用既有 data root 路径。
 
-两点必须写进实施顺序：
+### 2.3 配置解析与开发覆盖
 
-```text
-顺序硬约束   10.4-1 先落地。在 shippedProfile() 还要求"恰好一份"时把
-             games/rimworld/agent.json 放进去，会让所有全新 data root blocked
+1. 游戏身份始终由 `active-game.json` 决定；缺少选择时进入 `needs_configuration`。
+2. Agent 配置优先读取 `GAMEAGENT_AGENT_CONFIG`，否则读取所选游戏的 `agent.json`。
+3. 所有 Runtime 相对路径继续相对 data root 解析，迁移文件不改变相对路径语义。
+4. 环境变量只覆盖内容，不推断或替代 game_id。开发启动脚本、示例和测试 fixture 必须提供游戏选择。
+5. 显式选择仍按 §3 准备该游戏的发布资产。环境变量禁止隐式播种，不禁止用户主动准备资产。
+6. 覆盖配置中的 `definition_catalog_root` 同样按 selected game 加载并校验；无效时报告错误，不回退到另一份 catalog。
 
-顺带修好     AGENTS.md 规定"不把 Runtime prompt 配置放入 Adapter 目录"，
-             10.3 §13.1 为绕开"恰好一份"把 profile 放进了 adapter 目录——那是一次例外。
-             搬到 games/rimworld/ 之后这条冲突自然消失，10.3 §13.1 中"位置冻结"的表述
-             也随之失效，应在该文档补一句指向本文。
-```
+`assets_ready` 仅描述 data root 中该游戏的发布资产完整且可解析；它不证明外部覆盖配置有效，也不表示游戏、Adapter 或模型已经就绪。
 
-### 3.3 shipped profile 从"恰好一份"变为"N 份 + 用户选择"
+## 3. 选择与资产准备
 
-```text
-旧规则   games/*/agent.json 必须恰好一份，它就是这份 Runtime 的 profile
-新规则   可以存在 N 份；由 active-game.json 选择其中一份
-```
+### 3.1 一个选择操作
 
-`shippedProfile()` 的"恰好一份"约束随之删除，替换为"选择必须是显式的"。
-没有选择时不是猜一个，而是进入 §4 的未配置状态。
-
-### 3.4 游戏身份与 agent config 是两件事
-
-选择游戏与选择 agent config 不是同一个决定，解析顺序必须把两者分开：
+`POST /api/setup/game` 同时承担选择和缺失资产准备：
 
 ```text
-游戏身份 由 active-game.json 决定，环境变量不参与
-    active-game.json → game_id
-    （无）           → 尚未选择游戏，属 §4.1 的未配置状态
-
-agent config 的内容
-    1  GAMEAGENT_AGENT_CONFIG 存在 → 它覆盖 <selected game> 的 agent.json
-    2  否则                        → games/<selected game>/agent.json
+校验请求与 game_id
+    ↓
+准备旧配置迁移与所选游戏的候选文件
+    ↓
+校验 profile、definitions 与实际配置来源
+    ↓
+提交缺失资产
+    ↓
+原子保存 active-game.json
+    ↓
+尚未初始化：尝试统一初始化
+已经初始化：保持本进程配置，计算 restart_required
 ```
 
-**环境变量覆盖配置内容，不覆盖游戏身份。** `GAMEAGENT_AGENT_CONFIG` 只回答"用哪份 agent
-config"，它回答不了"当前选的是哪个游戏"——而后者是 Selected Game、mismatch 判定与
-definitions 定位都要用的。若让它同时决定身份，就会出现"选着 RimWorld、却挂着一份不知道属于
-哪个游戏的 profile"这种组合。开发模式若确实需要完全跳过 `active-game.json`，那需要另一套
-game-id 来源，MVP0 不做。
+game_id 必须命中发布游戏集合，路径只能由已验证的目录项生成。未知标识和路径穿越输入返回 `invalid_game`，不创建目录。客户端保持单一选择动作，无单独 Install 按钮。
 
-注意一个既有副作用（10.3 §13.1 已记录）：`bootstrap.go` 把"设置了 `GAMEAGENT_AGENT_CONFIG`"
-直接当作 `Seed()` 的 `skip=true`，于是整棵发布树都不播种，**包括所有 definitions**
-（`runtime/internal/bootstrap/bootstrap.go:221`）。用了这个覆盖的 data root 必须自己保证
-定义齐全。本阶段不改变这条行为。
+### 3.2 完整性与用户文件
 
-### 3.5 顺带解决 definitions distribution（10.3 §17 的待决项）
+- 完整性检查覆盖游戏 `agent.json`、`definitions/game.json`、发布清单中的必要定义文件，以及本地额外定义的解析与身份校验。
+- `assets_ready=true` 要求所需文件齐全且可解析；目录存在本身不构成准备完成。
+- 缺失文件从内嵌发布资产补齐；已存在且有效的文件保留用户内容，额外定义保留。
+- 已存在但损坏或身份冲突的文件返回 `profile_invalid`，指出具体资产和原因，原文件保持不变。
+- 所选 `agent.json` 必须存在；不能使用通用加载器的“文件不存在则返回默认值”通过选择校验。
 
-已确认的事实：`Seed()` 不是升级机制。`config/agent.json` 一旦存在，新版本新增的
-游戏 definitions 不会补进既有 data root。因此：
+### 3.3 提交、失败与重试
+
+游戏选择、模型保存与首次初始化共用一个配置写入协调边界。校验状态、准备文件、提交选择与初始化不得被另一次提交交错穿插。状态读取使用一致快照，不持有覆盖整个文件操作过程的写锁。
+
+提交顺序为资产在前、选择在后。文件通过临时文件和安全提交写入；提交前重新检查目标，已有用户文件不被覆盖。保存 `active-game.json` 前再次确认本次所需资产完整。
+
+资产准备、磁盘写入或选择文件替换失败时，原选择保持有效，当前运行组件保持原行为。已成功写入的新文件可供重试复用，完整性按文件实际状态重算。返回明确错误，不把失败选择报告为成功，不以删除用户目录作为回滚手段。
+
+重复选择已保存的游戏是幂等操作。进程中断后，下次显式选择可以继续完成准备；启动读取到缺失资产时报告原因，不自行补齐文件。
+
+## 4. v0.1.0 配置迁移
+
+迁移属于第一次显式游戏选择，覆盖根级 `config/agent.json` 向游戏目录配置的过渡。已经存在可解析的游戏选择时，后续启动与选择不再触发根级旧配置识别；保留旧文件不构成重复迁移的触发条件。
+
+### 4.1 来源识别
+
+普通 v0.1.0 发布版的单一 profile 归属 Stardew Valley。兼容性验证使用该发布版的固定 fixture，检查旧布局、原配置目录和游戏定义身份。旧版本归属映射作为 Runtime 发布配置数据维护，核心代码不按游戏名称分支。
+
+标准路径要求旧 `definition_catalog_root` 相对 data root 解析到 `config/games`，且其中原发布游戏的定义可解析、身份与发行基线一致。不能用新版本目录数量或本次选择值推断旧配置归属。
+
+用户对标准 profile 的 prompt、预算、timeout、task 和 memory 等参数修改完整保留。指向外部 catalog、身份冲突或无法确定归属的根级配置返回 `migration_conflict`，保留原文件并说明冲突路径及需要明确的配置归属。
+
+### 4.2 文件处理
+
+| 条件 | 行为 |
+| --- | --- |
+| 没有根级旧配置 | 按 §3 准备所选游戏 |
+| 已识别旧配置，原游戏目标 `agent.json` 缺失 | 原文件内容完整复制到原游戏目录，原文件保留 |
+| 原游戏目标配置已存在且有效 | 目标文件为权威，根级旧文件保留 |
+| 原游戏目标配置损坏 | 返回 `profile_invalid`，保留两个文件 |
+| 旧配置来源无法确认 | 返回 `migration_conflict`，保存选择前停止 |
+
+迁移原游戏与选择另一个游戏可以发生在同一次操作中，两者归属独立。旧 Stardew 用户首次选择 RimWorld 时，旧配置仍进入 `stardew-valley`，RimWorld 使用自己的 profile。
+
+迁移成功后，默认解析只使用 `games/<game>/agent.json`。根级旧文件不再作为隐式后备来源；通过 `GAMEAGENT_AGENT_CONFIG` 显式引用时仍遵循覆盖规则。
+
+模型配置、密钥、历史与任务数据保持原位置和内容。自定义 store 路径保留其 data root 相对语义。迁移冲突修复后可重新提交选择，无需重新填写有效模型配置。
+
+## 5. 初始化与配置生效
+
+### 5.1 统一首次初始化
+
+进程先建立 data root、日志、trace、本地 HTTP 与 gRPC 入口。游戏或模型未配置时控制面继续可用，`loaded_game=null`，游戏事件尚不准入。
+
+游戏和模型配置均可加载后，统一初始化入口完成：
+
+1. 固定候选 game_id，解析有效 Agent 配置并加载该游戏 catalog。
+2. 按该配置创建 memory/history 存储和 Agent Core。
+3. 按 task policy 创建 task store、service 与 dispatcher；`task.enabled=false` 时不启动任务组件。
+4. 将完整组件挂入 Gateway，统一发布 `loaded_game` 与 Ready 状态。
+
+任务调度和游戏事件只在整体 Ready 后准入。初始化失败时关闭本次未发布资源，`loaded_game` 保持为空，不留下部分启动的任务服务。HTTP 与 gRPC 监听器在同一进程只创建一次。
+
+实施必须协调 `bootstrap.Open / Configure`、`cmd/server/task_runtime.go` 与 Gateway 的生命周期。`AgentConfig`、history store、TaskService、dispatcher 和 loop 都来自同一次候选配置。
+
+### 5.2 三状态与原因
+
+保留 `needs_configuration`、`blocked`、`ready`。增加机器可读的 `reason_code`；`reason` 继续提供面向用户的说明。
+
+| 场景 | 状态 / code | 恢复方式 |
+| --- | --- | --- |
+| 缺少选择 | `needs_configuration / game_not_selected` | 选择游戏 |
+| 保存的 game_id 不在发布集合 | `needs_configuration / invalid_game` | 选择可用游戏 |
+| 所选资产缺失 | `needs_configuration / profile_assets_missing` | 再次选择，显式准备资产 |
+| 模型配置缺失或不可加载 | `needs_configuration / model_configuration_required` | 配置模型 |
+| 所选 profile 或 catalog 损坏 | `blocked / profile_invalid` | 修复所指文件后重启 |
+| 选择文件无法解析 | `blocked / game_selection_invalid` | 修复文件后重启 |
+| 依赖资源初始化失败 | `blocked / initialization_failed` | 按原因修复后重启 |
+| 整体初始化成功 | `ready`，空 reason | 服务游戏事件 |
+
+检查顺序为选择 → 所选资产与配置 → 模型 → 初始化资源。已经 Ready 时，失败的换游戏请求仅返回请求错误，不把当前可用 Runtime 改成 `blocked`。
+
+### 5.3 冻结点与重启
+
+冻结点是首次完整初始化成功。此前 `loaded_game=null`，允许调整选择；其后当前行为固定到进程结束。
 
 ```text
-v0.1.0 老用户
-  已有 data root
-      ↓
-升级到带第二个游戏 profile 的新版 Runtime
-      ↓
-既不会得到 rimworld/agent.json，也不会得到 rimworld/definitions/
+configured_game = active-game.json 中已提交的选择
+loaded_game     = 已完成初始化、当前实际使用的游戏；初始化前为 null
+restart_required = loaded_game != null 且 loaded_game.id != configured_game.id
 ```
 
-**本阶段必须解决它，因为选择器必须能按游戏找到定义。** 三个候选：
+Ready 后选择另一游戏，先准备资产、保存选择，再返回 `restart_required=true`。当前 prompt、catalog、store 配置、task policy 和在途工作使用原 profile。
+
+选回当前游戏时清除重启提示；重复选择当前游戏保持幂等。重启读取 `configured_game`，从同一 profile 初始化全部组件，成功后两个身份一致。
+
+模型与凭据仍为一份；换游戏不换模型。模型修改沿用 Ready 状态下的 `already_configured` 约束。
+
+## 6. 按游戏加载 definitions
+
+catalog 加载入口显式接收确定的 game_id，仅解析 `definition_catalog_root/<game>/definitions`。root 仍表示各游戏目录的父目录，不通过将 root 指向单个游戏目录绕过加载契约。
+
+所选游戏的 `game.json`、必要 archetype 和发布定义通过身份、schema 与既有唯一性校验。缺少必要定义时不能以空 catalog 到达 Ready。
+
+未选游戏损坏不影响当前游戏初始化。HTTP 游戏列表逐项报告资产状态，一项损坏不阻止列出其它游戏。状态轮询不反复加载全游戏 catalog；资产校验发生在列表读取、选择及初始化的必要边界。
+
+## 7. Gateway 准入与连接状态
+
+### 7.1 Hello 判定顺序
 
 ```text
-A  随 Runtime 发布并显式安装
-   发布树本来就带 games/**；把"把某个游戏装进这个 data root"变成用户可见的显式动作
-   （选择器里显示为未安装 + Install），而不是启动时的静默补齐
-
-B  随 Adapter 仓库发布
-   profile 与 definitions 跟着 adapter 走，注册到 Runtime
-
-C  Runtime 引入定义升级机制
-   带版本比较的 reconcile
+收到 AdapterHello
+    ↓
+Runtime 尚未 Ready → runtime_not_ready，结束 stream
+    ↓
+hello.game_id != loaded_game.id → game_mismatch，结束 stream
+    ↓
+已有连接或正在握手的占位 → adapter_already_connected，结束 stream
+    ↓
+为本次连接取得唯一占位
+    ↓
+EnvironmentReady → Capability discovery
+    ↓
+成功后发布 connected=true
 ```
 
-**决策：A。** 理由有两层：
+拒绝使用现有 `RuntimeMessage.error` 携带明确 code 和说明，随后结束 stream。mismatch 在任何 `EnvironmentReady`、能力发现和事件准入之前判定；不使用 `configured_game` 校验当前连接。
+
+### 7.2 单一状态来源
+
+Gateway 提供只读连接快照，由 HTTP 展示。握手和能力发现完成后才发布连接身份；正常断开、握手失败和取消都释放本连接占位。占位与清理按内部 connection identity 匹配，旧连接延迟清理不得清除新连接。
+
+第二条连接明确拒绝，当前连接保持可用；它结束后允许新连接。尚未 Ready 或 mismatch 都不建立有效会话，也不接收 GameEvent。
+
+`last_connection_error` 单独保存最近一次拒绝的 code、expected_game_id、received_game_id 和说明；错误连接结束后页面仍可解释原因。它仅保留一条进程内记录，下一次成功连接时清除。另一次拒绝不改变已有有效连接的身份。
+
+Adapter 沿用既有连接、重连和错误处理机制；本阶段不把自动重连提升为跨 Adapter 的协议保证。实机验证可使用已有重连入口或重新启动对应游戏。
+
+## 8. HTTP 契约
+
+沿用既有 session cookie、Host 与 Origin 校验。修改请求先检查 Runtime 状态，再解析请求体；在配置写入锁内重新检查状态。`blocked` 请求返回 `setup_blocked`，不写入资产、模型或密钥。
+
+### 8.1 路由
+
+| 路由 | 行为 |
+| --- | --- |
+| `GET /api/setup/games` | 内嵌游戏列表，每项含 `id`、`title`、`assets_ready`、可选 `assets_error` |
+| `POST /api/setup/game` | body 为 `{ "game_id": "rimworld" }`；执行 §3，成功返回完整 status |
+| `GET /api/status` | 既有状态字段加 §8.2 的新增字段 |
+| `POST /api/setup/model` | 复用现有模型保存流程，保存后进入统一初始化入口 |
+
+未选择游戏时，模型提交返回 `game_not_selected`，在写入密钥前停止。模型保存后不得使用旧的启动默认 profile 构建核心。有效模型的用户通过游戏选择直接触发初始化。
+
+### 8.2 状态字段
+
+| 字段 | 语义 |
+| --- | --- |
+| `reason_code` | 稳定原因码；Ready 时为 null，`reason` 保留可读说明 |
+| `loaded_game` | `{ id, title }` 或 null；实际初始化成功的游戏 |
+| `configured_game` | `{ id, title }` 或 null；已保存选择；未知 id 保留标识，title 为 null |
+| `restart_required` | 按 §5.3 计算 |
+| `adapter` | 未连接时 `{ connected: false }`；连接后含 `connected`、`game_id`、`adapter_id`、`adapter_version`、`game_version`、`session_id` |
+| `last_connection_error` | §7.2 的拒绝记录或 null |
+
+无有效连接时不携带过期连接身份。Adapter 身份字段直接来自 `AdapterHello`。既有路径、版本和模型描述字段保留。
+
+快照必须一致，不能出现 `ready=true` 而 `loaded_game=null`，或跨初始化批次的模型与游戏状态。客户端使用 `reason_code` 分类，不解析自然语言说明。
+
+### 8.3 游戏选择响应
+
+| 结果 | HTTP / code |
+| --- | --- |
+| 选择已保存 | `200`，完整 status；缺模型时为 `needs_configuration` |
+| 请求体非法或未知游戏 | `400 / invalid_request` 或 `invalid_game` |
+| Runtime blocked | `400 / setup_blocked` |
+| 迁移归属冲突 | `409 / migration_conflict` |
+| 候选 profile 无效 | `409 / profile_invalid` |
+| 资产或选择提交失败 | `500 / game_setup_failed` |
+
+选择成功保存后，初始化失败通过返回的 status 表达 `blocked / initialization_failed`，保留选择，不把初始化失败误称为选择未写入。响应和日志不回传密钥。
+
+## 9. 本地客户端
 
 ```text
-1  它保留 `Seed()` "不做静默升级"的既定原则，同时把分发问题变成用户可理解的动作；
-   B 会把 Runtime 的行为配置绑到适配器仓库的发布节奏上；C 引入版本 reconcile，是三者中最重的。
+全新 data root
+Choose Game → 准备资产 → Configure Model → Ready
 
-2  它符合既有的 ownership 边界：Runtime owns Definition / Context / Memory，
-   Adapter owns game translation / execution。Game Profile 与 definitions 属于前者，
-   因此随 Runtime 发布。10.5 拆仓之后 wia-adapter-<game> 不需要负责给 Runtime 注册
-   人格与配置资产，否则那个仓库会同时拥有通信实现、游戏 Mod、Runtime 行为配置与
-   Definition catalog，边界反而变混。
+已有可用模型配置、缺少选择
+Choose Game → 准备资产 → Ready
+
+已经 Ready
+Choose Game → 保存下一次选择 → Restart required
+重启 → 新游戏 Ready
 ```
 
-无论选哪个，本阶段的产出必须包含：**既有 data root 如何获得新游戏 profile 的明确路径**，
-以及一条针对"v0.1.0 data root 升级"的验证。
+未初始化时展示已保存选择和下一项可修复配置；Ready 后展示 Current Game 与 Adapter。保存选择与当前游戏不一致时才展示 Next Game 和重启提示。提供“关闭并重新运行 Runtime”的说明，不增加自动重启服务。
 
-## 4. 状态与生命周期
+选择不要求用户编辑文件或环境变量。`assets_ready` 用于配置准备状态，不显示成游戏或 Mod 已安装。
 
-### 4.1 三个状态不变，`reason` 区分缺什么
+请求期间禁用重复提交并显示进度；失败保留有效状态、显示原因，重试重新读取服务器。过期 session 沿用现有凭证恢复流程。重新打开页面、重复与多页面提交均以服务器快照为准；迟到响应不能覆盖较新的选择结果。
 
-Runtime 已有的状态语义（`needs_configuration` ＝ 模型可以修好，`blocked` ＝ 模型修不好，`ready`）
-不需要第四个状态。新增的只是"还没选游戏"也属于 `needs_configuration`，由 `reason` 区分：
+## 10. 实施工作单元与修改清单
 
-```text
-needs_configuration
-  reason = game_not_selected      尚未选择游戏
-  reason = model configuration not found at …   已有游戏，缺模型配置
+| 工作单元 | 修改范围 | 验证命题 |
+| --- | --- | --- |
+| 10.4-1 配置与迁移 | `runtime/config/defaults.go`、`runtime/config/games/`、`runtime/internal/definition/` 及测试；迁移 RimWorld profile | 两款游戏可发现，准备可恢复，旧配置保留，catalog 按游戏加载 |
+| 10.4-2 首次初始化 | `runtime/internal/bootstrap/`、`runtime/cmd/server/main.go`、`task_runtime.go`、Gateway 组件装配及测试 | 首次选择可启动，全部组件使用同一 profile，失败不留下活动组件 |
+| 10.4-3 控制面与准入 | `runtime/internal/httpapi/`、`runtime/internal/gateway/` 及测试 | 写入串行、状态一致、Hello 拒绝与连接清理正确 |
+| 10.4-4 用户流程与分发 | `console/web/src/`、启动与发布脚本、测试 fixture、受影响文档 | 新旧用户流程与便携包脱离源码运行成立 |
 
-ready
-blocked
+取消唯一 profile 约束、加入第二份发布 profile 与适配初始化入口作为协调变更落地。内部单元先验证模块行为；对外包来自端到端路径已经通过的完整变更集。
+
+每个单元完成相关测试、直接回归、内部 CR 和 `git diff --check` 后继续。获得用户提交授权时创建本地 commit；GitHub 推送由用户执行。
+
+功能实现并验证后同步 `README.md`、`docs/STATUS.md`、开发与测试指南、Adapter 使用说明和发布 README。公开事实源只描述已验证能力；历史 10.3 证据保留原验收口径。
+
+## 11. 验证矩阵
+
+以下为开发后的通过条件，当前尚无 10.4 实现结果。
+
+| 用例 | 必须断言 |
+| --- | --- |
+| 两份内嵌 profile | 两款游戏的 agent.json 与完整 definitions 进入发布包；启动不隐式修改资产 |
+| 全新目录，经真实 HTTP 配置 | 选择、准备资产、配置模型后整体 Ready，无需重启或编辑文件 |
+| 已有有效模型目录 | 只选择游戏即可 Ready，模型和密钥内容保持一致 |
+| 初始选择与重复选择 | 初始化前 loaded 为空，完整初始化才冻结，重复选择幂等 |
+| 旧目录与自定义参数 | 按原游戏迁移，原文件及自定义值保留，相对路径语义一致 |
+| 旧 Stardew 用户先选 RimWorld | 旧配置归 Stardew，RimWorld 的 task policy 与 prompt 来自自己 profile |
+| 迁移冲突与目标已存在 | 归属不明时无选择提交；已有有效目标配置保留 |
+| 中断与写入失败 | 资产写入和选择提交边界注入失败，旧选择有效，重试完成，用户文件不被覆盖 |
+| 并发提交 | 游戏与模型并发、两个游戏并发、重复请求不产生组件或文件错配 |
+| definitions 隔离 | 当前游戏缺必要定义会阻止 Ready，其它游戏损坏不影响当前初始化 |
+| 环境变量覆盖 | active game 决定身份，覆盖只影响内容，缺选择不能绕过，外部 catalog 校验目标游戏 |
+| 初始化故障 | 任一组件准备失败时无 loaded_game、无活动 dispatcher，错误可读 |
+| Ready 后切换 | 本进程行为不变，选回当前游戏清除提示，两个方向重启后整套配置一致 |
+| Hello mismatch | 返回 game_mismatch，未发送 EnvironmentReady、未请求能力、无事件或任务准入 |
+| 未 Ready 与第二连接 | 分别返回 runtime_not_ready、adapter_already_connected，已有连接可用 |
+| 断开、失败与重连 | 占位释放、身份清理，旧清理不影响新连接，拒绝记录可见且成功后清除 |
+| API 保护 | session、Host、Origin、blocked body 前置拒绝和错误输入按契约处理且无副作用 |
+| 浏览器完整流程 | 新旧用户、失败重试、迟到响应、重启提示和凭证恢复正确 |
+| 发布包 | 从仓库外任意工作目录运行，内嵌客户端与两份配置可用，不依赖源码路径 |
+
+后端复用 Go 测试框架，Gateway 使用真实 gRPC 流与受控 Adapter fixture 验证时序。模型使用现有受控 provider 验证配置装配，fake 结果不记为实机结论。
+
+开发回归入口：
+
+```powershell
+go test ./runtime/config ./runtime/internal/bootstrap ./runtime/internal/definition ./runtime/internal/httpapi ./runtime/internal/gateway ./runtime/cmd/server
+go test ./... -p 1 -count=1
+npm --prefix console/web run type-check
+npm --prefix console/web run build
+powershell -ExecutionPolicy Bypass -File scripts/check-architecture.ps1
+powershell -ExecutionPolicy Bypass -File scripts/release-runtime.ps1
+git diff --check
 ```
 
-### 4.2 profile 只在 Agent Core 启动时生效
+新旧目录、重启与便携包使用实际进程验证；用户流程通过真实浏览器验证。HTTP 单元测试不替代进程装配与浏览器验证。本阶段不引入新的测试服务或云 CI。
 
-选择动作本身随时可以做（见 §4.3），受限的是**生效时机**：
+## 12. 统一人工验收与退出条件
 
-```text
-启动 WIA
-   ↓
-Local Web 打开
-   ↓
-选择游戏
-   ↓
-Runtime 选择对应 Game Profile
-   ↓
-加载该游戏：agent config / prompt / max_steps / timeout / task policy / definitions
-   ↓
-Agent Core Ready
-```
+10.4 自动验证完成后可继续 10.5，最终在完整交付物上集中验收：
 
-### 4.3 切换 = 写"下次启动的选择"，本进程不改行为
+1. 全新目录与已有模型目录均能通过页面完成所需配置。
+2. 选择 Stardew Valley，真实 Adapter 连接并完成一次对话。
+3. 保存 RimWorld 选择，当前游戏身份保持不变，页面显示重启提示。
+4. 重启 Runtime，真实 RimWorld Adapter 连接并完成一次对话。
+5. 按反方向验证 RimWorld → Stardew Valley，profile 与连接身份一致。
+6. 故意连接与当前游戏不符的 Adapter，页面可见 `game_mismatch`，错误会话不执行游戏动作。
 
-游戏 profile 比模型配置更重（prompt、task、memory policy、timeout、definitions、tool 行为全在内），
-而模型配置在 `ready` 之后已经不允许直接改写（`/api/setup/model` 返回 `already_configured`）。
-本阶段沿用"不热切换"，但 **不热切换 ≠ 不写磁盘**：
+自动验证与上述实机记录全部完成后，10.4 才可标记 Accepted。开发中不要求重复 10.3 的 Pawn、存读档和 caravan 完整验收；历史豁免保持原口径。
 
-```text
-本次 Runtime 生命周期内 profile 固定：
-    当前加载的 profile = 进程启动时读取 active-game.json 后冻结
+## 13. 范围限制
 
-ready 状态下选择另一个游戏
-    → 校验 game_id
-    → 原子写 active-game.json        ← 写的是"下次启动用哪个"
-    → 不修改当前 Agent Core
-    → 返回 restart_required
-
-重启
-    → 读新的 active-game.json
-    → 加载新 profile
-```
-
-若 ready 状态下只返回 `restart_required` 而不写盘，重启后读到的仍是旧值，"重启后加载新
-profile"就不成立——用户换了游戏、重启、发现毫无变化，而且没有任何机制解释原因。
-
-状态上必须区分两个值，否则 Selected Game 的语义不清：
-
-```text
-loaded_game      当前 Runtime 真正在用的（启动时读取并冻结）
-configured_game  active-game.json 里的当前值
-两者不同          → restart_required = true
-```
-
-客户端据此显示：
-
-```text
-Current: Stardew Valley
-Next:    RimWorld
-Restart required
-```
-
-### 4.4 为什么不做热切换
-
-热切换要同时处理：正在进行的 Turn、in-memory continuation、memory projection 的 game 边界、
-能力集替换、以及 prompt 变更。任何一项没做对，都会出现"半新半旧"的会话，
-而这正是最难诊断的一类问题。MVP0 的边界里也没有多游戏并发。
-
-## 5. Selected Game 与 Connected Game
-
-### 5.1 两个概念必须分开
-
-```text
-Selected Game    Runtime 加载的是哪份 Game Profile：即 loaded_game（§4.3）
-Configured Game  active-game.json 里的当前值，即下次启动会加载哪个
-Connected Game   当前哪个 Adapter 真的连上来了（来自 AdapterHello.game_id）
-```
-
-UI 上必须都显示，否则用户无法判断"为什么没反应"：
-
-```text
-Selected:   RimWorld
-Adapter:    RimWorld 1.6   Connected ✓
-```
-
-mismatch 判定用 **loaded_game**——那是本进程真正在跑的 profile，与"下次启动的选择"无关。
-
-### 5.2 mismatch 必须显式报告，不能悄悄工作
-
-```text
-Selected:   RimWorld
-Adapter:    Stardew Valley
-→ Game mismatch
-```
-
-**推荐 fail-closed：拒绝该会话并给出明确 code。** 理由不是 memory 串扰——
-`AgentSessionKey` 含 game_id，记忆本来就是隔离的——而是 **profile 用错了**：
-RimWorld 的 profile（`task.enabled=false`、只有对话能力）收到 Stardew 的事件，
-会产生一组谁也不理解的失败。
-
-这一点需要在实现时确认一个细节：拒绝发生在 Hello 阶段还是首次事件阶段。
-按现状，`game_id` 在 `AdapterHello` 中已知，因此应在 Hello 阶段即可判定。
-
-### 5.3 与 10.2-5 的分工
-
-本阶段只交付：`/api/status` 中的 Selected / Connected 身份、mismatch 判定与提示。
-完整的可观察面（turn 明细、任务与记忆查看、能力可用性、依赖体检）仍属 10.2-5。
-
-## 6. HTTP 面
-
-沿用既有的本地控制面，不新开接口层。既有路由为
-`/api/session`、`/api/status`、`/api/turns`、`/api/setup/options`、`/api/setup/model`。
-
-```text
-GET  /api/status
-     + game    { id, title, source, installed }
-     + adapter { connected, game_id, adapter_id, version }
-
-GET  /api/setup/games
-     返回发布树中可用的游戏，以及每个游戏在当前 data root 是否已安装
-
-POST /api/setup/game
-     body { game_id }
-     写入 active-game.json
-```
-
-约束：
-
-```text
-1  沿用既有 session cookie 与 origin 校验，不新增鉴权路径
-2  沿用 10.2-3 已确立的顺序：先读 Runtime 状态，再解析请求体——
-   blocked 的 Runtime 必须在读 body 之前就被拒绝（对应既有 setup_blocked）
-3  ready 状态下 POST /api/setup/game 仍然写 active-game.json，并返回 restart_required：
-   写入的是下次启动的选择，当前进程的 Agent Core 不受影响（§4.3）
-4  未知 game_id 返回 invalid_game，不隐式创建目录
-```
-
-## 7. 本地客户端
-
-首次启动从一步变两步：
-
-```text
-World Is Agent
-
-Choose a game
-┌────────────────────────┬────────────────────────┐
-│ Stardew Valley         │ RimWorld               │
-│ Game-native NPC Agent  │ Colonist Agent         │
-└────────────────────────┴────────────────────────┘
-        ↓
-Model  /  Model name  /  API Key
-        ↓
-[ Start Runtime ]  → Agent Core Ready
-```
-
-Runtime 页面新增：
-
-```text
-Selected game     RimWorld
-Adapter           RimWorld 1.6 · Connected ✓        （或 Not connected）
-```
-
-切换游戏时：
-
-```text
-Restart required
-本次运行使用的是 <当前游戏>。重启 Runtime 后才会加载 <新游戏>。
-```
-
-用户始终不需要接触 `agent.json`、环境变量或 `definition_catalog_root`；
-这些继续只是开发接口。
-
-## 8. 最终产品形态
-
-```text
-下载 WIA
-   ↓
-双击运行
-   ↓
-浏览器自动打开本地客户端
-   ↓
-选择游戏
-   ↓
-选择模型、填写 Key
-   ↓
-Ready
-   ↓
-启动对应游戏
-   ↓
-Adapter 自动连接
-```
-
-## 9. 阶段拆分
-
-```text
-10.4-1  配置结构
-        games/<game>/agent.json 支持 N 份；把 RimWorld profile 从
-        adapters/rimworld/profile/ 迁入 games/rimworld/（§3.2）；
-        active-game.json；游戏身份与 agent config 的分离解析（§3.4）；
-        "恰好一份"约束移除
-
-10.4-2  分发与迁移
-        缺失游戏 profile 的显式安装路径（§3.5 选定的方案）；
-        既有 v0.1.0 data root 的升级验证
-
-10.4-3  Runtime 与 HTTP
-        三状态语义不变、reason 区分；/api/status 扩展；
-        /api/setup/games 与 /api/setup/game；restart_required；mismatch 拒绝
-
-10.4-4  本地客户端
-        游戏选择步骤；Selected / Connected 展示；restart 提示
-```
-
-每一步只证明一个命题，完成即 commit。
-
-## 10. 退出条件
-
-```text
-1   存在两份真实 shipped profile（Stardew Valley 与 RimWorld），Runtime 不再要求"恰好一份"
-2   active-game.json 决定加载哪份 profile；未选择时进入 needs_configuration 且 reason 可区分
-3   GAMEAGENT_AGENT_CONFIG 仍可作为开发覆盖，优先级最高
-4   切换游戏在 ready 状态下写入 active-game.json 并返回 restart_required；
-    当前进程的 loaded_game 不变，重启后加载 configured_game
-5   重启后确实加载了新 profile：prompt、task policy、definitions 三者同时生效
-6   既有 v0.1.0 data root 有一条明确路径获得新游戏 profile，且该路径经过验证
-7   /api/status 同时暴露 loaded_game（Selected）、configured_game 与 Connected
-8   Adapter 的 game_id 与所选 profile 不一致时被拒绝，且错误可读
-9   首次启动流程为"选游戏 → 选模型 → Ready"，全程不需要用户编辑任何文件或环境变量
-10  Runtime Core 未新增任何 game-specific 分支（games/ 目录内容属数据，不属核心逻辑）
-```
-
-第 7 条的 Selected / Connected 以 Real 实机为准：一个真实 Stardew Adapter 与一个真实 RimWorld Adapter
-分别连接，两种顺序都验证过。
-
-## 11. 已知债务与风险
-
-```text
-若决定先做 10.5（拆仓），§3.5 必须提前单独完成。
-
-一次只能服务一个游戏：本阶段不做多游戏并发，也没有"同一 Runtime 同时承载两个 Adapter"的目标。
-
-不自动识别正在运行的游戏：用户显式选择。自动探测属于后续评估，不在本阶段。
-
-每游戏独立的模型/凭据：本阶段仍是一份模型配置，切换游戏不切换模型。
-
-10.2-5 与本阶段在"是否已连接"上有重叠，实现时以 §5.3 的分工为准，不重复建面。
-```
-
-## 12. 明确不做
-
-```text
-ready 状态下的 profile 热切换
-同一 Runtime 同时服务多个游戏
-自动探测当前运行的游戏
-每游戏独立的模型与凭据
-Adapter 的自动下载与安装
-Installer / 代码签名 / macOS 与 Linux 包（仍属 10.2 已明确的非目标）
-10.2-5 的其余可观察面
-10.6 的 Adapter 接入检查表
-```
+- 一个 Runtime 进程使用一个 profile、接受一个 Adapter 会话。
+- 游戏由用户显式选择，运行后的切换在重启时生效。
+- 模型与凭据跨游戏共用。
+- 游戏与 Adapter 的下载、安装检测、依赖体检和自动安装不属于本阶段。
+- 自动资产版本 reconcile、游戏行为扩展、共享 Adapter 业务框架、第三款游戏、自动重启服务、桌面壳及新平台发行不属于本阶段。

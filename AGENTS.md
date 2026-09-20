@@ -25,23 +25,24 @@ Adapter 可以包装第三方 mod 能力并暴露为 Capability，但必须遵�
 
 ## 仓库模型
 
-WIA 按 Runtime + Protocol + Adapter 组织，分两阶段演进：
+WIA 按 Runtime + Protocol + Adapter 组织。目标为两个仓库：
 
 ```text
-Phase A（逻辑分离，已授权）
-    消除 Adapter 对仓库目录布局的依赖：显式协议依赖点、协议版本契约、脚本与布局解耦、脱离仓库构建验证。
-    物理上仍在同一仓库。
+world-is-agent
+    Runtime、Console、Protocol、Game Profile、prompt、definitions。
 
-Phase B（物理拆仓，已授权）
-    Adapter 迁往独立仓库 wia-adapter-<game>。
-    触发条件是出现第二个真实 Adapter（10.3）；实际执行在 10.5，排在 10.4 之后，
-    因为 definitions 的归属要先由 10.4 决定。
+world-is-agent-adapters
+    stardew-valley/、rimworld/，以及实际接入时新增的其它官方 Adapter 目录。
 ```
 
-- Runtime 主仓库保留 `world-is-agent`，不改名为 `wia-runtime`。
-- 独立 Adapter 仓库统一使用 `wia-adapter-<game>` 命名，例如 `wia-adapter-stardew-valley`。
-- 协议定义暂留在主仓库 `protocol/`，不单独拆仓；Adapter 通过版本化契约依赖它。
-- Mod 的 `UniqueID`、`EntryDll`、`AssemblyName` 等运行时标识与本条命名规范无关，属已发布契约，改动需单独授权。
+Phase A 已完成显式协议依赖、脚本参数化与脱离仓库构建验证。Phase B 在 [10.5 官方 Adapter 仓库拆分方案](docs/phase10/GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md) 中实施，Stardew 与 RimWorld 一起迁出；前置是 [10.4 Game Profile 选择方案](docs/phase10/GameAgent%20MVP0%20Phase10.4%20Game%20Profile%20选择与多游戏产品形态技术方案.md) 的实现与自动验证完成。物理拆仓尚未执行。
+
+- 主仓库名称固定为 `world-is-agent`，官方 Adapter 仓库名称固定为 `world-is-agent-adapters`。
+- 每款游戏保留独立工程、依赖、源码、资产、测试、构建、安装和打包入口。目录共存不要求共享 Adapter 业务框架或统一 transport。
+- Protocol 定义保留在主仓库 `protocol/`；每个 Adapter 声明已测 tag，通过显式 `WIA_PROTOCOL_DIR` 依赖对应源码，不能依赖主仓库当前 HEAD 或隐式兄弟目录布局。
+- Game Profile、prompt、definitions 与旧发布配置的迁移数据随 Runtime 发布，Adapter 仓库负责游戏翻译与执行。
+- 社区 Adapter 可以使用自己的仓库，并遵守版本化 Protocol 契约。
+- Mod 的 `UniqueID`、`EntryDll`、`AssemblyName`、安装目录及既有工程和命名空间是兼容契约，迁仓时保持不变。
 
 ## 基本工作方式
 
@@ -62,7 +63,8 @@ Phase B（物理拆仓，已授权）
 ## 迭代与交付流程
 
 - 以“一个用户可见的改进或一项公开文档修正”为工作单元，不再以阶段 / 子阶段作为开发、交付和验收单位。
-- 一个工作单元完成相关测试、直接受影响的回归、内部 CR 和 `git diff --check` 后本地提交即可继续，不要求先产出阶段方案文件或等待逐项验收。
+- 一个工作单元完成相关测试、直接受影响的回归、内部 CR 和 `git diff --check` 后即可继续；获得用户本地提交授权时按工作单元提交，不等待逐项人工验收。
+- 10.4 → 10.5 按已确认方案连续实施，在已授权开发范围内完成自动验证后集中进行产品验收。文档确认与实现通过分别记录，不把方案状态写成已完成能力。
 - 缺陷修复、文档一致性修正、既有行为的健壮性补强按上述方式直接完成；新增对外能力、改变产品行为或扩大范围时，先向用户确认范围与验收条件。
 - 交付时说明：改了什么、跑了哪些验证、结果如何、还有什么已知限制。内部自查与独立上下文审查应如实区分。
 - 需要实机验证的改动，交付时写清实机验证步骤和失败时的安全行为。自动化测试证明机制正确性，不替代实机结论，也不把只有 fake 通过记成实机通过。
@@ -127,7 +129,7 @@ game-specific Observation.state
 ## Prompt 配置边界
 
 - Runtime 默认 prompt 必须保持通用，不写死 Stardew capability name。
-- 游戏特定 prompt profile 如有需要，应放在 Runtime 配置树，例如 `runtime/config/profiles/<game>.json`。
+- 游戏特定 profile 放在 `runtime/config/games/<game>/agent.json`，definitions 放在同目录的 `definitions/`。
 - 不把 Runtime prompt 配置放入 Adapter 目录。
 - Prompt 只能引导模型选择工具，不能作为 Runtime 执行约束的唯一来源。
 - 需要强制执行的规则必须进入结构化 metadata、Registry、Scheduler 或 Protocol。
@@ -172,7 +174,7 @@ game-specific Observation.state
 
 ## 文档边界
 
-文档按用途分三类：
+文档按用途分四类：
 
 ```text
 公开事实源
@@ -183,9 +185,12 @@ game-specific Observation.state
     docs/summary/ 下的架构规范、多游戏兼容性决策等
     保留既有文件名以维持引用稳定；内容按需要对当前版本补充说明。
 
+实施方案
+    尚在规划或执行的阶段方案，按用户确认的需求更新接口、范围和验收条件；规划状态与实现结果明确区分。
+
 历史记录
-    docs/phase*/ 阶段方案与验收记录、docs/archive/、docs/pro/、docs/superpowers/、docs/adapter/
-    属于历史事实记录，不回填修改、不做名称批量替换；仅在链接或引用确实误导外部读者时修正引用。
+    已完成阶段的方案与验收记录、docs/archive/、docs/pro/、docs/adapter/，以及已归档的设计材料
+    保留历史事实，不回填修改、不做名称批量替换；仅在链接或引用确实误导外部读者时修正引用。
 ```
 
 - 公开事实源不得引用不存在的文件，链接必须有效。
