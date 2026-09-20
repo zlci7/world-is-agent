@@ -4,6 +4,8 @@
 
 World Is Agent（WIA）在本机运行，通过游戏 Adapter 接收实时状态、调用大语言模型，再把角色的对话或行动交回游戏执行。模型配置、游戏切换和运行记录都可以在本地 Web 控制台中管理。
 
+![World Is Agent 架构概览](docs/images/world-is-agent.jpg)
+
 ## 你可以用它做什么
 
 - 让游戏角色结合身份、当前环境和历史记忆进行对话与决策。
