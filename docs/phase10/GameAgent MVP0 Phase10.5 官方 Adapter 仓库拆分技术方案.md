@@ -8,7 +8,7 @@
 
 ## 1. 目标与仓库结构
 
-两个官方 Adapter 一起迁入 `world-is-agent-adapters`。Runtime、客户端、Protocol 和游戏行为配置保留在 `world-is-agent`。
+两个官方 Adapter 位于本地 `world-is-agent-adapters`，GitHub 远端为 [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter)。Runtime、客户端、Protocol 和游戏行为配置保留在 `world-is-agent`。
 
 ```text
 world-is-agent/
@@ -226,4 +226,4 @@ GitHub 建仓、推送、tag 发布和 Release 上传由用户执行。本阶段
 6. 当前文档与本地事实一致，10.3 历史验收口径和兼容标识保持不变。
 7. 本地迁移提交和发布产物可交付用户验收；GitHub 上传状态单独记录，不作为已自动完成事项。
 
-实现与自动验证完成不等于 Accepted。最终 Accepted 状态以用户 CR、主仓库完整验证和统一实机验收记录为准；本地两个仓库尚未上传 GitHub，也未创建远端 Release。
+实现与自动验证完成不等于 Accepted。最终 Accepted 状态以用户 CR、主仓库完整验证和统一实机验收记录为准；两个仓库源码均已推送 GitHub；10.5 安装包仍为本地验收产物，未创建对应远端 Release。

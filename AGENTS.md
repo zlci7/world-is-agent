@@ -37,7 +37,7 @@ world-is-agent-adapters
 
 Phase A 已完成显式协议依赖、脚本参数化与脱离仓库构建验证。Phase B 已按 [10.5 官方 Adapter 仓库拆分方案](docs/phase10/GameAgent%20MVP0%20Phase10.5%20官方%20Adapter%20仓库拆分技术方案.md) 完成实现与自动验证，Stardew 与 RimWorld 已迁入独立的本地 `world-is-agent-adapters` Git 仓库。GitHub 上传、用户 CR 与 10.4/10.5 联合实机验收仍待完成。
 
-- 主仓库名称固定为 `world-is-agent`，官方 Adapter 仓库名称固定为 `world-is-agent-adapters`。
+- 主仓库名称为 `world-is-agent`；官方 Adapter 的本地目录为 `world-is-agent-adapters`，GitHub 远端为 `https://github.com/zlci7/world-is-agent-adapter.git`。
 - 两个仓库均以各自 `main` 分支为当前开发线；优先直接在当前 `main` 工作，不要求创建分支或 worktree。
 - 每款游戏保留独立工程、依赖、源码、资产、测试、构建、安装和打包入口。目录共存不要求共享 Adapter 业务框架或统一 transport。
 - 单游戏目录的构建、测试、打包和安装入口保持自足。仓库根部辅助脚本仅提供可选统一调用或仓库检查；游戏入口不反向依赖它，不预建无实际用途的共享基础设施。

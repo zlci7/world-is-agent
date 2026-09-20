@@ -24,7 +24,7 @@ scripts/     Local validation and helper scripts
 
 ## Repository Model
 
-WIA is organized as Runtime + Protocol + Adapter across two independent local Git repositories. `world-is-agent` owns the Runtime, Console, Protocol, and shipped Game Profiles, prompts, and definitions under `runtime/config/games/`. `world-is-agent-adapters` owns the official game translation and execution implementations. See [logical-separation.md](logical-separation.md).
+WIA is organized as Runtime + Protocol + Adapter across two independent Git repositories. `world-is-agent` owns the Runtime, Console, Protocol, and shipped Game Profiles, prompts, and definitions under `runtime/config/games/`. `world-is-agent-adapters` owns the official game translation and execution implementations. See [logical-separation.md](logical-separation.md).
 
 ## Runtime Configuration And Game Selection
 
@@ -98,7 +98,7 @@ The normative rules — optional dependency, public-interface access, main-threa
 
 ## Official Adapters
 
-The official adapters are maintained in a separate local Git repository. Set its location explicitly; scripts do not assume that the two repositories are siblings.
+The official adapters are maintained at [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter). Clone it into the local `world-is-agent-adapters` directory, or choose another location and set it explicitly; scripts do not assume that the two repositories are siblings.
 
 ```powershell
 $adapterRoot = 'D:\src\world-is-agent-adapters'
@@ -132,7 +132,7 @@ $gamePath = 'D:\SteamLibrary\steamapps\common\Stardew Valley'
 & "$adapterRoot\rimworld\scripts\install-rimworld-adapter.ps1" -GamePath 'D:\Games\RimWorld' -ProtocolRepository $protocolRepository -ProtocolDir $protocolDir
 ```
 
-Release scripts validate game-specific `-ReleaseTag` values. Stardew packaging requires the full adapter repository commit through `-SourceCommit`; RimWorld can read it from the current checkout. Exported source snapshots supply their original commit explicitly. The adapters are local deliverables today: no GitHub adapter repository or release has been uploaded.
+Release scripts validate game-specific `-ReleaseTag` values. Stardew packaging requires the full adapter repository commit through `-SourceCommit`; RimWorld can read it from the current checkout. Exported source snapshots supply their original commit explicitly. Adapter source is available on GitHub. Packages remain local acceptance artifacts; no Adapter release has been published.
 
 ## Documentation Expectations
 
