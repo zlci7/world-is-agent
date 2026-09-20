@@ -8,7 +8,7 @@
 
 ## 1. 目标与仓库结构
 
-两个官方 Adapter 位于本地 `world-is-agent-adapters`，GitHub 远端为 [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter)。Runtime、客户端、Protocol 和游戏行为配置保留在 `world-is-agent`。
+两个官方 Adapter 位于本地 `world-is-agent-adapters`，GitHub 远端为 [world-is-agent-adapters](https://github.com/zlci7/world-is-agent-adapters)。Runtime、客户端、Protocol 和游戏行为配置保留在 `world-is-agent`。
 
 ```text
 world-is-agent/

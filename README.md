@@ -31,7 +31,7 @@ Extract `dist\world-is-agent-v<version>-windows-amd64.zip`, run `wia-runtime.exe
 
 Choose **Switch game** to apply another profile in the running Runtime. Active turns are canceled, recorded history is retained, and the matching adapter reconnects. **Model settings** lets you change the provider, model, API key, and optional base URL; the candidate is tested before it is applied.
 
-Automatic reconnection requires Stardew Adapter 0.1.1 or the current RimWorld Adapter 0.1.0. The Runtime package does not include game adapters. Build and install them from [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter). See [Official Adapters](docs/development/guide.md#official-adapters).
+Automatic reconnection requires Stardew Adapter 0.1.1 or the current RimWorld Adapter 0.1.0. The Runtime package does not include game adapters. Build and install them from [world-is-agent-adapters](https://github.com/zlci7/world-is-agent-adapters). See [Official Adapters](docs/development/guide.md#official-adapters).
 
 For development, run `.\scripts\start-runtime.ps1`. It uses `WIA_DATA_ROOT` when set, otherwise `runtime/.local/runtime-data`, and does not select a game implicitly. See the [development guide](docs/development/guide.md).
 
@@ -48,7 +48,7 @@ console/      Local browser client
 docs/         Architecture, status, development, and historical records
 ```
 
-Official adapters live in the independent [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter) Git repository. This repository contains the Runtime, Console, Protocol, and Runtime-owned Game Profiles.
+Official adapters live in the independent [world-is-agent-adapters](https://github.com/zlci7/world-is-agent-adapters) Git repository. This repository contains the Runtime, Console, Protocol, and Runtime-owned Game Profiles.
 
 ## Documentation
 

@@ -60,6 +60,9 @@ The Runtime alone does not touch the game. Games are connected by an adapter
 that is installed separately and is not part of this package. Choose the matching
 game in the console and wait for Ready before starting it.
 
+Official adapters:
+https://github.com/zlci7/world-is-agent-adapters
+
 For Stardew Valley:
 
   1. Install SMAPI (https://smapi.io) if you have not already.

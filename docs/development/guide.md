@@ -98,7 +98,7 @@ The normative rules — optional dependency, public-interface access, main-threa
 
 ## Official Adapters
 
-The official adapters are maintained at [world-is-agent-adapter](https://github.com/zlci7/world-is-agent-adapter). Clone it into the local `world-is-agent-adapters` directory, or choose another location and set it explicitly; scripts do not assume that the two repositories are siblings.
+The official adapters are maintained at [world-is-agent-adapters](https://github.com/zlci7/world-is-agent-adapters). Clone it into the local `world-is-agent-adapters` directory, or choose another location and set it explicitly; scripts do not assume that the two repositories are siblings.
 
 ```powershell
 $adapterRoot = 'D:\src\world-is-agent-adapters'
