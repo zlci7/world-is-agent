@@ -43,8 +43,8 @@ func TestOrdinaryEventWithoutTaskSourceDoesNotGainTaskAuthority(t *testing.T) {
 func TestAdapterPlayerEventCreatesDurableTaskBeforeConfirmation(t *testing.T) {
 	for _, kind := range []string{"click", "option", "free_text"} {
 		t.Run(kind, func(t *testing.T) {
-			// These fixtures are also compared to the production C# Mapper output.
-			data, err := os.ReadFile(filepath.Join("../../../adapters/stardew/tests/fixtures", "player-"+kind+".json"))
+			// Protocol fixtures cover the supported player interaction sources.
+			data, err := os.ReadFile(filepath.Join("../../../protocol/tests/fixtures/player-interactions", "player-"+kind+".json"))
 			if err != nil {
 				t.Fatal(err)
 			}
