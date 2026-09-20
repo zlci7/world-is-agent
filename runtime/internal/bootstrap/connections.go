@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/internal/idgen"
 )
 
 type ConnectionError struct {
@@ -40,7 +41,7 @@ func (r *Runtime) Connect(stream protocol.GameAgentGateway_ConnectServer) error 
 	}
 	r.mu.Unlock()
 	if code != "" {
-		return stream.Send(&protocol.RuntimeMessage{CorrelationId: first.MessageId, Payload: &protocol.RuntimeMessage_Error{Error: &protocol.Error{Code: code, Message: message}}})
+		return stream.Send(&protocol.RuntimeMessage{MessageId: idgen.New("error"), CorrelationId: first.MessageId, Payload: &protocol.RuntimeMessage_Error{Error: &protocol.Error{Code: code, Message: message}}})
 	}
 	return bundle.gateway.Connect(&helloStream{GameAgentGateway_ConnectServer: stream, first: first})
 }

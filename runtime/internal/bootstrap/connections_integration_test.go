@@ -23,13 +23,20 @@ func TestConnectRejectsBeforeReadyWithoutStartingCapabilityDiscovery(t *testing.
 	client, cleanup := runtimeGatewayClient(t, runtime)
 	defer cleanup()
 
-	stream := openRuntimeStream(t, client, "rimworld", "early")
-	message := recvRuntime(t, stream)
-	if got := message.GetError(); got == nil || got.Code != "runtime_not_ready" {
-		t.Fatalf("first response = %+v, want runtime_not_ready", message.Payload)
-	}
-	if _, err := stream.Recv(); err != io.EOF {
-		t.Fatalf("second Recv error = %v, want EOF", err)
+	previousID := ""
+	for attempt := 0; attempt < 2; attempt++ {
+		stream := openRuntimeStream(t, client, "rimworld", "early")
+		message := recvRuntime(t, stream)
+		if got := message.GetError(); got == nil || got.Code != "runtime_not_ready" {
+			t.Fatalf("first response = %+v, want runtime_not_ready", message.Payload)
+		}
+		if message.MessageId == "" || message.MessageId == previousID || message.MessageId == "hello-early" || message.CorrelationId != "hello-early" {
+			t.Fatalf("rejection must have its own unique ID and correlate to Hello: %+v", message)
+		}
+		previousID = message.MessageId
+		if _, err := stream.Recv(); err != io.EOF {
+			t.Fatalf("second Recv error = %v, want EOF", err)
+		}
 	}
 	if got := runtime.Snapshot(); got.ConnectionCount != 0 || got.LastConnectionError == nil || got.LastConnectionError.Code != "runtime_not_ready" {
 		t.Fatalf("snapshot = %+v", got)
@@ -48,6 +55,9 @@ func TestConnectRejectsWrongGameBeforeCapabilityRequestAndPreservesValidConnecti
 	message := recvRuntime(t, rejected)
 	if got := message.GetError(); got == nil || got.Code != "game_mismatch" {
 		t.Fatalf("first response = %+v, want game_mismatch", message.Payload)
+	}
+	if message.MessageId == "" || message.MessageId == "hello-wrong" || message.CorrelationId != "hello-wrong" {
+		t.Fatalf("rejection must have its own ID and correlate to Hello: %+v", message)
 	}
 	if _, err := rejected.Recv(); err != io.EOF {
 		t.Fatalf("second Recv error = %v, want EOF", err)
