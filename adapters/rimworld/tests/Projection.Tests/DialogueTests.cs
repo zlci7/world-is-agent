@@ -63,7 +63,7 @@ namespace WiaRimWorld.Projection.Tests
         [Theory]
         [InlineData(null)]
         [InlineData(true)]
-        public void EndingFormRequiresFreeTextToBeRefusedExplicitly(bool? allowFreeText)
+        public void EmptyOptionsWithFreeTextAllowedIsRejected(bool? allowFreeText)
         {
             PresentDialogueRequest request;
             string message;
@@ -72,7 +72,22 @@ namespace WiaRimWorld.Projection.Tests
             // conversation that can neither continue nor be closed.
             Assert.False(PresentDialogueParser.TryParse(
                 Arguments("就这样吧。", allowFreeText: allowFreeText), out request, out message));
-            Assert.Contains("allow_free_text=false", message);
+            Assert.Contains("continuing dialogue", message);
+        }
+
+        [Fact]
+        public void ThreeOptionsWithFreeTextRefusedIsRejected()
+        {
+            PresentDialogueRequest request;
+            string message;
+
+            // This shape is accepted if the parser keys its check off the option count rather than
+            // off allow_free_text, which is exactly how this adapter and the Stardew adapter drifted
+            // apart once. The two adapters agreeing on the contract is the whole point of the
+            // capability, so the near-miss belongs in the suite.
+            Assert.False(PresentDialogueParser.TryParse(
+                Arguments("台词", "一", "二", "三", allowFreeText: false), out request, out message));
+            Assert.Contains("ending dialogue must not include reply options", message);
         }
 
         [Theory]
@@ -287,6 +302,37 @@ namespace WiaRimWorld.Projection.Tests
             // bound this map would grow for the life of the process.
             Assert.False(store.TryResolve("event-0", out resolved));
             Assert.True(store.TryResolve("event-" + ConversationStore.MaxEventBindings, out resolved));
+        }
+
+        [Fact]
+        public void AnOpenConversationIsFoundByEntity()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation first = store.Begin("world-1", "pawn:A", "event-1");
+            Conversation second = store.Begin("world-1", "pawn:B", "event-2");
+
+            Conversation found;
+            Assert.True(store.TryGetOpenForEntity("pawn:A", out found));
+            Assert.Equal(first.ConversationId, found.ConversationId);
+            Assert.True(store.TryGetOpenForEntity("pawn:B", out found));
+            Assert.Equal(second.ConversationId, found.ConversationId);
+            Assert.False(store.TryGetOpenForEntity("pawn:C", out found));
+        }
+
+        [Fact]
+        public void AClosedConversationIsNoLongerOpenForItsEntity()
+        {
+            ConversationStore store = new ConversationStore();
+            Conversation conversation = store.Begin("world-1", "pawn:A", "event-1");
+
+            store.Close(conversation.ConversationId);
+
+            // Both halves matter. The entity lookup gates a new conversation, so a colonist whose
+            // window the player closed has to become available again; the event lookup keeps a late
+            // ActionRequest answerable instead of leaving the Runtime waiting.
+            Conversation found;
+            Assert.False(store.TryGetOpenForEntity("pawn:A", out found));
+            Assert.True(store.TryResolve("event-1", out found));
         }
 
         [Fact]

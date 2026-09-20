@@ -7,8 +7,8 @@
     "Time advances as an absolute tick counter that is saved with the colony; there is no separate calendar mapping in this integration.",
     "A colonist is a named, humanlike member of the player's own faction. Prisoners, guests, enemies, animals and mechanoids are not colonists.",
     "Colonists have needs such as food, rest and recreation that decay over time, and a mood that reflects how well those needs are met.",
-    "Skills and traits come from the colonist's own history: they are learned and acquired during play, not chosen by the player at the start.",
-    "The colony exists on one map at a time; a colonist travelling in a caravan has no map and no position."
+    "Traits, backgrounds and skills are properties of the generated colonist, and they shape how that colonist works and speaks.",
+    "A colonist may be present on a map or travelling off-map in a caravan; different colonists may be on different maps."
   ],
   "lore": [
     "The rimworld is a procedurally generated planet at the edge of known space.",

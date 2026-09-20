@@ -57,22 +57,18 @@ namespace Wia.RimWorld.Dialogue
                 string[] options = ReadOptions(arguments);
                 bool allowFreeText = ReadAllowFreeText(arguments);
 
-                if (options.Length == 0)
-                {
-                    // The ending form is only legal when the model says so explicitly. Defaulting
-                    // allow_free_text to true would silently turn "I have nothing more to say" into
-                    // a conversation that cannot be continued and cannot be closed.
-                    if (allowFreeText)
-                    {
-                        message = "reply_options=[] requires allow_free_text=false";
-                        return false;
-                    }
-                }
-                else
+                // The two legal forms are defined by allow_free_text, exactly as the Stardew adapter
+                // defines them: allowing free text means the conversation continues, so it must offer
+                // exactly three replies; refusing it means the conversation ends, so it must offer
+                // none. Keying the check off the option count instead would let three replies with
+                // allow_free_text=false through - a request shaped like a continuation that actually
+                // asks for a conversation the player can neither continue nor close. The whole point
+                // of this capability is that both adapters accept and reject the same shapes.
+                if (allowFreeText)
                 {
                     if (options.Length != ContinueOptionCount)
                     {
-                        message = "reply_options must contain exactly " + ContinueOptionCount.ToString() + " entries, or be empty to end the conversation";
+                        message = "continuing dialogue must include exactly " + ContinueOptionCount.ToString() + " reply options";
                         return false;
                     }
 
@@ -85,6 +81,11 @@ namespace Wia.RimWorld.Dialogue
                             return false;
                         }
                     }
+                }
+                else if (options.Length != 0)
+                {
+                    message = "ending dialogue must not include reply options";
+                    return false;
                 }
 
                 request = new PresentDialogueRequest

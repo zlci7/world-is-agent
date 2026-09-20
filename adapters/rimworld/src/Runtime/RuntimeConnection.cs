@@ -38,7 +38,7 @@ namespace Wia.RimWorld.Runtime
         {
             this.pump = pump ?? throw new ArgumentNullException(nameof(pump));
             this.Observations = new ColonistObservationService(pump);
-            this.Dialogue = new DialogueService(this.TrySendEvent);
+            this.Dialogue = new DialogueService(pump, this.TrySendEvent);
         }
 
         public RuntimeSessionState Session
@@ -141,23 +141,32 @@ namespace Wia.RimWorld.Runtime
             }
 
             AdapterMessage message = ProtocolMapper.BuildEventMessage(gameEvent);
-            _ = this.SendDetachedAsync(call, message, token);
+            _ = this.SendDetachedAsync(call, message, gameEvent.EventId, token);
             return true;
         }
 
         private async Task SendDetachedAsync(
             AsyncDuplexStreamingCall<AdapterMessage, RuntimeMessage> call,
             AdapterMessage message,
+            string eventId,
             CancellationToken token)
         {
             try
             {
                 await this.SendAsync(call, message, token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                // The session is going away; there is nobody left to tell.
+            }
             catch (Exception ex)
             {
+                // The caller already reported the click as accepted, because it was handed to a live
+                // session. If the write itself then fails, the conversation has to be unwound here or
+                // the player is left waiting for a turn that will never arrive.
                 AdapterLog.Warn(
                     "could not send " + message.MessageId + ": " + ex.GetType().Name + ": " + ex.Message);
+                this.Dialogue.AbandonEvent(eventId, "发送失败");
             }
         }
 
@@ -298,13 +307,11 @@ namespace Wia.RimWorld.Runtime
                     break;
 
                 case RuntimeMessage.PayloadOneofCase.TurnCompletion:
-                    AdapterLog.Info(
-                        "turn completed turn=" + message.TurnCompletion.TurnId +
-                        " status=" + message.TurnCompletion.Status);
+                    this.HandleTurnCompletion(message.TurnCompletion);
                     break;
 
                 case RuntimeMessage.PayloadOneofCase.EventAck:
-                    HandleEventAck(message.EventAck);
+                    this.HandleEventAck(message.EventAck);
                     break;
 
                 case RuntimeMessage.PayloadOneofCase.CancelAction:
@@ -330,9 +337,9 @@ namespace Wia.RimWorld.Runtime
 
         /// <summary>
         /// The Runtime's answer to a GameEvent we sent. A rejection is the one outcome the player
-        /// cannot see any other way: the click produced a message, and nothing came back.
+        /// cannot see any other way: the click produced a message, and nothing ever comes back.
         /// </summary>
-        private static void HandleEventAck(EventAck ack)
+        private void HandleEventAck(EventAck ack)
         {
             if (ack == null)
             {
@@ -346,6 +353,8 @@ namespace Wia.RimWorld.Runtime
                     break;
 
                 case EventAckStatus.Duplicate:
+                    // The Runtime already has this event, so the turn it started is running. The
+                    // conversation is fine and must not be unwound.
                     AdapterLog.Warn("runtime treated the event as a duplicate event=" + ack.EventId);
                     break;
 
@@ -353,11 +362,36 @@ namespace Wia.RimWorld.Runtime
                     AdapterLog.Error(
                         "event rejected event=" + ack.EventId +
                         ": " + ack.Error?.Code + " " + ack.Error?.Message);
+                    this.Dialogue.AbandonEvent(ack.EventId, "Runtime 拒绝了这次事件");
                     break;
 
                 default:
                     AdapterLog.Warn("event ack with status " + ack.Status + " event=" + ack.EventId);
                     break;
+            }
+        }
+
+        /// <summary>
+        /// The end of a turn. Only the unsuccessful ends unwind the conversation: a completed turn is
+        /// the normal case and deliberately leaves the window open, because the player has not
+        /// answered yet and the reply is what starts the next turn.
+        /// </summary>
+        private void HandleTurnCompletion(TurnCompletion completion)
+        {
+            if (completion == null)
+            {
+                return;
+            }
+
+            AdapterLog.Info("turn completed turn=" + completion.TurnId + " status=" + completion.Status);
+
+            if (completion.Status == TurnCompletionStatus.Failed)
+            {
+                this.Dialogue.AbandonEvent(completion.EventId, "回合失败");
+            }
+            else if (completion.Status == TurnCompletionStatus.Cancelled)
+            {
+                this.Dialogue.AbandonEvent(completion.EventId, "回合被取消");
             }
         }
 

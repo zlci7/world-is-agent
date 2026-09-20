@@ -90,8 +90,14 @@ namespace WiaRimWorld.Projection.Tests
                 skills.Select(value => Num(value.StructValue, "level")).ToArray());
         }
 
+        /// <summary>
+        /// Bounds what the projection is configured to bound. Several fields are deliberately not
+        /// capped - the entity id, the map id, def names - because the adapter only ever fills them
+        /// from the game's own identifiers, so a name that claimed every field were bounded would be
+        /// claiming more than the code does.
+        /// </summary>
         [Fact]
-        public void EveryFieldIsBoundedNoMatterHowLargeTheInputIs()
+        public void ConfiguredTextFieldsAndCollectionsAreBounded()
         {
             RimWorldSnapshot snapshot = Snapshot();
             snapshot.Name = new string('n', 500);

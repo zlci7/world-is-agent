@@ -106,6 +106,37 @@ namespace Wia.RimWorld.Dialogue
         }
 
         /// <summary>
+        /// The open conversation for one entity, if there is one.
+        ///
+        /// Used to keep a colonist from stacking up conversations: each one starts a turn, the
+        /// Runtime runs one turn per entity lane at a time, and a burst of clicks would queue or drop
+        /// the extras while the player sees windows appear from earlier clicks. The open map is
+        /// bounded by this check, since at most one entry per entity can exist.
+        /// </summary>
+        public bool TryGetOpenForEntity(string entityId, out Conversation conversation)
+        {
+            conversation = null;
+            if (string.IsNullOrEmpty(entityId))
+            {
+                return false;
+            }
+
+            lock (this.gate)
+            {
+                foreach (Conversation candidate in this.open.Values)
+                {
+                    if (string.Equals(candidate.EntityId, entityId, StringComparison.Ordinal))
+                    {
+                        conversation = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Forgets a conversation. Called when the model ends it and when the player closes the
         /// window without replying; neither case produces another event.
         /// </summary>

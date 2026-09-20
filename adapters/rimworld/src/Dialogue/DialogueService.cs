@@ -5,6 +5,7 @@ using RimWorld;
 using Verse;
 using Wia.RimWorld.Identity;
 using Wia.RimWorld.Runtime;
+using Wia.RimWorld.Threading;
 
 namespace Wia.RimWorld.Dialogue
 {
@@ -24,13 +25,15 @@ namespace Wia.RimWorld.Dialogue
 
         private readonly ConversationStore conversations = new ConversationStore();
         private readonly Func<GameEvent, bool> send;
+        private readonly MainThreadPump pump;
         private readonly Dictionary<string, WiaDialogueWindow> windows =
             new Dictionary<string, WiaDialogueWindow>(StringComparer.Ordinal);
 
         private long sequence;
 
-        public DialogueService(Func<GameEvent, bool> send)
+        public DialogueService(MainThreadPump pump, Func<GameEvent, bool> send)
         {
+            this.pump = pump ?? throw new ArgumentNullException(nameof(pump));
             this.send = send ?? throw new ArgumentNullException(nameof(send));
         }
 
@@ -71,6 +74,18 @@ namespace Wia.RimWorld.Dialogue
             }
 
             string entityId = EntityId.For(pawn);
+
+            Conversation open;
+            if (this.conversations.TryGetOpenForEntity(entityId, out open))
+            {
+                // One conversation per colonist. A second click would start a second turn on the same
+                // entity lane, where the Runtime runs one turn at a time, so the extras queue or drop
+                // while the player sees whichever window an earlier click produced and cannot tell
+                // which click it belongs to.
+                failure = "这位殖民者已经在对话中";
+                return false;
+            }
+
             string eventId = ProtocolMapper.NewMessageId("event");
             Conversation conversation = this.conversations.Begin(worldId, entityId, eventId);
 
@@ -125,6 +140,16 @@ namespace Wia.RimWorld.Dialogue
                     request, "unknown_source_event", "no conversation is associated with the source event");
             }
 
+            // The event binding deliberately outlives the conversation so that a late or duplicated
+            // ActionRequest gets an explicit rejection instead of leaving the Runtime waiting. That
+            // only works if the answer is checked here - resolving the event is not the same as the
+            // conversation still being live.
+            if (!this.conversations.IsOpen(conversation.ConversationId))
+            {
+                return ProtocolMapper.BuildRejected(
+                    request, "conversation_closed", "the conversation has already ended");
+            }
+
             if (!string.Equals(conversation.EntityId, request.EntityId, StringComparison.Ordinal))
             {
                 return ProtocolMapper.BuildRejected(
@@ -170,6 +195,38 @@ namespace Wia.RimWorld.Dialogue
                 input.Text,
                 input.ReplyOptions.Length,
                 input.AllowFreeText);
+        }
+
+        /// <summary>
+        /// Forgets a conversation whose event did not survive, and tells the player.
+        ///
+        /// Called from the stream thread when the Runtime rejects an event, when a turn ends without
+        /// completing, or when a detached write fails. Closing the store entry is thread-safe on its
+        /// own; the window and the message touch the game, so they go through the pump. Without this
+        /// a rejected click would leave the player talking into a conversation the Runtime never
+        /// accepted, which is the silent failure the send path already refuses to produce.
+        /// </summary>
+        public void AbandonEvent(string eventId, string reason)
+        {
+            Conversation conversation;
+            if (!this.conversations.TryResolve(eventId, out conversation))
+            {
+                return;
+            }
+
+            this.conversations.Close(conversation.ConversationId);
+
+            this.pump.Enqueue(() =>
+            {
+                WiaDialogueWindow window;
+                if (this.windows.TryGetValue(conversation.ConversationId, out window))
+                {
+                    this.windows.Remove(conversation.ConversationId);
+                    window.Close();
+                }
+
+                Messages.Message("WIA 对话没有开始：" + reason, MessageTypeDefOf.RejectInput, false);
+            });
         }
 
         private void Present(Conversation conversation, Pawn pawn, PresentDialogueRequest input)
@@ -242,6 +299,11 @@ namespace Wia.RimWorld.Dialogue
 
             if (!this.send(gameEvent))
             {
+                // The reply was never handed to a live session, so the conversation it belonged to is
+                // over as far as the Runtime is concerned. Leaving it open would make the next click
+                // on this colonist answer "already talking".
+                this.conversations.Close(conversation.ConversationId);
+                this.windows.Remove(conversation.ConversationId);
                 AdapterLog.Warn("dialogue reply could not be sent: the Runtime is not connected");
                 Messages.Message("WIA Runtime 未连接，回复没有发送", MessageTypeDefOf.RejectInput, false);
             }
