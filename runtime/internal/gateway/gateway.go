@@ -22,13 +22,14 @@ import (
 type Server struct {
 	protocolv1alpha2.UnimplementedGameAgentGatewayServer
 
-	agentLoop     eventHandler
-	worlds        *WorldRegistry
-	dispatcher    *task.Dispatcher
-	resultHistory *ResultHistorySink
-	mu            sync.Mutex
-	connections   map[*worldConnection]struct{}
-	stopped       bool
+	agentLoop       eventHandler
+	worlds          *WorldRegistry
+	dispatcher      *task.Dispatcher
+	resultHistory   *ResultHistorySink
+	mu              sync.Mutex
+	connections     map[*worldConnection]struct{}
+	stopped         bool
+	connectionReady func()
 }
 
 type eventHandler interface {
@@ -208,6 +209,9 @@ func (s *Server) Connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 	}
 	s.connections[connection] = struct{}{}
 	s.mu.Unlock()
+	if s.connectionReady != nil {
+		s.connectionReady()
+	}
 	defer func() {
 		if err := s.closeConnection(context.Background(), connection); err != nil {
 			log.Printf("task disconnect: %s", logSafeError(err))

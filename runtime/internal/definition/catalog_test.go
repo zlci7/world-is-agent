@@ -408,6 +408,66 @@ func TestLoadCatalogFromDirIgnoresNestedAgentDirectory(t *testing.T) {
 	}
 }
 
+func TestLoadGameCatalogFromDirRequiresOnlySelectedGame(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "selected", "definitions", "game.json"), `{"schema_version":"v1alpha1","game_id":"selected","title":"Selected"}`)
+	writeFile(t, filepath.Join(root, "selected", "definitions", "agent.json"), `{"schema_version":"v1alpha1","game_id":"selected","definition_id":"agent"}`)
+	writeFile(t, filepath.Join(root, "broken", "definitions", "game.json"), `{`)
+
+	catalog, err := definition.LoadGameCatalogFromDir(root, "selected")
+	if err != nil {
+		t.Fatalf("LoadGameCatalogFromDir: %v", err)
+	}
+	if _, ok := catalog.FindGame("selected"); !ok {
+		t.Fatal("selected game is missing")
+	}
+}
+
+func TestLoadGameCatalogFromDirRequiresGameAndAgentDefinitions(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "selected", "definitions", "game.json"), `{"schema_version":"v1alpha1","game_id":"selected"}`)
+	if _, err := definition.LoadGameCatalogFromDir(root, "selected"); err == nil || !strings.Contains(err.Error(), "agent definition") {
+		t.Fatalf("missing agents error = %v", err)
+	}
+	os.Remove(filepath.Join(root, "selected", "definitions", "game.json"))
+	if _, err := definition.LoadGameCatalogFromDir(root, "selected"); err == nil || !strings.Contains(err.Error(), "game.json") {
+		t.Fatalf("missing game error = %v", err)
+	}
+}
+
+func TestLoadGameCatalogFromDirLoadsNestedDefinitions(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "selected", "definitions", "game.json"), `{"schema_version":"v1alpha1","game_id":"selected"}`)
+	writeFile(t, filepath.Join(root, "selected", "definitions", "characters", "nested.json"), `{"schema_version":"v1alpha1","game_id":"selected","definition_id":"nested"}`)
+	catalog, err := definition.LoadGameCatalogFromDir(root, "selected")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := catalog.FindAgent("selected", "nested"); !ok {
+		t.Fatal("nested definition was not loaded")
+	}
+}
+
+func TestLoadGameCatalogFromDirRejectsInvalidNestedDefinition(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "selected", "definitions", "game.json"), `{"schema_version":"v1alpha1","game_id":"selected"}`)
+	writeFile(t, filepath.Join(root, "selected", "definitions", "nested", "invalid.json"), `{`)
+	if _, err := definition.LoadGameCatalogFromDir(root, "selected"); err == nil || !strings.Contains(err.Error(), "invalid.json") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadGameCatalogFromDirRejectsDuplicateNestedDefinition(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "selected", "definitions", "game.json"), `{"schema_version":"v1alpha1","game_id":"selected"}`)
+	definitionJSON := `{"schema_version":"v1alpha1","game_id":"selected","definition_id":"duplicate"}`
+	writeFile(t, filepath.Join(root, "selected", "definitions", "one.json"), definitionJSON)
+	writeFile(t, filepath.Join(root, "selected", "definitions", "nested", "two.json"), definitionJSON)
+	if _, err := definition.LoadGameCatalogFromDir(root, "selected"); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

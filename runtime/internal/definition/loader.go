@@ -43,6 +43,60 @@ func LoadCatalogFromDir(root string) (Catalog, error) {
 	return NewCatalog(games, agents)
 }
 
+// LoadGameCatalogFromDir loads one required game beneath a multi-game catalog
+// root. Other game directories are outside this selection and are not read.
+func LoadGameCatalogFromDir(root, gameID string) (Catalog, error) {
+	gameID = strings.TrimSpace(gameID)
+	if gameID == "" || filepath.Base(gameID) != gameID || gameID == "." || gameID == ".." {
+		return Catalog{}, fmt.Errorf("invalid game_id %q", gameID)
+	}
+	definitionsDir := filepath.Join(root, gameID, "definitions")
+	game, found, err := loadGameDefinition(definitionsDir, gameID)
+	if err != nil {
+		return Catalog{}, err
+	}
+	if !found {
+		return Catalog{}, fmt.Errorf("required game definition %s is missing", filepath.Join(definitionsDir, "game.json"))
+	}
+	agents, err := loadSelectedAgentDefinitions(definitionsDir, gameID)
+	if err != nil {
+		return Catalog{}, err
+	}
+	if len(agents) == 0 {
+		return Catalog{}, fmt.Errorf("required agent definition is missing from %s", definitionsDir)
+	}
+	return NewCatalog([]GameDefinition{game}, agents)
+}
+
+func loadSelectedAgentDefinitions(definitionsDir, pathGameID string) ([]AgentDefinition, error) {
+	var agents []AgentDefinition
+	err := filepath.WalkDir(definitionsDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || path == filepath.Join(definitionsDir, "game.json") || filepath.Ext(entry.Name()) != ".json" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read agent definition %s: %w", path, err)
+		}
+		var agent AgentDefinition
+		if err := json.Unmarshal(data, &agent); err != nil {
+			return fmt.Errorf("parse agent definition %s: %w", path, err)
+		}
+		if trimmed := strings.TrimSpace(agent.GameID); trimmed != "" && trimmed != pathGameID {
+			return fmt.Errorf("scope mismatch for agent definition %s: path game_id %q file game_id %q", path, pathGameID, trimmed)
+		}
+		agents = append(agents, agent)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read agent definitions %s: %w", definitionsDir, err)
+	}
+	return agents, nil
+}
+
 func loadGameDefinition(definitionsDir string, pathGameID string) (GameDefinition, bool, error) {
 	path := filepath.Join(definitionsDir, "game.json")
 	data, err := os.ReadFile(path)
