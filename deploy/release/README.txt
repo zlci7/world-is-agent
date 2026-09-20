@@ -101,6 +101,11 @@ by administrators, and by anything running with your rights.
 Only one Runtime may use a data root at a time. A second instance reports
 store_in_use and exits.
 
+The data root filesystem must support hard links. Game Profile preparation
+uses them to create complete files without replacing existing user files.
+If preparation reports storage_unavailable on an unsupported filesystem,
+choose a data root on a filesystem that supports hard links.
+
 
 Status and limits
 -----------------

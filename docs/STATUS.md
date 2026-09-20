@@ -74,13 +74,14 @@ Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and
 | RimWorld identity | `world_id` is a GUID the adapter generates and persists in the save through a `WorldComponent`; `entity_id` is `pawn:` plus the game's own `Pawn.GetUniqueLoadID()`. Verified in game across save and reload. |
 | RimWorld observation | Bounded `state.rimworld` - traits, background, skills, location, needs, mood, health - built by a pure function over a game-free snapshot, so its bounds and its determinism are covered by tests that run without the game. |
 | RimWorld dialogue | A colonist gizmo sends `player_interacted_with_npc` and the player's reply sends `player_said_to_npc`, reusing the same conversation contract and the same `present_dialogue` capability as the Stardew adapter. Verified in game with three colonists: each click produced exactly one turn, the model chose the capability every time, and closing the window sent nothing. |
-| Game Profile selection | Phase 10.4 implementation and automated validation are complete. The full Go suite, targeted race checks, frontend checks, real gRPC fixtures, browser flows with a local model stub, and portable process tests pass. User code review and acceptance with both real games are pending. |
+| Game Profile selection | Phase 10.4 implementation, automated validation, and user code review are complete. The full Go suite, targeted race checks, frontend checks, real gRPC fixtures, browser flows with a local model stub, and portable process tests pass. Final acceptance with both real games is pending the joint Phase 10.4 and 10.5 validation. |
 | Architecture checks | Local scripts exist for protocol and architecture checks. CI enforcement is still evolving. |
 
 ## Not Yet Supported
 
 | Area | Current limit |
 | --- | --- |
+| Profile storage | The data root must support hard links for atomic creation of missing profile assets. A filesystem without hard-link support returns `storage_unavailable` during preparation and cannot complete game selection. |
 | Full terminal history and compaction | Phase8.2 is a design draft for complete agreed terminal-turn sources, synchronous summaries, and a bounded recent-history tail; current Recent records are not a full conversation archive. |
 | History retrieval and retention | Phase8.3 is a design draft for literal source retrieval and optional cleanup, disabled by default. |
 | Long-term semantic memory | No Semantic extraction/correction pipeline, vector store, or embedding index. |

@@ -36,6 +36,8 @@ WIA is organized as Runtime + Protocol + Adapter. The Runtime owns shipped Game 
 
 The script uses `-DataRoot`, then inherited `WIA_DATA_ROOT`, then `runtime/.local/runtime-data`. Startup does not choose a game or prepare missing profile files. Choose a game in the local console; that request validates the embedded assets, prepares missing files under `<data root>/config/games/<game_id>/`, and then writes `<data root>/config/active-game.json`.
 
+The data root must be on a filesystem that supports hard links. Profile preparation uses them to publish complete files atomically without replacing existing user files. Unsupported filesystems fail preparation with `storage_unavailable`; use a data root on a supporting filesystem.
+
 `-AgentConfig` is an explicit development override. A relative argument resolves from the repository root. If the parameter is omitted, the script respects an inherited `GAMEAGENT_AGENT_CONFIG`. Relative paths inside agent configuration continue to resolve from the data root.
 
 One process loads one profile. Selecting another game after Ready prepares and saves it, while the loaded profile remains active and the console reports that a restart is required. After restart, the saved game becomes current. Game installation paths belong to adapter build and install commands and are not collected by the Runtime console.
@@ -61,6 +63,8 @@ Design and acceptance record: [Phase10.2-2 本地控制面](../phase10/GameAgent
 ## Portable Release
 
 The Runtime is distributed as a portable package: extract it anywhere and run the executable with no arguments.
+
+Published versions are immutable. The repository still has `VERSION = 0.1.0` for local packaging; builds containing Phase 10.4 must not replace the published v0.1.0 release. The next release version will be chosen after joint Phase 10.4 and 10.5 acceptance, before updating `VERSION` and creating the release tag.
 
 ```powershell
 .\scripts\release-runtime.ps1              # version from VERSION

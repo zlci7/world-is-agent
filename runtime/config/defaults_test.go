@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// testdata/v0.1.0 is copied byte-for-byte from tag v0.1.0 at commit
-// a42ebc2b27b54cf3bb7330d8333dd37a7fe4c8fb.
+// testdata/v0.1.0 is copied byte-for-byte from runtime/config/games/stardew-valley/
+// at tag v0.1.0, commit 5657635e68ef54a4b98aae98e2af8ca84004ef81.
 
 func TestGamesDiscoversEmbeddedProfiles(t *testing.T) {
 	games, err := Games()
