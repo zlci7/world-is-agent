@@ -1,5 +1,6 @@
 import {
   ApiError,
+  type GamesResponse,
   type ModelCandidate,
   type SetupOptions,
   type Status,
@@ -39,6 +40,22 @@ async function get<T>(path: string): Promise<T> {
 
 export function fetchStatus(): Promise<Status> {
   return get<Status>('/api/status')
+}
+
+export function fetchGames(): Promise<GamesResponse> {
+  return get<GamesResponse>('/api/setup/games')
+}
+
+export async function saveGameSetup(gameId: string): Promise<Status> {
+  const response = await fetch('/api/setup/game', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ game_id: gameId }),
+  })
+  if (!response.ok) {
+    throw await toApiError(response)
+  }
+  return (await response.json()) as Status
 }
 
 export function fetchTurns(limit = 50): Promise<TurnsResponse> {

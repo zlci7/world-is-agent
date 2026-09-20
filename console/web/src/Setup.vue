@@ -9,8 +9,13 @@ import { computed, onMounted, ref } from 'vue'
 import { fetchSetupOptions, saveModelSetup } from './api'
 import { ApiError, type ModelCandidate, type Status } from './types'
 
-defineProps<{ status: Status }>()
-const emit = defineEmits<{ configured: [Status] }>()
+const props = defineProps<{
+  status: Status
+  busy: boolean
+  beginStatusMutation: () => number
+  acceptStatus: (status: Status, request: number) => void
+}>()
+const emit = defineEmits<{ failed: [unknown] }>()
 
 const providers = ref<ModelCandidate[]>([])
 const optionsProblem = ref<string | null>(null)
@@ -34,7 +39,7 @@ const failureHeadlines: Record<string, string> = {
 }
 
 const canSubmit = computed(
-  () => !saving.value && provider.value !== '' && apiKey.value.trim() !== '',
+  () => !saving.value && !props.busy && provider.value !== '' && apiKey.value.trim() !== '',
 )
 
 onMounted(async () => {
@@ -50,6 +55,7 @@ onMounted(async () => {
     selectProvider(providers.value[0]?.provider ?? '')
   } catch (error) {
     optionsProblem.value = describe(error)
+    emit('failed', error)
   }
 })
 
@@ -73,6 +79,7 @@ async function submit() {
   }
   saving.value = true
   failure.value = ''
+  const request = props.beginStatusMutation()
   try {
     const updated = await saveModelSetup({
       provider: provider.value,
@@ -82,7 +89,7 @@ async function submit() {
     // The credential did its job once the Runtime accepted it; drop it rather
     // than leave it in a component that is about to disappear.
     apiKey.value = ''
-    emit('configured', updated)
+    props.acceptStatus(updated, request)
   } catch (error) {
     // Nothing was written for a failed probe, so the form stays exactly as the
     // user left it and can be corrected and submitted again.
@@ -91,6 +98,7 @@ async function submit() {
     } else {
       failure.value = describe(error)
     }
+    emit('failed', error)
   } finally {
     saving.value = false
   }

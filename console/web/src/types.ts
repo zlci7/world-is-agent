@@ -25,6 +25,45 @@ export interface Status {
   version?: string
   model?: ModelSummary
   model_error?: string
+  reason_code: string | null
+  loaded_game: GameIdentity | null
+  configured_game: GameIdentity | null
+  restart_required: boolean
+  adapters: AdapterConnection[]
+  connection_count: number
+  last_connection_error: ConnectionError | null
+}
+
+export interface GameIdentity {
+  id: string
+  title: string | null
+}
+
+export interface GameChoice {
+  id: string
+  title: string
+  assets_ready: boolean
+  assets_error?: string
+}
+
+export interface GamesResponse {
+  games: GameChoice[]
+}
+
+export interface AdapterConnection {
+  connection_id: string
+  game_id: string
+  adapter_id: string
+  adapter_version: string
+  game_version: string
+  session_id: string
+}
+
+export interface ConnectionError {
+  code: string
+  expected_game_id: string
+  received_game_id: string
+  message: string
 }
 
 /** The Runtime reports three states. `needs_configuration` is the only one a

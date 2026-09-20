@@ -2,7 +2,9 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, type Status, type Turn } from './types'
 import { exchangeBootstrapToken, fetchStatus, fetchTurns } from './api'
+import { createLatestResponseGate } from './latest-response'
 import Setup from './Setup.vue'
+import GameSetup from './GameSetup.vue'
 
 const status = ref<Status | null>(null)
 const turns = ref<Turn[]>([])
@@ -13,22 +15,32 @@ const statusProblem = ref<string | null>(null)
 const turnsProblem = ref<string | null>(null)
 const unauthorized = ref(false)
 const loaded = ref(false)
-// Set only by a completed first-run save, so the confirmation is about what this
-// browser just did rather than about every Runtime that happens to be ready.
-const justConfigured = ref(false)
 // The trace can hold turns from an earlier run, so a fresh Runtime has nothing to
 // read yet. Turns are polled once the Runtime is past first-run, which also keeps
 // the first-run page from making a request per tick that cannot return anything.
 const turnsActive = ref(false)
+const statusMutationActive = ref(false)
+const statusGate = createLatestResponseGate()
 
 let timer: number | undefined
 
 /** First-run shows a form instead of the console, but only for the one state a
  *  form can resolve: a blocked data root needs a restart, not another key, and
  *  its reason is shown on its own. */
-const showSetup = computed(
-  () => loaded.value && status.value !== null && status.value.state === 'needs_configuration',
-)
+const recoverableGameReasons = new Set([
+  'game_not_selected', 'invalid_game', 'game_selection_invalid', 'profile_assets_missing',
+  'profile_invalid', 'initialization_failed', 'model_configuration_required',
+])
+const showGameSetup = computed(() => loaded.value && status.value !== null && (
+  status.value.state === 'ready' ||
+  (status.value.state === 'needs_configuration' && recoverableGameReasons.has(status.value.reason_code ?? ''))
+))
+const showModelSetup = computed(() => loaded.value && status.value !== null &&
+  status.value.state === 'needs_configuration' && status.value.configured_game !== null &&
+  (status.value.reason_code === 'model_configuration_required' ||
+    (status.value.reason_code === 'initialization_failed' &&
+      (status.value.model === undefined || status.value.model_error !== undefined))))
+const setupMode = computed(() => showGameSetup.value || showModelSetup.value)
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -41,8 +53,12 @@ function noteUnauthorized(error: unknown) {
 }
 
 async function refreshStatus() {
+  if (statusMutationActive.value) return
+  const request = statusGate.begin()
   try {
-    status.value = await fetchStatus()
+    const updated = await fetchStatus()
+    if (!statusGate.isLatest(request)) return
+    status.value = updated
     statusProblem.value = null
     // Past first-run either way: ready means the console is the useful surface,
     // and blocked means the reason is, including any trace already on disk.
@@ -50,9 +66,29 @@ async function refreshStatus() {
       turnsActive.value = true
     }
   } catch (error) {
+    if (!statusGate.isLatest(request)) return
     noteUnauthorized(error)
     statusProblem.value = describe(error)
   }
+}
+
+function beginStatusMutation(): number {
+  statusMutationActive.value = true
+  return statusGate.begin()
+}
+
+function acceptStatus(updated: Status, request: number) {
+  if (!statusGate.isLatest(request)) return
+  status.value = updated
+  statusProblem.value = null
+  statusMutationActive.value = false
+  if (updated.ready) turnsActive.value = true
+}
+
+async function recoverAfterFailure(error: unknown) {
+  noteUnauthorized(error)
+  statusMutationActive.value = false
+  await refreshStatus()
 }
 
 async function refreshTurns() {
@@ -72,16 +108,6 @@ async function refresh() {
   // Not Promise.all: one failing read must not hold back the other.
   await Promise.all([refreshStatus(), refreshTurns()])
   loaded.value = true
-}
-
-async function onConfigured(updated: Status) {
-  justConfigured.value = true
-  // The save response is the same payload the poll reads, so the form goes away
-  // without waiting for the next tick.
-  status.value = updated
-  statusProblem.value = null
-  turnsActive.value = true
-  await refreshTurns()
 }
 
 onMounted(async () => {
@@ -144,20 +170,27 @@ function triggerLabel(turn: Turn): string {
       started with <code>--no-open</code>, open the bootstrap URL it printed in the Runtime log.
     </p>
 
-    <div class="columns" :class="{ 'columns-setup': showSetup }">
+    <div class="columns" :class="{ 'columns-setup': setupMode && !status?.ready }">
       <div class="column">
-        <p v-if="justConfigured" class="banner banner-ok">
-          Runtime Ready ✓ — the agent core is running. Talk to an NPC in the game and the turn will
-          appear here.
-        </p>
-
-        <Setup
-          v-if="showSetup && status"
+        <GameSetup
+          v-if="showGameSetup && status"
           :status="status"
-          @configured="onConfigured"
+          :busy="statusMutationActive"
+          :begin-status-mutation="beginStatusMutation"
+          :accept-status="acceptStatus"
+          @failed="recoverAfterFailure"
         />
 
-        <section v-else-if="status" class="card">
+        <Setup
+          v-if="showModelSetup && status"
+          :status="status"
+          :busy="statusMutationActive"
+          :begin-status-mutation="beginStatusMutation"
+          :accept-status="acceptStatus"
+          @failed="recoverAfterFailure"
+        />
+
+        <section v-if="status" class="card">
           <div class="state">
             <span class="badge" :class="status.ready ? 'badge-ready' : 'badge-pending'">
               {{ status.state }}
@@ -166,13 +199,28 @@ function triggerLabel(turn: Turn): string {
           </div>
 
           <p v-if="status.state === 'blocked'" class="empty">
-            The shipped configuration could not be written to
-            <code>{{ status.config_dir }}</code>, so the Runtime will not become ready in this
-            process. No model setting resolves this: fix the data root, then start the Runtime
-            again.
+            {{ status.reason || 'Fix the reported Runtime configuration problem, then restart the Runtime.' }}
+          </p>
+
+          <p v-if="status.restart_required" class="banner restart">
+            <strong>Restart required.</strong> Close and relaunch the Runtime to load
+            {{ status.configured_game?.title || status.configured_game?.id }}. The current game
+            remains active until then.
           </p>
 
           <dl class="facts">
+            <div>
+              <dt>Current Game</dt>
+              <dd>{{ status.loaded_game?.title || status.loaded_game?.id || 'Not loaded' }}</dd>
+            </div>
+            <div v-if="status.restart_required">
+              <dt>Next Game</dt>
+              <dd>{{ status.configured_game?.title || status.configured_game?.id }}</dd>
+            </div>
+            <div>
+              <dt>Connections</dt>
+              <dd>{{ status.adapters.length }}</dd>
+            </div>
             <div>
               <dt>Model</dt>
               <dd>
@@ -201,6 +249,24 @@ function triggerLabel(turn: Turn): string {
               <dd>{{ status.version }}</dd>
             </div>
           </dl>
+
+          <div v-if="status.ready" class="guidance">
+            Start {{ status.loaded_game?.title || 'the selected game' }} after the Runtime is ready.
+            If the game was already open, reconnect its Adapter or restart the game.
+          </div>
+
+          <div v-if="status.adapters.length" class="connections">
+            <h2>Adapter connections</h2>
+            <div v-for="adapter in status.adapters" :key="adapter.connection_id" class="connection">
+              <strong>{{ adapter.adapter_id }} · {{ adapter.game_id }}</strong>
+              <span>Adapter {{ adapter.adapter_version }} · game {{ adapter.game_version }}</span>
+              <span class="path">Session {{ adapter.session_id }}</span>
+              <span class="path">Connection {{ adapter.connection_id }}</span>
+            </div>
+          </div>
+          <p v-if="status.last_connection_error" class="banner banner-error connection-error">
+            {{ status.last_connection_error.message }}
+          </p>
         </section>
 
         <section v-else class="card">
@@ -513,5 +579,47 @@ tr:last-child td {
 
 .outcome-unfinished {
   color: var(--warn);
+}
+
+button {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--panel);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.restart,
+.connection-error {
+  margin-top: 14px;
+}
+
+.guidance {
+  margin-top: 16px;
+  color: var(--muted);
+}
+
+.connections {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.connection {
+  display: grid;
+  gap: 1px;
+  margin-top: 8px;
+}
+
+.connection span {
+  color: var(--muted);
 }
 </style>
