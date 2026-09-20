@@ -1,6 +1,6 @@
 # GameAgent MVP0 Phase10.4 Game Profile 选择与多游戏产品形态技术方案
 
-> 方案状态：Accepted for Implementation；实现未开始，产品验收未完成。
+> 方案状态：Accepted for Implementation；10.4 实现与自动验证完成，待用户 CR 与实机产品验收。
 > 日期：2026-09-20。
 > 前置：10.3 已正式 Accepted，条件 9 的负向部分未验证且经用户决定豁免，见 [10.3 验收记录](GameAgent%20MVP0%20Phase10.3-3与10.3-4%20实现与证据记录.md)。
 > 上位文档：[Phase10 总方案](GameAgent%20MVP0%20Phase10%20技术开发与验收总方案.md)。
@@ -131,12 +131,31 @@ game_id 必须命中发布游戏集合，路径只能由已验证的目录项生
 普通 v0.1.0 发布版的单一 profile 归属 Stardew Valley。兼容性验证使用该发布版的固定 fixture，检查旧布局、原配置目录和游戏定义身份。映射存放在随 Runtime 内嵌的 `runtime/config/legacy-profiles.json`：
 
 ```json
-{ "v0.1.0": { "game_id": "stardew-valley" } }
+{
+  "v0.1.0": {
+    "game_id": "stardew-valley",
+    "identity_files": {
+      "game.json": {
+        "schema_version": "v1alpha1",
+        "game_id": "stardew-valley",
+        "source_version": "phase7.1-fixture"
+      },
+      "archetype-town-villager.json": {
+        "schema_version": "v1alpha1",
+        "game_id": "stardew-valley",
+        "definition_id": "archetype:town_villager",
+        "source_version": "phase7.1-fixture"
+      }
+    }
+  }
+}
 ```
 
 迁移逻辑先按发行 fixture 的布局与身份条件识别兼容基线，再读取对应映射；不能仅因发现根级 `agent.json` 就认定版本。映射中的 game_id 必须属于发布游戏集合，具体游戏名只出现在配置数据中。
 
 标准路径要求旧 `definition_catalog_root` 相对 data root 解析到 `config/games`，且其中原发布游戏的定义可解析、身份与发行基线一致。不能用新版本目录数量或本次选择值推断旧配置归属。
+
+发行身份由旧目录内的 `game.json` 与 `archetype-town-villager.json` 共同确认；两者必须存在且匹配映射中的身份字段。固定 fixture 位于 `runtime/config/testdata/v0.1.0/`，取自已发布 tag。其它缺失发布定义可在身份确认后补齐；身份文件缺失或字段冲突时返回 `migration_conflict`。该身份规则独立于从内嵌树推导的完整资产集合。
 
 用户对标准 profile 的 prompt、预算、timeout、task 和 memory 等参数修改完整保留。指向外部 catalog、身份冲突或无法确定归属的根级配置返回 `migration_conflict`，保留原文件并说明冲突路径及需要明确的配置归属。
 
@@ -358,7 +377,7 @@ Ready 后展示 Current Game 与 Connections 数量，连接详情来自 `adapte
 
 ## 11. 验证矩阵
 
-以下为开发后的通过条件，当前尚无 10.4 实现结果。
+10.4 已完成下列开发验证。全量 Go 测试、配置与初始化等关键包的竞态检测、前端类型与请求顺序检查、架构与启动脚本检查均通过。真实浏览器使用本地模型 stub 验证配置、恢复、切换与连接展示；便携包在仓库外通过实际进程验证新旧目录、双向重启切换和损坏配置恢复。用户 CR 与第 12 节实机验收待完成。
 
 | 用例 | 必须断言 |
 | --- | --- |
@@ -394,9 +413,12 @@ Ready 后展示 Current Game 与 Connections 数量，连接详情来自 `adapte
 ```powershell
 go test ./runtime/config ./runtime/internal/bootstrap ./runtime/internal/definition ./runtime/internal/httpapi ./runtime/internal/gateway ./runtime/cmd/server
 go test ./... -p 1 -count=1
+go test -race ./runtime/config ./runtime/internal/bootstrap ./runtime/internal/definition ./runtime/internal/httpapi ./runtime/internal/gateway -count=1
 npm --prefix console/web run type-check
+npm --prefix console/web run test:ordering
 npm --prefix console/web run build
 powershell -ExecutionPolicy Bypass -File scripts/check-architecture.ps1
+powershell -ExecutionPolicy Bypass -File scripts/tests/start-runtime.tests.ps1
 powershell -ExecutionPolicy Bypass -File scripts/release-runtime.ps1
 git diff --check
 ```

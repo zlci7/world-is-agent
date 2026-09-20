@@ -12,6 +12,8 @@ Start here when you want the current repository state:
 - [Development Guide](development/guide.md)
 - [Testing Guide](development/testing.md)
 
+The Runtime currently embeds Stardew Valley and RimWorld Game Profiles. Phase 10.4 selection and switching are implemented with automated validation underway; real-game acceptance is still pending. The official adapters remain in this repository until the later repository split.
+
 ## Architecture And Decisions
 
 - [Runtime Architecture Baseline](<summary/GameAgent Runtime 整体架构设计规范.md>)

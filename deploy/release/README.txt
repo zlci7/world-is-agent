@@ -17,9 +17,10 @@ Run it
 That is the whole procedure. The Runtime:
 
   * creates its data root at %LOCALAPPDATA%\WorldIsAgent on first start
-  * writes the shipped agent configuration and game definitions there
+  * opens the local console so you can choose a shipped Game Profile
+  * prepares missing profile files only when you choose a game
   * opens your browser and hands it a session
-  * asks for a model provider and an API key on the first run
+  * asks for a model provider and an API key when one is not configured
 
 Nothing is installed system-wide and no administrator rights are needed. To
 remove it, delete the folder you extracted and %LOCALAPPDATA%\WorldIsAgent.
@@ -53,7 +54,8 @@ Connecting the game
 -------------------
 
 The Runtime alone does not touch the game. Games are connected by an adapter
-that is installed separately, as an SMAPI mod, and is not part of this package.
+that is installed separately and is not part of this package. Choose the matching
+game in the console and wait for Ready before starting it.
 
 For Stardew Valley:
 
@@ -72,11 +74,20 @@ already correct, so no edit is normally needed.
 Until an adapter is connected, the Runtime works but has nothing to show: the
 console lists agent turns, and turns come from the game.
 
+RimWorld is also supported by the source repository's adapters\rimworld project.
+Its adapter is installed as a RimWorld mod and is Windows x64 only.
+
+One Runtime process loads one game. Choosing another game while Ready saves it
+as Next Game; the current game stays active until the Runtime restarts. An
+adapter for another game is rejected. Multiple adapters for the current game may
+connect as separate sessions, but that does not make concurrent writes to one
+save safe.
+
 
 Where your data lives
 ---------------------
 
-    %LOCALAPPDATA%\WorldIsAgent\config\    agent configuration and model.json
+    %LOCALAPPDATA%\WorldIsAgent\config\    active game, profiles, and model.json
     %LOCALAPPDATA%\WorldIsAgent\secrets\   the API key, as its own file
     %LOCALAPPDATA%\WorldIsAgent\data\      turn traces (traces.jsonl)
 

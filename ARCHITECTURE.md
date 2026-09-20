@@ -46,7 +46,7 @@ Game owns execution.
 
 The world is the source of truth for current state and real effects.
 
-Examples include game engines, mod APIs, simulations, and custom virtual environments. In the current repository, Stardew Valley is the first real validation world.
+Examples include game engines, mod APIs, simulations, and custom virtual environments. Stardew Valley and RimWorld are the current real validation worlds.
 
 ### WIA Adapter
 
@@ -82,6 +82,8 @@ async action suspend / resume
 ```
 
 The Runtime communicates through protocol contracts and provider-neutral model types.
+
+The Runtime also owns Game Profiles: agent configuration, prompts, policies, and definition catalogs. A process loads one selected profile as one published runtime instance. HTTP status and gateway admission read the same instance snapshot. Matching adapters may connect through multiple EnvironmentSessions; another game's adapter is rejected before environment readiness.
 
 ### Identity, Memory, Context
 
@@ -148,6 +150,8 @@ The current MVP0 implementation includes:
 - Go Runtime over gRPC bidirectional streaming.
 - Protocol v1alpha2.
 - Stardew Valley SMAPI adapter.
+- RimWorld 1.6 adapter.
+- Embedded `stardew-valley` and `rimworld` Game Profiles selected through the local console.
 - Stable agent identity by game, world, and entity.
 - SQLite-backed memory, physically separated by game and world and scoped by entity, with bounded recent memory, session history, summaries, and history retrieval; an in-memory backend remains for tests and local runs.
 - Context projection with a deterministic estimated-token budget.
@@ -163,7 +167,8 @@ Current architecture limits:
 - Same-agent FIFO scheduling is validated within one live EnvironmentSession.
 - Cross-stream recovery and durable continuation are future work.
 - Memory is independent of the game save: records from an abandoned branch can become visible again when comparable game time catches up.
-- Stardew is the first real adapter and validation world.
+- One Runtime process loads one Game Profile; a saved profile change takes effect after restart.
+- Multiple same-game streams are separate EnvironmentSessions and do not provide a concurrent same-save write guarantee.
 
 ## Further Reading
 

@@ -96,16 +96,15 @@ The script copies the adapter and protocol into a temporary directory outside th
    .\scripts\start-runtime.ps1
    ```
 
-   The Runtime resolves every path it owns from a data root, so the working
-   directory no longer matters. The development script points that root at
-   `runtime/`; to do it by hand:
+   Use a dedicated data root:
 
    ```powershell
-   $env:WIA_DATA_ROOT = "$PWD/runtime"; go run ./runtime/cmd/server
+   .\scripts\start-runtime.ps1 -DataRoot "$PWD\runtime\.local\stardew-acceptance"
    ```
 
-   Without a model configuration the Runtime still starts and logs
-   `agent core is not ready (needs_configuration)` with the path it expects.
+   Choose **Stardew Valley** in the console, configure the model if required,
+   and wait for **Ready**. Startup does not choose a game or prepare missing
+   profile files by itself.
 
    The Runtime also starts the local client and opens a browser tab at
    `http://127.0.0.1:<port>/#token=...`. Pass `--no-open` to suppress the browser,
@@ -120,6 +119,20 @@ The script copies the adapter and protocol into a temporary directory outside th
 8. Confirm the browser tab lists that turn.
 
 For dialogue validation, confirm the NPC line appears through Stardew's native dialogue flow, then reply choices or free text appear afterward.
+
+## Phase 10.4 Real-Game Acceptance
+
+Use one dedicated data root and record status, Runtime logs, adapter logs, and turn traces. This remains manual acceptance; automated tests do not establish it.
+
+1. With an empty root, choose Stardew Valley, configure the model, reach Ready, then start Stardew and complete one turn. Confirm Current Game is Stardew Valley with one connection.
+2. While Ready, choose RimWorld. Confirm Next Game is RimWorld and restart is required, while Stardew stays connected and can complete another turn with the loaded Stardew profile.
+3. Restart the Runtime, reach Ready, start RimWorld, and complete a colonist dialogue turn. Confirm Current Game is RimWorld and no Next Game is shown.
+4. Repeat the switch in the other direction: save Stardew while RimWorld is Ready, confirm RimWorld remains active until restart, restart, and complete a Stardew turn.
+5. For each loaded game, connect a second adapter reporting the same `game_id`. Confirm both streams complete bootstrap and the connection count increases. They are separate EnvironmentSessions; this does not guarantee safe concurrent writes to one save.
+6. Connect or simulate an adapter for the other game. Confirm `game_mismatch`, no `EnvironmentReady` or capability discovery, no active connection, and no event or task work.
+7. Connect before Ready. Confirm `runtime_not_ready` and zero active connections. Once Ready, establish a new connection: RimWorld retries every five seconds; Stardew uses `gameagent_runtime_reconnect` or a game restart.
+
+Keep earlier Stardew and RimWorld observations as dated adapter baselines. Record this run separately as Phase 10.4 acceptance.
 
 ## Architecture Check
 

@@ -13,7 +13,7 @@ Capability   speak, emote, present_dialogue, face_player, move_to
 Action       execute the selected capability through Stardew / SMAPI APIs
 ```
 
-The adapter is the first real validation adapter for WIA.
+The adapter is the first real validation adapter for WIA. Its Runtime profile and definitions are owned by `runtime/config/games/stardew-valley`; the adapter remains in this repository until the planned adapter repository split.
 
 ## Dialogue UX
 
@@ -78,18 +78,13 @@ powershell -ExecutionPolicy Bypass -File adapters/stardew/tests/check-standalone
 
 Task storage and scheduling start with Runtime by default. The Stardew configuration provides the 190-second async action and 270-second turn budgets. After loading a save, Task tools become available when world binding completes.
 
-1. Start Runtime with the development data root and the Stardew agent configuration:
+1. Start Runtime with a dedicated development data root:
 
    ```powershell
-   $env:WIA_DATA_ROOT="$PWD/runtime"
-   $env:GAMEAGENT_AGENT_CONFIG="config/games/stardew-valley/agent.json"
-   go run ./runtime/cmd/server
+   .\scripts\start-runtime.ps1 -DataRoot "$PWD\runtime\.local\stardew-smoke"
    ```
 
-   Every Runtime-owned path resolves from the data root, so the working
-   directory no longer decides where configuration and data live. The
-   configuration path above is relative to that data root, not to the working
-   directory.
+   Choose **Stardew Valley** in the console, configure the model if required, and wait for **Ready**. The selection request prepares missing profile files; startup does not seed them implicitly.
 
 2. Build and install the adapter.
 3. Launch Stardew Valley through `StardewModdingAPI.exe`.
@@ -98,6 +93,8 @@ Task storage and scheduling start with Runtime by default. The Stardew configura
 6. Interact with an NPC using the normal action button or mouse.
 7. Confirm the SMAPI log shows `GameEvent`, `EventAck`, `Observation`, `ActionRequest`, `ActionResult`, and `TurnCompletion`.
 8. Confirm protocol trace logs include stable `world_id` and the clicked NPC's `target_entity_id`.
+
+If Stardew connected before the Runtime was Ready, run `gameagent_runtime_reconnect` in the SMAPI console after setup completes, or restart the game. A Runtime loaded with RimWorld rejects this adapter with `game_mismatch`.
 
 For dialogue:
 

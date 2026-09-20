@@ -1,57 +1,67 @@
 # World Is Agent
 
-**World Is Agent（WIA）** 是一个面向游戏世界的 **Game-native Agent Runtime**。
-
-它通过 Runtime / Adapter 架构连接真实游戏世界与 LLM Agent，让 NPC 不再只是“对话机器人”，而是能够基于游戏状态进行感知、决策、记忆、工具调用和持续行动。
-
-目前以 **Stardew Valley** 作为第一个真实游戏 Adapter。
+**World Is Agent (WIA)** is an open, game-native agent runtime. Games report events and observations through adapters; the Runtime gives characters identity, context, memory, model-driven decisions, and bounded tool execution.
 
 ![World Is Agent](docs/images/world-is-agent.jpg)
 
-## 核心能力
+## What Is Included
 
-* **Runtime / Adapter 解耦**：通过 gRPC 双向流连接游戏与 Agent Runtime
-* **统一 Agent 生命周期**：支持 AgentTurn、多步决策与执行
-* **Context & Memory**：管理 Agent 上下文与持久化记忆
-* **Capability → Tool**：由游戏动态声明能力并注册为模型工具
-* **本地控制台**：启动 Runtime 自动打开浏览器，查看 agent 状态与最近 AgentTurn
-* **Agent 隔离**：基于 `game_id + world_id + entity_id` 管理独立 Agent
-* **同步 / 异步执行**：支持游戏动作及长生命周期任务
+- A Go Runtime with gRPC bidirectional streaming and a local browser console.
+- Protocol v1alpha2 for events, observations, capabilities, actions, and turn completion.
+- Persistent, game/world/entity-scoped memory and JSONL turn traces.
+- Provider-neutral model support with DeepSeek and OpenAI implementations.
+- Experimental Stardew Valley and RimWorld adapters.
+- Embedded Runtime-owned Game Profiles for `stardew-valley` and `rimworld`.
 
-## 快速开始
+One Runtime process loads one Game Profile. Multiple adapters for the loaded game may connect as separate environment sessions; an adapter for another game is rejected before environment readiness and capability discovery.
 
-Runtime 以免安装包分发：解压后运行可执行文件，不需要参数。
+## Quick Start
+
+Build the portable Windows Runtime package:
 
 ```powershell
-.\scripts\release-runtime.ps1        # 产出 dist\world-is-agent-v<version>-windows-amd64.zip
+.\scripts\release-runtime.ps1
 ```
 
-包内只有 `wia-runtime.exe`、`README.txt` 与 `LICENSE`。首次启动会在平台数据目录建立数据根、写入随附的 Agent 配置与游戏定义，自动打开浏览器，并在页面上要求填写模型 provider 与 API key。不需要管理员权限，也不需要 Node.js 或 Go。
+Extract `dist\world-is-agent-v<version>-windows-amd64.zip`, run `wia-runtime.exe`, and use the browser console:
 
-**游戏 Adapter 不在这个包里。** Adapter 是游戏侧 Mod，需要针对本机游戏安装编译并单独安装；没有 Adapter 时 Runtime 能正常运行，只是没有 Turn 可看。Stardew Valley Adapter 见 [adapters/stardew](adapters/stardew/README.md)。
+1. Choose Stardew Valley or RimWorld. The Runtime prepares missing shipped profile files in its data root.
+2. Configure a model provider and API key if required.
+3. Wait for `Ready`, then start the matching game and adapter.
 
-开发期从源码运行用 `.\scripts\start-runtime.ps1`，细节见[开发指南](docs/development/guide.md)。
+Choosing another game while Ready saves it as **Next Game**. The current profile and active connections remain in use until the Runtime restarts.
 
-## 技术栈
+The Runtime package does not include game adapters. Build and install them separately using the [Stardew adapter guide](adapters/stardew/README.md) or [RimWorld adapter guide](adapters/rimworld/README.md).
+
+For development, run `.\scripts\start-runtime.ps1`. It uses `WIA_DATA_ROOT` when set, otherwise `runtime/.local/runtime-data`, and does not select a game implicitly. See the [development guide](docs/development/guide.md).
+
+## Technology
 
 `Golang` · `gRPC` · `Protobuf` · `SQLite` · `C#` · `SMAPI` · `LLM Tool Calling` · `JSON Schema`
 
-## 项目结构
+## Repository Layout
 
 ```text
-runtime/      Agent Runtime
-protocol/     Protobuf 协议与生成代码
-adapters/     游戏 Adapter
-docs/         架构、状态与开发文档
+runtime/      Runtime, embedded Game Profiles, prompts, and definitions
+protocol/     Protobuf contracts and generated bindings
+adapters/     Stardew Valley and RimWorld adapters
+console/      Local browser client
+docs/         Architecture, status, development, and historical records
 ```
 
-## 文档
+The adapters remain in this repository. Their planned move to `world-is-agent-adapters` is a later productization step.
 
-* [架构设计](ARCHITECTURE.md)
-* [当前状态](docs/STATUS.md)
-* [开发指南](docs/development/guide.md)
-* [测试与验证](docs/development/testing.md)
-* [Stardew Valley Adapter](adapters/stardew/README.md)
+## Documentation
+
+- [Architecture](ARCHITECTURE.md)
+- [Current status](docs/STATUS.md)
+- [Development guide](docs/development/guide.md)
+- [Testing and acceptance](docs/development/testing.md)
+- [Documentation index](docs/README.md)
+
+## Status
+
+Game Profile selection and multi-game Runtime bootstrap are implemented. Automated validation covers the affected bootstrap, HTTP, configuration, definition, command, and gateway paths; full release and browser validation are being finalized. User acceptance with both real games is still pending. Earlier real-game observations are dated baselines and do not constitute Game Profile switching acceptance.
 
 ## License
 

@@ -25,7 +25,20 @@ scripts/     Local validation and helper scripts
 
 ## Repository Model
 
-WIA is organized as Runtime + Protocol + Adapter. Adapters are logically independent of this repository's directory layout: they depend on a versioned protocol instead of on `adapters/stardew` sitting at a known path. See [logical-separation.md](logical-separation.md) for the work that removes the remaining layout coupling.
+WIA is organized as Runtime + Protocol + Adapter. The Runtime owns shipped Game Profiles, prompts, and definitions under `runtime/config/games/`; adapters own game translation and execution. Adapters depend on a versioned protocol rather than the monorepo layout. Both official adapters still live here; the physical repository split is pending. See [logical-separation.md](logical-separation.md).
+
+## Runtime Configuration And Game Selection
+
+```powershell
+.\scripts\start-runtime.ps1
+.\scripts\start-runtime.ps1 -DataRoot 'D:\wia-data'
+```
+
+The script uses `-DataRoot`, then inherited `WIA_DATA_ROOT`, then `runtime/.local/runtime-data`. Startup does not choose a game or prepare missing profile files. Choose a game in the local console; that request validates the embedded assets, prepares missing files under `<data root>/config/games/<game_id>/`, and then writes `<data root>/config/active-game.json`.
+
+`-AgentConfig` is an explicit development override. A relative argument resolves from the repository root. If the parameter is omitted, the script respects an inherited `GAMEAGENT_AGENT_CONFIG`. Relative paths inside agent configuration continue to resolve from the data root.
+
+One process loads one profile. Selecting another game after Ready prepares and saves it, while the loaded profile remains active and the console reports that a restart is required. After restart, the saved game becomes current. Game installation paths belong to adapter build and install commands and are not collected by the Runtime console.
 
 ## Local Client
 
@@ -72,7 +85,7 @@ Expand-Archive dist/world-is-agent-v0.1.0-windows-amd64.zip -DestinationPath $en
 & "$env:TEMP\wia-check\world-is-agent-v0.1.0-windows-amd64\wia-runtime.exe" --data-root $env:TEMP\wia-check-root
 ```
 
-The binary must seed its own configuration, serve the embedded client, and report the injected version on `/api/status` without any repository file, Node.js or Go on the path. `--data-root` keeps the check away from the data root a user already has; without it the Runtime uses the platform data directory.
+The binary must expose both embedded Game Profiles, serve the embedded client, and report the injected version on `/api/status` without any repository file, Node.js or Go on the path. A game-selection request must prepare the selected assets before the Runtime can reach Ready. `--data-root` keeps the check away from the data root a user already has; without it the Runtime uses the platform data directory.
 
 ## Adapter Capabilities From Third-Party Mods
 

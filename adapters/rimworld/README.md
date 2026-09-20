@@ -28,9 +28,9 @@ colonists; see [Status](#status).
   to run it, never to build it.
 - The vanilla `Human` def, unchanged in the way that matters: the WIA entry point is an XML patch
   on `Human`'s comps, so a mod that rewrites that def can remove the gizmo.
-- A WIA Runtime listening on `127.0.0.1:50051`, the Runtime's default adapter port, and a Runtime
-  with a usable model configuration: without one the agent core never becomes ready and no dialogue
-  is produced. The Runtime can be started before or after the game. The address is fixed in the
+- A WIA Runtime listening on `127.0.0.1:50051`, with **RimWorld** selected and Ready. Choose the game
+  in the Runtime console; that prepares the Runtime-owned profile under `runtime/config/games/rimworld`.
+  The Runtime can be started before or after the game. The address is fixed in the
   adapter — there is no settings entry yet — so running the Runtime on a different `--grpc-addr`
   requires rebuilding the adapter with that address.
 
@@ -123,7 +123,8 @@ None of these is silent in the log:
 | --- | --- |
 | `Native/grpc_csharp_ext.dll` is missing or cannot be loaded | The adapter logs `adapter disabled, no connection will be attempted` with the reason, creates no pump and **never opens a connection**. Retrying cannot fix a missing file, so this is reported as an installation error instead of an endless connect loop. The check runs once, in the mod's static constructor: staging the file afterwards does not recover the running game, RimWorld has to be restarted. |
 | The Runtime is not running, or shuts down | The adapter logs the failed connection and retries every 5 seconds. Starting the Runtime later connects without restarting the game. |
-| The Runtime is connected but its agent core is not ready | The handshake succeeds and the gizmo is enabled, but no dialogue is produced. The Runtime logs why at startup (`agent core is not ready`); the adapter cannot see this and does not guess at it. |
+| The Runtime is not Ready | The Runtime rejects the stream with `runtime_not_ready`; the adapter retries every 5 seconds and connects after setup completes. |
+| The Runtime loaded another game | The Runtime rejects the stream with `game_mismatch` before environment readiness or capability discovery. Choose RimWorld and restart the Runtime if it is shown as Next Game. |
 | An observation cannot be read | The adapter answers the `ObserveRequest` with a correlated error naming the reason, rather than an empty observation. A fabricated state would be indistinguishable from a real one. |
 | The player clicks the gizmo while not connected | A message says so. A click that silently produces nothing is indistinguishable from a broken mod. |
 
@@ -144,19 +145,20 @@ maintenance mode. That debt belongs to this adapter, not to the Runtime or the p
 ```text
 About/            RimWorld mod metadata
 Patches/          the XML patch that attaches the WIA entry point to the Human def
-profile/          the RimWorld Runtime profile used for development
 src/              adapter source
 tests/            standalone build verification and the off-line unit tests
 ```
 
 ## Status
 
-Working, and verified in game. Three colonists across two sessions were spoken to: each gizmo click
+The dialogue path was verified in game as a dated Phase 10.3 baseline. Three colonists across two sessions were spoken to: each gizmo click
 produced exactly one turn, the model chose `present_dialogue` every time, the window appeared with
 the colonist's line and three replies, and each reply produced exactly one further turn. Closing the
 window produced none. The Runtime admits the capability with `accepted=1 catalog=1` and no warnings,
 and the off-line suite covers the projection's bounds and determinism and both legal dialogue forms
 with their rejections.
+
+Phase 10.4 Game Profile selection and switching still require user acceptance with the real game; the Phase 10.3 observations above do not establish that newer acceptance result.
 
 Known gaps, stated so they are not mistaken for coverage: the isolation between two colonists is
 evidenced at the level of turns, history sources and per-entity memory accounting, not by a
