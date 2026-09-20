@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -497,6 +498,12 @@ func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
 	if err != nil {
 		return err
 	}
+	previousSecretPath := ""
+	if previous, loadErr := llm.LoadConfig(r.modelPath); loadErr == nil {
+		if ownedPath, ok := runtimeOwnedModelSecretPath(r.modelPath, r.layout.SecretsDir(), previous.APIKey); ok {
+			previousSecretPath = ownedPath
+		}
+	}
 	secretPath := filepath.Join(r.layout.SecretsDir(), idgen.New("model")+".key")
 	committed := false
 	defer func() {
@@ -553,7 +560,55 @@ func (r *Runtime) ApplyModelConfiguration(setup ModelSetup) error {
 		committed = true
 		return nil
 	})
+	if err == nil && previousSecretPath != "" && previousSecretPath != secretPath {
+		_ = os.Remove(previousSecretPath)
+	}
 	return err
+}
+
+func runtimeOwnedModelSecretPath(modelPath, secretsDir, apiKey string) (string, bool) {
+	if !strings.HasPrefix(apiKey, "file:") {
+		return "", false
+	}
+	reference := strings.TrimSpace(strings.TrimPrefix(apiKey, "file:"))
+	if reference == "" {
+		return "", false
+	}
+	path := reference
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(filepath.Dir(modelPath), path)
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	secretsDir, err = filepath.Abs(secretsDir)
+	if err != nil {
+		return "", false
+	}
+	relative, err := filepath.Rel(secretsDir, path)
+	if err != nil || filepath.IsAbs(relative) || filepath.Dir(relative) != "." {
+		return "", false
+	}
+
+	name := filepath.Base(relative)
+	if !strings.HasPrefix(name, "model_") || !strings.HasSuffix(name, ".key") {
+		return "", false
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(name, "model_"), ".key")
+	timestamp, sequence, ok := strings.Cut(id, "_")
+	if !ok || strings.Contains(sequence, "_") {
+		return "", false
+	}
+	unixNanos, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || unixNanos <= 0 {
+		return "", false
+	}
+	counter, err := strconv.ParseUint(sequence, 10, 64)
+	if err != nil || counter == 0 {
+		return "", false
+	}
+	return path, true
 }
 
 // HandleEvent serves one adapter GameEvent. When the core is not configured the

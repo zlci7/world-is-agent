@@ -333,9 +333,44 @@ func TestApplyModelConfigurationReplacesARunningCore(t *testing.T) {
 	if first.APIKey == second.APIKey || second.Model != "second" || runtime.Snapshot().Model.Model != "second" {
 		t.Fatal("replacement credential or model not committed")
 	}
-	oldKey, err := secret.Read(filepath.Join(filepath.Dir(runtime.ModelConfigPath()), strings.TrimPrefix(first.APIKey, "file:")))
-	if err != nil || oldKey != "test-first" {
-		t.Fatal("replacement overwrote previous credential")
+	oldPath := filepath.Join(filepath.Dir(runtime.ModelConfigPath()), strings.TrimPrefix(first.APIKey, "file:"))
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("previous Runtime-owned credential still exists: %v", err)
+	}
+	newPath := filepath.Join(filepath.Dir(runtime.ModelConfigPath()), strings.TrimPrefix(second.APIKey, "file:"))
+	if key, err := secret.Read(newPath); err != nil || key != "test-second" {
+		t.Fatalf("replacement credential = %q, %v", key, err)
+	}
+}
+
+func TestApplyModelConfigurationPreservesExternalCredential(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "runtime")
+	externalPath := filepath.Join(base, "user-model.key")
+	if err := os.WriteFile(externalPath, []byte("user-managed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepareSelected(t, root, "rimworld")
+	document, err := json.Marshal(map[string]any{
+		"provider": "fake",
+		"model":    "first",
+		"api_key":  "file:" + filepath.ToSlash(externalPath),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, root, "model.json", string(document))
+	runtime, err := bootstrap.Open(root, stubEnv(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.ApplyModelConfiguration(bootstrap.ModelSetup{Provider: "fake", Model: "second", APIKey: "test-second"}); err != nil {
+		t.Fatal(err)
+	}
+	if key, err := secret.Read(externalPath); err != nil || key != "user-managed" {
+		t.Fatalf("external credential = %q, %v", key, err)
 	}
 }
 
