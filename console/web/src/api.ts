@@ -58,8 +58,9 @@ export async function saveGameSetup(gameId: string): Promise<Status> {
   return (await response.json()) as Status
 }
 
-export function fetchTurns(limit = 50): Promise<TurnsResponse> {
-  return get<TurnsResponse>(`/api/turns?limit=${limit}`)
+export function fetchTurns(gameId: string, limit = 50): Promise<TurnsResponse> {
+  const query = new URLSearchParams({ game_id: gameId, limit: String(limit) })
+  return get<TurnsResponse>(`/api/turns?${query}`)
 }
 
 /** The providers the first-run form may offer, with each one's default model.

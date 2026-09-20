@@ -6,9 +6,12 @@ const source = await readFile(new URL('../src/latest-response.ts', import.meta.u
 const javascript = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText
-const { createLatestResponseGate } = await import(
+const { createContextResponseGate, createLatestResponseGate, disconnectedConsoleState } = await import(
   `data:text/javascript;base64,${Buffer.from(javascript).toString('base64')}`
 )
+
+assert.equal(typeof createContextResponseGate, 'function', 'context responses need their own ordering gate')
+assert.equal(typeof disconnectedConsoleState, 'function', 'status read failures need an explicit state transition')
 
 function deferred() {
   let resolve
@@ -53,5 +56,17 @@ await simulate('model POST')
   assert.equal(gate.finishMutation(mutation), true)
   assert.equal(gate.hasActiveMutation(), false)
 }
+
+{
+  const gate = createContextResponseGate()
+  const stardew = gate.begin('stardew-valley')
+  const rimworld = gate.begin('rimworld')
+
+  assert.equal(gate.accept(stardew, 'stardew-valley'), false)
+  assert.equal(gate.accept(rimworld, 'rimworld'), true)
+  assert.equal(gate.accept(rimworld, 'stardew-valley'), false)
+}
+
+assert.deepEqual(disconnectedConsoleState(), { status: null, turns: [] })
 
 console.log('latest response ordering: ok')

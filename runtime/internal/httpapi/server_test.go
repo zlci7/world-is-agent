@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -310,7 +311,7 @@ func TestTurnsProjectsTheTrace(t *testing.T) {
 		t.Fatalf("write trace: %v", err)
 	}
 
-	recorder := f.do(t, http.MethodGet, "/api/turns", "", f.session(t))
+	recorder := f.do(t, http.MethodGet, "/api/turns?game_id=stardew-valley", "", f.session(t))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
 	}
@@ -327,12 +328,49 @@ func TestTurnsProjectsTheTrace(t *testing.T) {
 	}
 }
 
+func TestTurnsFiltersByGameBeforeApplyingTheLimit(t *testing.T) {
+	f := newFixture(t, nil)
+	tracePath := f.runtime.Layout().TracePath()
+	lines := []string{
+		`{"turn_id":"stardew-old","seq":1,"event":"turn_started","time":"2026-09-18T21:08:11Z","game_id":"stardew-valley","entity_id":"npc:Penny"}`,
+		`{"turn_id":"stardew-old","seq":2,"event":"turn_completed","time":"2026-09-18T21:08:12Z","game_id":"stardew-valley"}`,
+	}
+	// More than the trace reader's former global turn cap proves that filtering
+	// happens before either the projection cap or the HTTP response limit.
+	for index := 0; index < 250; index++ {
+		lines = append(lines,
+			fmt.Sprintf(`{"turn_id":"rim-%d","seq":1,"event":"turn_started","time":"2026-09-18T21:09:11Z","game_id":"rimworld","entity_id":"pawn:%d"}`, index, index),
+			fmt.Sprintf(`{"turn_id":"rim-%d","seq":2,"event":"turn_completed","time":"2026-09-18T21:09:12Z","game_id":"rimworld"}`, index),
+		)
+	}
+	if err := os.WriteFile(tracePath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	recorder := f.do(t, http.MethodGet, "/api/turns?game_id=stardew-valley&limit=1", "", f.session(t))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	response := decodeBody[turnsResponse](t, recorder)
+	if len(response.Turns) != 1 || response.Turns[0].TurnID != "stardew-old" {
+		t.Fatalf("turns = %+v, want the Stardew turn even though newer RimWorld turns exceed the limit", response.Turns)
+	}
+}
+
+func TestTurnsRequiresAGameContext(t *testing.T) {
+	f := newFixture(t, nil)
+	recorder := f.do(t, http.MethodGet, "/api/turns", "", f.session(t))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
 func TestTurnsValidatesTheLimit(t *testing.T) {
 	f := newFixture(t, nil)
 	cookie := f.session(t)
 
 	for _, limit := range []string{"0", "-1", "many"} {
-		recorder := f.do(t, http.MethodGet, "/api/turns?limit="+limit, "", cookie)
+		recorder := f.do(t, http.MethodGet, "/api/turns?game_id=stardew-valley&limit="+limit, "", cookie)
 		if recorder.Code != http.StatusBadRequest {
 			t.Errorf("limit %q: status = %d, want 400", limit, recorder.Code)
 		}
@@ -340,7 +378,7 @@ func TestTurnsValidatesTheLimit(t *testing.T) {
 
 	// An oversized limit is clamped rather than refused: it is a bound on the
 	// response, not an error in the request.
-	recorder := f.do(t, http.MethodGet, "/api/turns?limit=100000", "", cookie)
+	recorder := f.do(t, http.MethodGet, "/api/turns?game_id=stardew-valley&limit=100000", "", cookie)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("large limit: status = %d, want 200", recorder.Code)
 	}

@@ -28,7 +28,7 @@ const buttonLabel = computed(() => {
 })
 const canSubmit = computed(() => {
   const game = games.value.find((item) => item.id === selected.value)
-  return !saving.value && !props.busy && !loading.value && !!game
+  return !saving.value && !props.busy && !loading.value && !!game && selected.value !== currentId.value
 })
 
 watch(targetId, (value) => {
@@ -75,40 +75,39 @@ async function submit() {
 </script>
 
 <template>
-  <section class="card">
-    <h2>Choose a game</h2>
-    <p v-if="status.ready" class="lead">
-      Switching applies immediately and cancels any turn in progress. Recorded turn history remains available.
-    </p>
-    <p v-else class="lead">Select the game this Runtime will serve.</p>
+  <section class="card control-card">
+    <div class="card-heading">
+      <div>
+        <h2>Game</h2>
+        <p v-if="status.ready" class="lead">Switching cancels the current turn and keeps recorded history.</p>
+        <p v-else class="lead">Select the game this Runtime will serve.</p>
+      </div>
+      <span v-if="currentId" class="current-label">Current</span>
+    </div>
 
     <p v-if="loading" class="muted">Reading available games…</p>
     <p v-else-if="games.length === 0 && !problem" class="problem">No game profiles are available.</p>
-    <div v-else class="game-options">
-      <label v-for="game in games" :key="game.id" class="game-option">
-        <input v-model="selected" type="radio" :value="game.id" :disabled="saving || busy" />
-        <span>
-          <strong>{{ game.title }}</strong>
-          <small v-if="game.id === currentId">Current game</small>
-          <small v-if="!game.assets_ready">Missing files are prepared when you choose this game. Existing files are validated.</small>
-        </span>
-      </label>
+    <div v-else class="game-control">
+      <select v-model="selected" :disabled="saving || busy" aria-label="Game profile">
+        <option v-for="game in games" :key="game.id" :value="game.id">{{ game.title }}</option>
+      </select>
+      <button type="button" :disabled="!canSubmit" @click="submit">{{ buttonLabel }}</button>
     </div>
 
+    <p v-if="games.find((game) => game.id === selected && !game.assets_ready)" class="muted asset-note">
+      Missing profile files will be prepared and existing files validated.
+    </p>
+
     <p v-if="problem" class="problem">{{ problem }}</p>
-    <div class="actions">
-      <button type="button" :disabled="!canSubmit" @click="submit">{{ buttonLabel }}</button>
-      <span v-if="saving" class="muted">Preparing and applying the selected game…</span>
-    </div>
+    <p v-if="saving" class="muted progress">Preparing and applying the selected game…</p>
   </section>
 </template>
 
 <style scoped>
-.lead { margin: 0 0 14px; color: var(--muted); }
-.game-options { display: grid; gap: 8px; margin-bottom: 14px; }
-.game-option { display: flex; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
-.game-option:has(input:checked) { border-color: var(--accent); }
-.game-option span { display: grid; }
-.game-option small { color: var(--muted); }
-.actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.lead { margin: 3px 0 16px; color: var(--muted); font-size: 13px; }
+.current-label { padding: 2px 7px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.game-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.game-control select { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-subtle); color: var(--ink); font: inherit; }
+.asset-note, .progress { margin: 10px 0 0; font-size: 12px; }
 </style>

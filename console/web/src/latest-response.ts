@@ -26,3 +26,32 @@ export function createLatestResponseGate() {
     },
   }
 }
+
+export interface ContextRequest {
+  sequence: number
+  context: string
+}
+
+/** Keeps a response bound to the game that requested it. A sequence check alone
+ * cannot reject a response if the UI changes games before the next poll begins. */
+export function createContextResponseGate() {
+  let latest = 0
+
+  return {
+    begin(context: string): ContextRequest {
+      latest += 1
+      return { sequence: latest, context }
+    },
+    accept(request: ContextRequest, currentContext: string): boolean {
+      return request.sequence === latest && request.context === currentContext
+    },
+    invalidate(): void {
+      latest += 1
+    },
+  }
+}
+
+/** A failed status read makes the previous status and its turns untrustworthy. */
+export function disconnectedConsoleState<TTurn>() {
+  return { status: null, turns: [] as TTurn[] }
+}

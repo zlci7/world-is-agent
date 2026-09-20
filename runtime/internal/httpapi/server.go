@@ -98,10 +98,13 @@ func New(options Options) (*Server, error) {
 
 	tracePath := options.Runtime.Layout().TracePath()
 	server := &Server{
-		options:   options,
-		listener:  listener,
-		sessions:  sessions,
-		turns:     traceview.NewReader(tracePath, traceview.Options{MaxBytes: traceview.DefaultMaxBytes, MaxTurns: traceview.DefaultMaxTurns}),
+		options:  options,
+		listener: listener,
+		sessions: sessions,
+		// The HTTP boundary filters by game before applying its response limit.
+		// Keep every turn in the bounded byte window so activity from one game
+		// cannot evict another game's recent history from the console.
+		turns:     traceview.NewReader(tracePath, traceview.Options{MaxBytes: traceview.DefaultMaxBytes}),
 		tracePath: tracePath,
 		hosts:     allowedHosts(listener.Addr()),
 		url:       "http://" + listener.Addr().String(),
@@ -379,6 +382,11 @@ func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_limit", err.Error())
 		return
 	}
+	gameID := strings.TrimSpace(r.URL.Query().Get("game_id"))
+	if gameID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_game_id", "game_id is required")
+		return
+	}
 
 	turns, err := s.turns.Turns()
 	if err != nil {
@@ -387,13 +395,17 @@ func (s *Server) handleTurns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "trace_unreadable", err.Error())
 		return
 	}
-	if len(turns) > limit {
-		turns = turns[:limit]
+	filtered := make([]traceview.Turn, 0, min(limit, len(turns)))
+	for _, turn := range turns {
+		if turn.GameID != gameID {
+			continue
+		}
+		filtered = append(filtered, turn)
+		if len(filtered) == limit {
+			break
+		}
 	}
-	if turns == nil {
-		turns = []traceview.Turn{}
-	}
-	writeJSON(w, http.StatusOK, turnsResponse{TracePath: s.tracePath, Turns: turns})
+	writeJSON(w, http.StatusOK, turnsResponse{TracePath: s.tracePath, Turns: filtered})
 }
 
 func turnLimit(value string) (int, error) {
