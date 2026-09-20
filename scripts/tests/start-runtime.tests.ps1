@@ -9,6 +9,7 @@ function go {
         Arguments = @($args)
         Directory = (Get-Location).Path
         Config = $env:GAMEAGENT_AGENT_CONFIG
+        DataRoot = $env:WIA_DATA_ROOT
     }
     $global:LASTEXITCODE = $launchTest.ExitCode
 }
@@ -22,10 +23,15 @@ Push-Location $env:TEMP
 try {
     $env:GAMEAGENT_AGENT_CONFIG = 'existing-config'
     $callerDirectory = (Get-Location).Path
+    & $launcher
+    Assert ($launchTest.Invocation.Config -eq 'existing-config') 'Explicit environment override must remain effective'
+    $env:GAMEAGENT_AGENT_CONFIG = $null
+    & $launcher
+    Assert (-not $launchTest.Invocation.Config) 'Default launcher must use the selected profile'
+    $env:GAMEAGENT_AGENT_CONFIG = 'existing-config'
     foreach ($config in @('runtime/config/games/stardew-valley/agent.json', 'runtime/config/agent.json')) {
         $launchTest.Invocation = $null
-        if ($config -like '*stardew-valley*') { & $launcher }
-        else { & $launcher -AgentConfig $config }
+        & $launcher -AgentConfig $config
         Assert ($launchTest.Invocation.Config -eq (Join-Path $root $config)) 'Wrong configuration supplied to Runtime'
         Assert ($launchTest.Invocation.Directory -eq $root) 'Runtime must start at repository root'
         Assert (($launchTest.Invocation.Arguments -join ' ') -eq 'run ./runtime/cmd/server') 'Wrong Go command'
