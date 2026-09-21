@@ -6,6 +6,8 @@ World Is Agent（WIA）在本机运行，通过游戏 Adapter 接收实时状态
 
 ![World Is Agent 架构概览](docs/images/world-is-agent.jpg)
 
+> 架构图展示可扩展的模型接入方向；当前版本正式支持 DeepSeek 和 OpenAI。
+
 ## 你可以用它做什么
 
 - 让游戏角色结合身份、当前环境和历史记忆进行对话与决策。
