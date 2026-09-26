@@ -216,23 +216,37 @@ func (a *App) ListWorlds(ctx context.Context) ([]WorldSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []WorldSummary
+	type worldRef struct {
+		id, name, status, updated string
+	}
+	var refs []worldRef
 	for rows.Next() {
-		var id, name, status, updated string
-		if err := rows.Scan(&id, &name, &status, &updated); err != nil {
+		var ref worldRef
+		if err := rows.Scan(&ref.id, &ref.name, &ref.status, &ref.updated); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
-		summary, err := a.worldSummary(ctx, id)
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	result := make([]WorldSummary, 0, len(refs))
+	for _, ref := range refs {
+		summary, err := a.worldSummary(ctx, ref.id)
 		if err != nil {
 			return nil, err
 		}
-		summary.Name = name
-		summary.Status = status
-		summary.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+		summary.Name = ref.name
+		summary.Status = ref.status
+		summary.UpdatedAt, _ = time.Parse(time.RFC3339Nano, ref.updated)
 		result = append(result, summary)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (a *App) worldSummary(ctx context.Context, worldID string) (WorldSummary, error) {

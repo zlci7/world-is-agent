@@ -78,6 +78,23 @@ func waitRun(t *testing.T, app *App, worldID, runID string) Run {
 	return Run{}
 }
 
+func TestListWorldsReleasesApplicationRowsBeforeLoadingWorlds(t *testing.T) {
+	app := newTestApp(t, &scriptedGenerator{})
+	world, err := app.CreateWorld(context.Background(), "列表测试", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	worlds, err := app.ListWorlds(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(worlds) != 1 || worlds[0].WorldID != world.WorldID {
+		t.Fatalf("worlds = %+v", worlds)
+	}
+}
+
 func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 	generator := &scriptedGenerator{}
 	app := newTestApp(t, generator)
