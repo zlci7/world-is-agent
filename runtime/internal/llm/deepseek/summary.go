@@ -87,6 +87,9 @@ func (p *Provider) GenerateText(ctx context.Context, req model.TextRequest) (mod
 		return model.TextResponse{}, err
 	}
 	if err := model.ValidateTextResponse(req, resp); err != nil {
+		if errors.Is(err, model.ErrInvalidTextResponse) {
+			return model.TextResponse{}, fmt.Errorf("%w: response text is empty or invalid UTF-8", err)
+		}
 		return model.TextResponse{}, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -109,13 +112,30 @@ func parseTextResponse(data []byte) (model.TextResponse, error) {
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if model.ValidateTextJSON(data) != nil || json.Unmarshal(data, &raw) != nil || raw.Error != nil || len(raw.Choices) != 1 {
-		return model.TextResponse{}, model.ErrInvalidTextResponse
+	if model.ValidateTextJSON(data) != nil {
+		return model.TextResponse{}, fmt.Errorf("%w: response body is not strict JSON", model.ErrInvalidTextResponse)
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return model.TextResponse{}, fmt.Errorf("%w: response body does not match the chat schema", model.ErrInvalidTextResponse)
+	}
+	if raw.Error != nil {
+		return model.TextResponse{}, fmt.Errorf("%w: provider returned an error object", model.ErrInvalidTextResponse)
+	}
+	if len(raw.Choices) != 1 {
+		return model.TextResponse{}, fmt.Errorf("%w: choice count is %d", model.ErrInvalidTextResponse, len(raw.Choices))
 	}
 	choice := raw.Choices[0]
-	if choice.FinishReason != "stop" || choice.Message.Role != "assistant" ||
-		choice.Message.Refusal != nil || len(choice.Message.ToolCalls) != 0 || choice.Message.FunctionCall != nil {
-		return model.TextResponse{}, model.ErrInvalidTextResponse
+	if choice.FinishReason != "stop" {
+		return model.TextResponse{}, fmt.Errorf("%w: finish_reason is %q", model.ErrInvalidTextResponse, choice.FinishReason)
+	}
+	if choice.Message.Role != "assistant" {
+		return model.TextResponse{}, fmt.Errorf("%w: message role is %q", model.ErrInvalidTextResponse, choice.Message.Role)
+	}
+	if choice.Message.Refusal != nil {
+		return model.TextResponse{}, fmt.Errorf("%w: response contains a refusal", model.ErrInvalidTextResponse)
+	}
+	if len(choice.Message.ToolCalls) != 0 || choice.Message.FunctionCall != nil {
+		return model.TextResponse{}, fmt.Errorf("%w: response contains tool calls", model.ErrInvalidTextResponse)
 	}
 	return model.TextResponse{Text: choice.Message.Content}, nil
 }

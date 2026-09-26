@@ -60,6 +60,21 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function describeFailedRun(run: Run): string {
+  const labels: Record<string, string> = {
+    generation_failed: '这次回应没有完成，输入仍保留，可以重试。',
+    generation_timeout: '模型响应超时，输入仍保留，可以重试。',
+    intent_generation_failed: '没有成功理解这次输入，输入仍保留，可以重试。',
+    npc_generation_failed: '有角色没有成功完成回应，输入仍保留，可以重试。',
+    coordination_generation_failed: '场景结果没有成功确定，输入仍保留，可以重试。',
+    narration_generation_failed: '故事正文没有成功生成，输入仍保留，可以重试。',
+    model_not_configured: '模型连接当前不可用，请检查模型设置。',
+    version_conflict: '故事状态已经变化，请刷新后继续。',
+    storage_unavailable: '存档暂时无法读取或写入，请稍后再试。',
+  }
+  return labels[run.reason ?? ''] ?? run.error ?? '可以保留输入并重新尝试。'
+}
+
 async function loadModelOptions() {
   try {
     const result = await fetchModel()
@@ -413,7 +428,7 @@ onUnmounted(() => {
               <time>{{ formatDate(message.created_at) }}</time>
             </article>
             <div v-if="activeRun" class="thinking-card"><span class="thinking-icon"><i></i><i></i><i></i></span><div><strong>正在组织回应</strong><p>人物正在根据自己知道的事情做出选择。</p></div><button class="quiet-button" type="button" @click="stopRun">取消</button></div>
-            <div v-if="failedRun" class="failed-card"><div><strong>这一轮没有完成</strong><p>{{ failedRun.error || '可以保留输入并重新尝试。' }}</p></div><button class="secondary-button" type="button" @click="retryFailed">重试</button></div>
+            <div v-if="failedRun" class="failed-card"><div><strong>这一轮没有完成</strong><p>{{ describeFailedRun(failedRun) }}</p></div><button class="secondary-button" type="button" @click="retryFailed">重试</button></div>
           </div>
           <form class="composer" @submit.prevent="sendInput">
             <div class="composer-tools"><label class="address-label">对谁说 <select v-model="addressee"><option value="">让场景判断</option><option v-for="character in characters" :key="character.entity_id" :value="character.entity_id">{{ character.name }}</option></select></label><span class="composer-hint">自由输入 · 说话、观察或行动</span></div>

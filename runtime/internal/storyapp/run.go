@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,73 @@ type hostActionResult struct {
 
 type narrativeResult struct {
 	Narrative string `json:"narrative"`
+}
+
+type turnStage string
+
+const (
+	turnStageLoad         turnStage = "load_world"
+	turnStageIntent       turnStage = "intent"
+	turnStageNPC          turnStage = "npc"
+	turnStageCoordination turnStage = "coordination"
+	turnStageNarration    turnStage = "narration"
+	turnStageCommit       turnStage = "commit"
+
+	structuredTurnOutputTokens = 4096
+)
+
+type turnStageError struct {
+	Stage turnStage
+	Err   error
+}
+
+func (e *turnStageError) Error() string { return string(e.Stage) + ": " + e.Err.Error() }
+func (e *turnStageError) Unwrap() error { return e.Err }
+
+func atTurnStage(stage turnStage, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &turnStageError{Stage: stage, Err: err}
+}
+
+func stageOf(err error) string {
+	var staged *turnStageError
+	if errors.As(err, &staged) {
+		return string(staged.Stage)
+	}
+	return "unknown"
+}
+
+func classifyTurnFailure(err error) (status, reason, message string) {
+	if errors.Is(err, context.Canceled) {
+		return "cancelled", "cancelled", "the turn was cancelled"
+	}
+	if errors.Is(err, ErrVersionConflict) {
+		return "failed", "version_conflict", "the world changed before this turn could be saved"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "failed", "generation_timeout", "the model response timed out"
+	}
+	if errors.Is(err, ErrModelNotConfigured) {
+		return "failed", "model_not_configured", "the model connection is unavailable"
+	}
+	var staged *turnStageError
+	if errors.As(err, &staged) {
+		switch staged.Stage {
+		case turnStageLoad, turnStageCommit:
+			return "failed", "storage_unavailable", "the turn could not access its save data"
+		case turnStageIntent:
+			return "failed", "intent_generation_failed", "the player intent could not be understood"
+		case turnStageNPC:
+			return "failed", "npc_generation_failed", "one or more characters could not respond"
+		case turnStageCoordination:
+			return "failed", "coordination_generation_failed", "the scene outcome could not be resolved"
+		case turnStageNarration:
+			return "failed", "narration_generation_failed", "the story response could not be written"
+		}
+	}
+	return "failed", "generation_failed", "the turn did not complete"
 }
 
 type turnOutput struct {
@@ -211,14 +279,17 @@ func (a *App) runWorker(ctx context.Context, runtime *runRuntime, run Run) {
 
 	path, _, err := a.worldRecord(context.Background(), runtime.WorldID)
 	if err != nil {
+		a.logRunFailure(runtime.WorldID, run, "open_world", "storage_unavailable", err)
 		return
 	}
 	store, err := openWorldDB(path)
 	if err != nil {
+		a.logRunFailure(runtime.WorldID, run, "open_world", "storage_unavailable", err)
 		return
 	}
 	defer store.db.Close()
 	if err := updateRunStatus(context.Background(), store.db, run.RunID, "running", "", ""); err != nil {
+		a.logRunFailure(runtime.WorldID, run, "mark_running", "storage_unavailable", err)
 		return
 	}
 	if !a.isActive(context.Background(), runtime.WorldID, runtime.ActiveRevision) {
@@ -227,13 +298,13 @@ func (a *App) runWorker(ctx context.Context, runtime *runRuntime, run Run) {
 	}
 	output, err := a.executeTurn(ctx, store, run, runtime.Generator)
 	if err != nil {
-		status, reason, message := "failed", "generation_failed", "the turn did not complete"
-		if errors.Is(err, context.Canceled) {
-			status, reason, message = "cancelled", "cancelled", "the turn was cancelled"
-		} else if errors.Is(err, ErrVersionConflict) {
-			reason, message = "version_conflict", "the world changed before this turn could be saved"
+		status, reason, message := classifyTurnFailure(err)
+		if status == "failed" {
+			a.logRunFailure(runtime.WorldID, run, stageOf(err), reason, err)
 		}
-		_ = updateRunStatus(context.Background(), store.db, run.RunID, status, reason, message)
+		if updateErr := updateRunStatus(context.Background(), store.db, run.RunID, status, reason, message); updateErr != nil {
+			a.logRunFailure(runtime.WorldID, run, "record_failure", "storage_unavailable", updateErr)
+		}
 		return
 	}
 	if !a.isActive(context.Background(), runtime.WorldID, runtime.ActiveRevision) {
@@ -241,16 +312,24 @@ func (a *App) runWorker(ctx context.Context, runtime *runRuntime, run Run) {
 		return
 	}
 	if _, err := commitTurn(ctx, store, run, output.Narrative, output.Events, output.Perceptions, output.Memories, output.Clock, output.Scene, output.SceneVersion, output.SceneCharacters); err != nil {
-		status, reason, message := "failed", "storage_unavailable", "the completed turn could not be saved"
-		if errors.Is(err, context.Canceled) {
-			status, reason, message = "cancelled", "cancelled", "the turn was cancelled"
-		} else if errors.Is(err, ErrVersionConflict) {
-			reason, message = "version_conflict", "the world changed before this turn could be saved"
+		err = atTurnStage(turnStageCommit, err)
+		status, reason, message := classifyTurnFailure(err)
+		if status == "failed" {
+			a.logRunFailure(runtime.WorldID, run, string(turnStageCommit), reason, err)
 		}
-		_ = updateRunStatus(context.Background(), store.db, run.RunID, status, reason, message)
+		if updateErr := updateRunStatus(context.Background(), store.db, run.RunID, status, reason, message); updateErr != nil {
+			a.logRunFailure(runtime.WorldID, run, "record_failure", "storage_unavailable", updateErr)
+		}
 		return
 	}
 	_ = a.touchWorld(context.Background(), runtime.WorldID)
+}
+
+func (a *App) logRunFailure(worldID string, run Run, stage, reason string, err error) {
+	if a.logger == nil || err == nil {
+		return
+	}
+	a.logger.Printf("story turn failed: world_id=%q run_id=%q attempt=%d stage=%q reason=%q error=%v", worldID, run.RunID, run.Attempt, stage, reason, err)
 }
 
 func (a *App) Run(ctx context.Context, worldID, runID string) (Run, error) {
@@ -376,11 +455,11 @@ func resolveTurnIntent(ctx context.Context, generator model.TextGenerator, snaps
 	for _, character := range participants {
 		fmt.Fprintf(&characters, "- %s：%s（%s）\n", character.EntityID, character.Name, character.Role)
 	}
-	input := fmt.Sprintf("当前地点：%s\n当前时间：%s\n在场人物：\n%s玩家输入：%s\n显式目标（若有）：%s\n请判断玩家本轮是 speak、observe 还是 act；如果玩家明确向某个在场人物说话，只返回该人物的 entity_id。visibility 只能是 public 或 private。只输出 JSON：{\"intent_type\":\"speak\",\"addressee_id\":\"npc:...\",\"visibility\":\"public\"}。人物名出现在谈话内容里不等于玩家正在对该人物说话。", snapshot.Summary.Scene, snapshot.Summary.Clock, characters.String(), run.Input, explicitRecipient)
+	input := fmt.Sprintf("当前地点：%s\n当前时间：%s\n在场人物：\n%s玩家输入：%s\n显式目标（若有）：%s\n请判断玩家本轮是 speak、observe 还是 act；如果玩家明确向某个在场人物说话，只返回该人物的 entity_id；没有明确对象时 addressee_id 返回空字符串或 null。visibility 只能是 public 或 private。只输出 JSON：{\"intent_type\":\"speak\",\"addressee_id\":\"npc:...\",\"visibility\":\"public\"}。人物名出现在谈话内容里不等于玩家正在对该人物说话。", snapshot.Summary.Scene, snapshot.Summary.Clock, characters.String(), run.Input, explicitRecipient)
 	var intent turnIntent
 	callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if err := generateJSON(callCtx, generator, "你负责把玩家本轮输入解析成结构化回合意图。只根据输入和在场名单判断目标、可见范围与意图类型，不替玩家执行行动。", input, &intent, 512, "intent_type", "addressee_id", "visibility"); err != nil {
+	if err := generateJSONWithNullableFields(callCtx, generator, "你负责把玩家本轮输入解析成结构化回合意图。只根据输入和在场名单判断目标、可见范围与意图类型，不替玩家执行行动。", input, &intent, structuredTurnOutputTokens, []string{"addressee_id"}, "intent_type", "addressee_id", "visibility"); err != nil {
 		return turnIntent{}, err
 	}
 	intent.IntentType = strings.ToLower(cleanText(intent.IntentType))
@@ -390,10 +469,10 @@ func resolveTurnIntent(ctx context.Context, generator model.TextGenerator, snaps
 		intent.AddresseeID = explicitRecipient
 	}
 	if intent.IntentType == "" {
-		return turnIntent{}, ErrGenerationFailed
+		return turnIntent{}, fmt.Errorf("%w: intent_type is empty", ErrGenerationFailed)
 	}
 	if intent.IntentType != "speak" && intent.IntentType != "observe" && intent.IntentType != "act" {
-		return turnIntent{}, ErrGenerationFailed
+		return turnIntent{}, fmt.Errorf("%w: invalid intent_type %q", ErrGenerationFailed, intent.IntentType)
 	}
 	if intent.AddresseeID != "" {
 		if _, ok := findSceneCharacter(participants, intent.AddresseeID); !ok {
@@ -401,10 +480,10 @@ func resolveTurnIntent(ctx context.Context, generator model.TextGenerator, snaps
 		}
 	}
 	if intent.Visibility != "public" && intent.Visibility != "private" {
-		return turnIntent{}, ErrGenerationFailed
+		return turnIntent{}, fmt.Errorf("%w: invalid visibility %q", ErrGenerationFailed, intent.Visibility)
 	}
 	if intent.Visibility == "private" && intent.AddresseeID == "" {
-		return turnIntent{}, ErrInvalidRequest
+		return turnIntent{}, fmt.Errorf("%w: private intent has no addressee", ErrGenerationFailed)
 	}
 	return intent, nil
 }
@@ -412,12 +491,12 @@ func resolveTurnIntent(ctx context.Context, generator model.TextGenerator, snaps
 func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, generator model.TextGenerator) (turnOutput, error) {
 	snapshot, err := loadWorldSnapshot(ctx, store, 40)
 	if err != nil {
-		return turnOutput{}, err
+		return turnOutput{}, atTurnStage(turnStageLoad, err)
 	}
 	def := lanternDefinition()
 	intent, err := resolveTurnIntent(ctx, generator, snapshot, run)
 	if err != nil {
-		return turnOutput{}, err
+		return turnOutput{}, atTurnStage(turnStageIntent, err)
 	}
 	recipient := intent.AddresseeID
 	private := intent.Visibility == "private"
@@ -441,7 +520,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 		output.Perceptions = append(output.Perceptions, Perception{RecipientID: character.EntityID, SourceEventID: playerEventID, SourceType: sourceTypeFor(private, character.EntityID, recipient), Content: perceptText[character.EntityID], Stage: 1, SceneVersion: snapshot.SceneVersion, CreatedAt: now})
 	}
 	if err := a.decideNPCs(ctx, generator, snapshot, def, recipient, intent.IntentType, perceptText, nil, decisions, 1, ""); err != nil {
-		return turnOutput{}, err
+		return turnOutput{}, atTurnStage(turnStageNPC, err)
 	}
 	var publicReplyLog []string
 	for _, character := range participants {
@@ -460,7 +539,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 			followText := map[string]string{character.EntityID: "公开回应的新刺激：" + follow}
 			priorTurn := map[string]string{character.EntityID: fmt.Sprintf("第一阶段感知：%s\n第一阶段自己的决定：%s", perceptText[character.EntityID], formatSelfDecision(previous))}
 			if err := a.decideNPCs(ctx, generator, snapshot, def, recipient, intent.IntentType, followText, priorTurn, followDecisions, 2, follow); err != nil {
-				return turnOutput{}, err
+				return turnOutput{}, atTurnStage(turnStageNPC, err)
 			}
 			decision, ok := followDecisions[character.EntityID]
 			if !ok {
@@ -476,7 +555,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 	publicReplies := strings.Join(publicReplyLog, "\n")
 	host, err := a.coordinateTurn(ctx, generator, snapshot, run, intent, decisions, output.Events, publicReplies)
 	if err != nil {
-		return turnOutput{}, err
+		return turnOutput{}, atTurnStage(turnStageCoordination, err)
 	}
 	output.Clock = advanceClock(snapshot.Summary.Clock, run.Input, host.TimeMinutes)
 	output.Scene = host.Scene
@@ -486,12 +565,12 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 	}
 	visibleOutcomes, err := appendHostOutcomes(&output, run, participants, host.Outcomes)
 	if err != nil {
-		return turnOutput{}, err
+		return turnOutput{}, atTurnStage(turnStageCoordination, err)
 	}
 	playerProjection := joinVisibleResults(publicReplies, visibleOutcomes)
 	result, err := a.narrateVisible(ctx, generator, snapshot, run, def, recipient, intent.IntentType, playerProjection, private, output.Clock, output.Scene, output.SceneCharacters)
 	if err != nil {
-		return turnOutput{}, err
+		return turnOutput{}, atTurnStage(turnStageNarration, err)
 	}
 	output.Narrative = result.Narrative
 	output.Events = append(output.Events, Event{EventID: run.RunID + ":outcome", EventType: "turn_settled", ActorID: "scene", Content: playerProjection, RunID: run.RunID, Stage: 3, SceneVersion: output.SceneVersion, SourceType: "scene", CreatedAt: time.Now().UTC()})
@@ -544,7 +623,7 @@ func appendHostOutcomes(output *turnOutput, run Run, participants []Character, o
 		}
 	}
 	if len(outcomes) != len(actions) {
-		return nil, ErrGenerationFailed
+		return nil, fmt.Errorf("%w: outcome count %d does not match action count %d", ErrGenerationFailed, len(outcomes), len(actions))
 	}
 	participantIDs := make(map[string]bool, len(participants))
 	for _, character := range participants {
@@ -558,14 +637,14 @@ func appendHostOutcomes(output *turnOutput, run Run, participants []Character, o
 		outcome.Content = cleanText(outcome.Content)
 		action, ok := actions[outcome.ActionID]
 		if !ok || seen[outcome.ActionID] || outcome.Content == "" || (outcome.Status != "succeeded" && outcome.Status != "failed" && outcome.Status != "partial") || outcome.Recipients == nil {
-			return nil, ErrGenerationFailed
+			return nil, fmt.Errorf("%w: invalid outcome at index %d", ErrGenerationFailed, index)
 		}
 		seen[outcome.ActionID] = true
 		recipients := make(map[string]bool, len(outcome.Recipients)+1)
 		for _, id := range outcome.Recipients {
 			id = cleanText(id)
 			if id != "player" && !participantIDs[id] {
-				return nil, ErrGenerationFailed
+				return nil, fmt.Errorf("%w: outcome %q has unknown recipient %q", ErrGenerationFailed, outcome.ActionID, id)
 			}
 			recipients[id] = true
 		}
@@ -676,7 +755,7 @@ func (a *App) decideNPCs(ctx context.Context, generator model.TextGenerator, sna
 			var decision npcDecision
 			callCtx, callCancel := context.WithTimeout(npcCtx, 60*time.Second)
 			defer callCancel()
-			err := generateJSON(callCtx, generator, "你是一个重要 NPC。只根据自己的角色资料、个人记忆和本阶段感知作决定。你可以沉默；speech 是你愿意让在场者听见的对白，action_intent 只是尝试，不是已经发生的事实。memory 只写本次真正获知的简短经历。", input, &decision, 1024, "speech", "action_intent", "silent", "memory")
+			err := generateJSONWithNullableFields(callCtx, generator, "你是一个重要 NPC。只根据自己的角色资料、个人记忆和本阶段感知作决定。你可以沉默；speech 是你愿意让在场者听见的对白，action_intent 只是尝试，不是已经发生的事实。memory 只写本次真正获知的简短经历。", input, &decision, structuredTurnOutputTokens, []string{"speech", "action_intent", "memory"}, "speech", "action_intent", "silent", "memory")
 			if err != nil {
 				errMu.Lock()
 				if firstErr == nil {
@@ -790,17 +869,18 @@ func (a *App) coordinateTurn(ctx context.Context, generator model.TextGenerator,
 		}
 	}
 	actionJSON, _ := json.Marshal(actionCandidates)
-	input := fmt.Sprintf("世界：%s\n当前地点：%s\n当前时间：%s\n玩家本轮输入：%s\n结构化意图：type=%s；target=%s；visibility=%s\nNPC 已确定的公开对白：%s\nNPC 协调提案（只包含公开对白、行动尝试与沉默状态，不含个人记忆）：\n%s\n待裁定行动(JSON)：%s\n所有可用重要人物：%s\n当前在场人物 entity_id：%s\n请协调本轮事实。每个待裁定行动必须且只能产生一个 outcome，并用 action_id 精确引用；status 只能是 succeeded、failed、partial；content 写已确定结果而不是尝试；recipients 只列实际感知结果的 player 或人物 entity_id，行动者本人可省略。scene_characters 给出回合结束后实际在场的重要人物 entity_id，人物进入或离开只影响之后的阶段，不回填此前信息。输出 JSON：time_minutes、scene、scene_characters、outcomes。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, run.Input, intent.IntentType, intent.AddresseeID, intent.Visibility, publicReplies, coordinationDecisionContext(decisions, snapshot.Characters), actionJSON, availableCharacterIDs(snapshot.Characters), strings.Join(characterIDs(sceneCharacters(snapshot.Characters)), ","))
+	input := fmt.Sprintf("世界：%s\n当前地点：%s\n当前时间：%s\n玩家本轮输入：%s\n结构化意图：type=%s；target=%s；visibility=%s\nNPC 已确定的公开对白：%s\nNPC 协调提案（只包含公开对白、行动尝试与沉默状态，不含个人记忆）：\n%s\n待裁定行动(JSON)：%s\n所有可用重要人物：%s\n当前在场人物 entity_id：%s\n请协调本轮事实。每个待裁定行动必须且只能产生一个 outcome，并用 action_id 精确引用；status 只能是 succeeded、failed、partial；content 写已确定结果而不是尝试；recipients 只列实际感知结果的 player 或人物 entity_id，行动者本人可省略。scene_characters 只给出回合结束后实际在场的重要 NPC entity_id，不要包含 player；人物进入或离开只影响之后的阶段，不回填此前信息。输出 JSON：time_minutes、scene、scene_characters、outcomes。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, run.Input, intent.IntentType, intent.AddresseeID, intent.Visibility, publicReplies, coordinationDecisionContext(decisions, snapshot.Characters), actionJSON, availableCharacterIDs(snapshot.Characters), strings.Join(characterIDs(sceneCharacters(snapshot.Characters)), ","))
 	var result hostResult
 	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer callCancel()
-	if err := generateJSON(callCtx, generator, "你是场景协调 Agent。你可以读取本轮协调资料来裁定行动结果、时间和场景，但不要写玩家正文，也不要把 NPC 的行动尝试直接当成成功事实。", input, &result, 2048, "time_minutes", "scene", "scene_characters", "outcomes"); err != nil {
+	if err := generateJSON(callCtx, generator, "你是场景协调 Agent。你可以读取本轮协调资料来裁定行动结果、时间和场景，但不要写玩家正文，也不要把 NPC 的行动尝试直接当成成功事实。", input, &result, structuredTurnOutputTokens, "time_minutes", "scene", "scene_characters", "outcomes"); err != nil {
 		return hostResult{}, err
 	}
 	result.Scene = cleanText(result.Scene)
 	if result.Scene == "" || result.TimeMinutes < 0 || result.TimeMinutes > 120 || result.SceneCharacters == nil || result.Outcomes == nil {
-		return hostResult{}, ErrGenerationFailed
+		return hostResult{}, fmt.Errorf("%w: invalid scene coordination fields", ErrGenerationFailed)
 	}
+	result.SceneCharacters = normalizeSceneCharacters(result.SceneCharacters)
 	if err := validateSceneCharacters(result.SceneCharacters, snapshot.Characters); err != nil {
 		return hostResult{}, err
 	}
@@ -819,12 +899,12 @@ func (a *App) narrateVisible(ctx context.Context, generator model.TextGenerator,
 	var result narrativeResult
 	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer callCancel()
-	if err := generateJSON(callCtx, generator, "你是玩家正文 Agent。你只能把已经投影给玩家的结果写成连贯叙事，不接触或猜测 NPC 私人记忆和隐藏结果。", input, &result, 2048, "narrative"); err != nil {
+	if err := generateJSON(callCtx, generator, "你是玩家正文 Agent。你只能把已经投影给玩家的结果写成连贯叙事，不接触或猜测 NPC 私人记忆和隐藏结果。", input, &result, structuredTurnOutputTokens, "narrative"); err != nil {
 		return narrativeResult{}, err
 	}
 	result.Narrative = cleanText(result.Narrative)
 	if result.Narrative == "" {
-		return narrativeResult{}, ErrGenerationFailed
+		return narrativeResult{}, fmt.Errorf("%w: narrative is empty", ErrGenerationFailed)
 	}
 	return result, nil
 }
@@ -883,7 +963,7 @@ func validateSceneCharacters(ids []string, characters []Character) error {
 	for index, id := range ids {
 		id = cleanText(id)
 		if id == "" || !available[id] || seen[id] {
-			return ErrGenerationFailed
+			return fmt.Errorf("%w: invalid scene character %q at index %d", ErrGenerationFailed, id, index)
 		}
 		ids[index] = id
 		seen[id] = true
@@ -891,27 +971,73 @@ func validateSceneCharacters(ids []string, characters []Character) error {
 	return nil
 }
 
-func generateJSON(ctx context.Context, generator model.TextGenerator, system, input string, target any, maxOutput int, requiredFields ...string) error {
-	response, err := generator.GenerateText(ctx, model.TextRequest{System: system, Input: input, MaxInputTokens: 12000, MaxOutputTokens: maxOutput, MaxResponseBytes: 1 << 20})
-	if err != nil {
-		return err
+func normalizeSceneCharacters(ids []string) []string {
+	result := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = cleanText(id)
+		if id != "player" {
+			result = append(result, id)
+		}
 	}
-	if err := validateStrictJSON([]byte(response.Text)); err != nil {
+	return result
+}
+
+func generateJSON(ctx context.Context, generator model.TextGenerator, system, input string, target any, maxOutput int, requiredFields ...string) error {
+	return generateJSONWithNullableFields(ctx, generator, system, input, target, maxOutput, nil, requiredFields...)
+}
+
+func generateJSONWithNullableFields(ctx context.Context, generator model.TextGenerator, system, input string, target any, maxOutput int, nullableFields []string, requiredFields ...string) error {
+	for attempt := 0; attempt < 2; attempt++ {
+		requestSystem := system
+		if attempt > 0 {
+			requestSystem += "\n上一次响应不是可接受的完整 JSON。请重新生成，只输出满足字段要求的单个 JSON 对象。"
+		}
+		response, err := generator.GenerateText(ctx, model.TextRequest{System: requestSystem, Input: input, MaxInputTokens: 12000, MaxOutputTokens: maxOutput, MaxResponseBytes: 1 << 20})
+		if err != nil {
+			if attempt == 0 && errors.Is(err, model.ErrInvalidTextResponse) {
+				continue
+			}
+			return err
+		}
+		if err := decodeGeneratedJSON(response.Text, target, nullableFields, requiredFields); err != nil {
+			if attempt == 0 {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return ErrGenerationFailed
+}
+
+func decodeGeneratedJSON(text string, target any, nullableFields, requiredFields []string) error {
+	if err := validateStrictJSON([]byte(text)); err != nil {
 		return err
 	}
 	if len(requiredFields) > 0 {
 		var object map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(response.Text), &object); err != nil || object == nil {
+		if err := json.Unmarshal([]byte(text), &object); err != nil || object == nil {
 			return ErrGenerationFailed
+		}
+		nullable := make(map[string]bool, len(nullableFields))
+		for _, field := range nullableFields {
+			nullable[field] = true
 		}
 		for _, field := range requiredFields {
 			raw, ok := object[field]
-			if !ok || strings.EqualFold(strings.TrimSpace(string(raw)), "null") {
-				return ErrGenerationFailed
+			if !ok {
+				return fmt.Errorf("%w: required field %q is missing", ErrGenerationFailed, field)
+			}
+			if strings.EqualFold(strings.TrimSpace(string(raw)), "null") && !nullable[field] {
+				return fmt.Errorf("%w: required field %q is null", ErrGenerationFailed, field)
 			}
 		}
 	}
-	decoder := json.NewDecoder(strings.NewReader(response.Text))
+	value := reflect.ValueOf(target)
+	if value.Kind() == reflect.Pointer && !value.IsNil() {
+		value.Elem().Set(reflect.Zero(value.Elem().Type()))
+	}
+	decoder := json.NewDecoder(strings.NewReader(text))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err

@@ -25,6 +25,23 @@ type scriptedGenerator struct {
 	scene    string
 }
 
+type recordingLogger struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *recordingLogger) Printf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+}
+
+func (l *recordingLogger) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.lines, "\n")
+}
+
 func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequest) (model.TextResponse, error) {
 	if g.delay > 0 {
 		timer := time.NewTimer(g.delay)
@@ -615,6 +632,33 @@ func TestStrictJSONRejectsDuplicateKeys(t *testing.T) {
 	_ = json.Valid
 }
 
+func TestRunFailureRecordsStageReasonAndSafeDiagnostic(t *testing.T) {
+	logger := &recordingLogger{}
+	app, err := Open(context.Background(), Options{DataRoot: t.TempDir(), UserID: LocalUserID, Generator: &scriptedGenerator{fail: true}, Logger: logger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Close() })
+	world, err := app.CreateWorld(context.Background(), "失败诊断", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "failure-diagnostic", Input: "我看看柜台。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := waitRun(t, app, world.WorldID, run.RunID)
+	if finished.Status != "failed" || finished.Reason != "intent_generation_failed" || finished.Error != "the player intent could not be understood" {
+		t.Fatalf("failed run = %+v", finished)
+	}
+	logText := logger.String()
+	for _, want := range []string{`run_id="` + run.RunID + `"`, `stage="intent"`, `reason="intent_generation_failed"`, `required field "intent_type" is missing`} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("failure log %q does not contain %q", logText, want)
+		}
+	}
+}
+
 func TestStructuredIntentUsesDirectAddressAndPrivateVisibility(t *testing.T) {
 	generator := &scriptedGenerator{}
 	app := newTestApp(t, generator)
@@ -716,6 +760,17 @@ func TestSceneHostProposalAndSceneVersionAreCommitted(t *testing.T) {
 	}
 	if !strings.Contains(host, "NPC 协调提案") || !strings.Contains(host, "action_intent") || strings.Contains(host, "玩家主动向我提供了消息") {
 		t.Fatalf("scene host did not receive the full context: %s", host)
+	}
+}
+
+func TestSceneRosterTreatsPlayerAsImplicit(t *testing.T) {
+	characters := lanternDefinition().Characters
+	ids := normalizeSceneCharacters([]string{"player", "npc:innkeeper", "npc:mercenary"})
+	if err := validateSceneCharacters(ids, characters); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ids, ",") != "npc:innkeeper,npc:mercenary" {
+		t.Fatalf("normalized scene roster = %v", ids)
 	}
 }
 
@@ -899,6 +954,26 @@ func (g fixedJSONGenerator) GenerateText(context.Context, model.TextRequest) (mo
 	return model.TextResponse{Text: g.text}, nil
 }
 
+type sequenceJSONGenerator struct {
+	responses []model.TextResponse
+	errors    []error
+	calls     int
+}
+
+func (g *sequenceJSONGenerator) GenerateText(context.Context, model.TextRequest) (model.TextResponse, error) {
+	index := g.calls
+	g.calls++
+	var response model.TextResponse
+	var err error
+	if index < len(g.responses) {
+		response = g.responses[index]
+	}
+	if index < len(g.errors) {
+		err = g.errors[index]
+	}
+	return response, err
+}
+
 type intentResultGenerator struct {
 	base   *scriptedGenerator
 	intent string
@@ -972,5 +1047,73 @@ func TestRequiredJSONFieldsRejectEmptyObjects(t *testing.T) {
 		if err := generateJSON(context.Background(), fixedJSONGenerator{text: text}, "", "", &decision, 100, "speech", "action_intent", "silent", "memory"); err == nil {
 			t.Fatalf("empty NPC response accepted: %s", text)
 		}
+	}
+}
+
+func TestNullableJSONFieldMustExistButMayBeNull(t *testing.T) {
+	var intent turnIntent
+	err := generateJSONWithNullableFields(
+		context.Background(),
+		fixedJSONGenerator{text: `{"intent_type":"observe","addressee_id":null,"visibility":"public"}`},
+		"", "", &intent, 100,
+		[]string{"addressee_id"},
+		"intent_type", "addressee_id", "visibility",
+	)
+	if err != nil || intent.AddresseeID != "" {
+		t.Fatalf("nullable addressee = %+v, %v", intent, err)
+	}
+	err = generateJSONWithNullableFields(
+		context.Background(),
+		fixedJSONGenerator{text: `{"intent_type":"observe","visibility":"public"}`},
+		"", "", &intent, 100,
+		[]string{"addressee_id"},
+		"intent_type", "addressee_id", "visibility",
+	)
+	if !errors.Is(err, ErrGenerationFailed) || !strings.Contains(err.Error(), `required field "addressee_id" is missing`) {
+		t.Fatalf("missing nullable field error = %v", err)
+	}
+}
+
+func TestGenerateJSONRetriesOnlyInvalidModelOutput(t *testing.T) {
+	valid := model.TextResponse{Text: `{"intent_type":"observe","addressee_id":null,"visibility":"public"}`}
+	for _, tc := range []struct {
+		name      string
+		responses []model.TextResponse
+		errors    []error
+		wantCalls int
+		wantError bool
+	}{
+		{"provider returned incomplete response", []model.TextResponse{{}, valid}, []error{model.ErrInvalidTextResponse, nil}, 2, false},
+		{"model returned malformed JSON", []model.TextResponse{{Text: `{"intent_type":`}, valid}, nil, 2, false},
+		{"transport failure is not retried", nil, []error{errors.New("provider unavailable")}, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			generator := &sequenceJSONGenerator{responses: tc.responses, errors: tc.errors}
+			var intent turnIntent
+			err := generateJSONWithNullableFields(
+				context.Background(), generator, "system", "input", &intent, 100,
+				[]string{"addressee_id"},
+				"intent_type", "addressee_id", "visibility",
+			)
+			if (err != nil) != tc.wantError || generator.calls != tc.wantCalls {
+				t.Fatalf("GenerateText calls = %d, error = %v", generator.calls, err)
+			}
+		})
+	}
+}
+
+func TestUnaddressedIntentAcceptsNullAddressee(t *testing.T) {
+	generator := intentResultGenerator{base: &scriptedGenerator{}, intent: `{"intent_type":"observe","addressee_id":null,"visibility":"public"}`}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "无目标意图", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "nullable-addressee", Input: "进入门，看看有什么"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
 	}
 }

@@ -137,6 +137,26 @@ func TestGenerateTextRejectsNonTextAndIncompleteChatResponses(t *testing.T) {
 	}
 }
 
+func TestGenerateTextReportsSafeInvalidResponseMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"empty text", `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":""}}]}`, "response text is empty"},
+		{"truncated", `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"partial secret"}}]}`, `finish_reason is "length"`},
+		{"provider error", `{"error":{"message":"secret-body","code":"secret-code"}}`, "provider returned an error object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := newTextTestProvider(t, http.StatusOK, tc.body)
+			_, err := provider.GenerateText(context.Background(), model.TextRequest{Input: "facts"})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("error = %v, want safe metadata %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestGenerateTextEnforcesOutputAndResponseBounds(t *testing.T) {
 	large := strings.TrimSuffix(textSuccessBody, "}") + `,"padding":"` + strings.Repeat("a", 1<<20) + `"}`
 	for _, tc := range []struct {
