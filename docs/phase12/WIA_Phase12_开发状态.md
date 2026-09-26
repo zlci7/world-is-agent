@@ -6,6 +6,8 @@
 
 M1「核心游玩与可靠存档」的实现和工程验证已完成，交付物可独立于游戏运行时启动。用户体验验收可直接从本地 Runtime 开始；真实模型连续游玩需要在工作台提供可用的 Provider API Key。
 
+当前成果包含结构化回合意图解析、明确目标与私聊隔离、在场人物过滤、NPC 行动意图与个人记忆闭环、阶段二公开刺激、场景主上下文与场景版本提交、回合基线校验、失败重试边界、可靠另存、单数据根进程互斥、运行状态恢复和本地 Origin 校验。
+
 ## 阶段状态
 
 | 阶段 | 实现 | 工程验证 | 用户体验验收 | 证据 |
@@ -26,4 +28,4 @@ cd D:\data\project\game-agent\world-is-agent
 
 ## 已知验证边界
 
-自动化、race、静态检查、前端构建和本地二进制启动均已完成。当前开发环境没有预置 DeepSeek 或 OpenAI API Key，因此真实模型的普通对话、私聊、插话等待和连续存读档数据仍保持“待执行”，不以测试注入的 Fake 冒充真实模型体验结论。
+最近一次验证已通过：`go test ./... -count=1`、`go test -race ./runtime/internal/storyapp ./runtime/internal/storyapi -count=1`、`go vet ./runtime/internal/storyapp ./runtime/internal/storyapi ./runtime/cmd/server`、`npm run type-check`、`npm run build`、`git diff --check`，并完成 Runtime 本地启动探测。当前开发环境没有预置 DeepSeek 或 OpenAI API Key，因此真实模型的普通对话、私聊、插话等待和连续存读档数据仍保持“待执行”，不以测试注入的 Fake 冒充真实模型体验结论。
