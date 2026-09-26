@@ -1,480 +1,482 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ApiError, StateReconfiguring, type Status, type Turn } from './types'
-import { exchangeBootstrapToken, fetchStatus, fetchTurns } from './api'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
-  createContextResponseGate,
-  createLatestResponseGate,
-  disconnectedConsoleState,
-} from './latest-response'
-import Setup from './Setup.vue'
-import GameSetup from './GameSetup.vue'
+  activateWorld, cancelRun, createWorld, exchangeBootstrapToken, fetchCopyOperation, fetchGames,
+  fetchModel, fetchRun, fetchStatus, fetchWorld, fetchWorlds, retryRun, saveAs, saveModel, submitRun,
+} from './api'
+import { ApiError, type Character, type GameSummary, type Message, type ModelInfo, type Run, type SaveOperation, type Status, type WorldSummary } from './types'
 
 const status = ref<Status | null>(null)
-const turns = ref<Turn[]>([])
-const statusProblem = ref<string | null>(null)
-const turnsProblem = ref<string | null>(null)
-const unauthorized = ref(false)
+const games = ref<GameSummary[]>([])
+const worlds = ref<WorldSummary[]>([])
+const currentWorld = ref<WorldSummary | null>(null)
+const characters = ref<Character[]>([])
+const messages = ref<Message[]>([])
+const playerName = ref('旅人')
+const playerProfile = ref('一个正在寻找答案的旅人。')
+const input = ref('')
+const addressee = ref('')
+const activeRun = ref<Run | null>(null)
+const failedRun = ref<Run | null>(null)
+const errorMessage = ref('')
+const connectionError = ref('')
 const loaded = ref(false)
-const turnsLoading = ref(false)
-const turnsGameID = ref('')
-const statusMutationActive = ref(false)
-const modelSettingsOpen = ref(false)
-const statusGate = createLatestResponseGate()
-const turnsGate = createContextResponseGate()
+const busy = ref(false)
+const saveBusy = ref(false)
+const showNewWorld = ref(false)
+const showSaves = ref(false)
+const showModel = ref(false)
+const modelBusy = ref(false)
+const copyOperation = ref<SaveOperation | null>(null)
+const newWorldKind = ref<'new' | 'save'>('new')
+const newWorld = reactive({ name: '', mode: 'guided' })
+const modelForm = reactive({ provider: 'deepseek', model: 'deepseek-v4-flash', base_url: '', api_key: '' })
+const providerOptions = ref<{ provider: string; model: string }[]>([])
 
-let timer: number | undefined
+let pollTimer: number | undefined
+let refreshPromise: Promise<void> | undefined
+let queuedForceRefresh = false
 
-const recoverableGameReasons = new Set([
-  'game_not_selected', 'invalid_game', 'game_selection_invalid', 'profile_assets_missing',
-  'profile_invalid', 'initialization_failed', 'model_configuration_required',
-])
-const showGameSetup = computed(() => loaded.value && status.value !== null && (
-  status.value.state === 'ready' ||
-  (status.value.state === 'needs_configuration' && recoverableGameReasons.has(status.value.reason_code ?? ''))
-))
-const showModelSetup = computed(() => {
-  const current = status.value
-  if (!loaded.value || current === null) return false
-  if (modelSettingsOpen.value && current.ready) return true
-  return current.state === 'needs_configuration' && current.configured_game !== null &&
-    (current.reason_code === 'model_configuration_required' ||
-      (current.reason_code === 'initialization_failed' &&
-        (current.model === undefined || current.model_error !== undefined)))
-})
-const setupMode = computed(() => showGameSetup.value || showModelSetup.value)
-const configurationBusy = computed(() =>
-  statusMutationActive.value || status.value?.state === StateReconfiguring,
-)
-const currentGameID = computed(() => status.value?.loaded_game?.id ?? '')
-const currentGameTitle = computed(() =>
-  status.value?.loaded_game?.title || status.value?.loaded_game?.id || 'No game selected',
-)
-const runtimeLabel = computed(() => {
-  if (!status.value) return loaded.value ? 'Disconnected' : 'Connecting'
-  if (status.value.state === StateReconfiguring) return 'Applying settings'
-  return status.value.ready ? 'Ready' : status.value.state.replaceAll('_', ' ')
-})
-const adapterLabel = computed(() => {
-  const count = status.value?.adapters.length ?? 0
-  return count === 0 ? 'Waiting for adapter' : `${count} connected`
-})
-const modelLabel = computed(() => {
-  const model = status.value?.model
-  if (!model) return status.value?.model_error || 'Not configured'
-  return `${model.provider || 'default'} / ${model.model || 'default'}`
-})
+const activeWorldID = computed(() => status.value?.active_world?.world_id ?? '')
+const model = computed<ModelInfo>(() => status.value?.model ?? { configured: false })
+const needsModel = computed(() => loaded.value && !status.value?.ready)
+const hasWorld = computed(() => Boolean(currentWorld.value && activeWorldID.value))
+const canSubmit = computed(() => Boolean(input.value.trim()) && !activeRun.value && !busy.value && hasWorld.value && status.value?.ready)
+const modelStatusText = computed(() => model.value.configured ? `${model.value.provider ?? '模型'} · ${model.value.model ?? ''}` : '尚未连接模型')
+const currentGame = computed(() => games.value[0])
 
 function describe(error: unknown): string {
+  if (error instanceof ApiError) {
+    const labels: Record<string, string> = {
+      model_not_configured: '还没有可用的模型连接。',
+      generation_failed: '这次回应没有完成，输入仍保留，可以重试。',
+      world_busy: '故事正在处理上一项操作，请稍候。',
+      version_conflict: '这个页面的信息已经过期，请刷新后继续。',
+      storage_unavailable: '存档暂时无法写入，请稍后再试。',
+      save_failed: '另存没有完成，原存档没有受到影响。',
+    }
+    return labels[error.code] ?? error.message
+  }
   return error instanceof Error ? error.message : String(error)
 }
 
-function noteUnauthorized(error: unknown) {
-  if (error instanceof ApiError && error.status === 401) unauthorized.value = true
-}
-
-function clearTurnContext(gameID = '') {
-  turnsGate.invalidate()
-  turns.value = []
-  turnsProblem.value = null
-  turnsLoading.value = false
-  turnsGameID.value = gameID
-}
-
-async function refreshStatus(): Promise<Status | null | undefined> {
-  if (statusMutationActive.value) return undefined
-  const request = statusGate.begin()
+async function loadModelOptions() {
   try {
-    const updated = await fetchStatus()
-    if (!statusGate.isLatest(request)) return undefined
-    status.value = updated
-    statusProblem.value = null
-    return updated
+    const result = await fetchModel()
+    providerOptions.value = result.providers
+    if (!model.value.configured && result.providers.length) {
+      modelForm.provider = result.providers[0].provider
+      modelForm.model = result.providers[0].model
+    }
   } catch (error) {
-    if (!statusGate.isLatest(request)) return undefined
-    noteUnauthorized(error)
-    statusProblem.value = describe(error)
-    const disconnected = disconnectedConsoleState<Turn>()
-    status.value = disconnected.status
-    turns.value = disconnected.turns
-    turnsGate.invalidate()
-    turnsLoading.value = false
-    turnsGameID.value = ''
-    modelSettingsOpen.value = false
-    return null
+    connectionError.value = describe(error)
   }
 }
 
-function beginStatusMutation(): number {
-  statusMutationActive.value = true
-  return statusGate.beginMutation()
-}
-
-function acceptStatus(updated: Status, request: number) {
-  if (!statusGate.finishMutation(request)) return
-  const previousGameID = currentGameID.value
-  status.value = updated
-  statusProblem.value = null
-  statusMutationActive.value = false
-  const nextGameID = updated.loaded_game?.id ?? ''
-  if (nextGameID !== previousGameID) clearTurnContext(nextGameID)
-  if (nextGameID) void refreshTurns(nextGameID)
-}
-
-function closeModelSettings() {
-  modelSettingsOpen.value = false
-}
-
-function noteReadFailure(error: unknown) {
-  noteUnauthorized(error)
-}
-
-async function recoverAfterMutationFailure(error: unknown, request: number) {
-  noteUnauthorized(error)
-  if (!statusGate.finishMutation(request)) return
-  statusMutationActive.value = false
-  const updated = await refreshStatus()
-  if (updated?.loaded_game?.id) await refreshTurns(updated.loaded_game.id)
-}
-
-async function refreshTurns(gameID: string) {
-  if (!gameID) {
-    clearTurnContext()
+async function loadWorld(worldID: string) {
+  if (!worldID) {
+    currentWorld.value = null
+    characters.value = []
+    messages.value = []
     return
   }
-  if (turnsGameID.value !== gameID) {
-    turns.value = []
-    turnsProblem.value = null
-    turnsGameID.value = gameID
-  }
-  const request = turnsGate.begin(gameID)
-  turnsLoading.value = true
+  const result = await fetchWorld(worldID)
+  if (activeWorldID.value !== worldID) return
+  currentWorld.value = result.world
+  playerName.value = result.player_name
+  playerProfile.value = result.player_profile
+  characters.value = result.characters
+  messages.value = result.messages
+}
+
+async function refreshOnce(forceWorld = false) {
   try {
-    const response = await fetchTurns(gameID)
-    if (!turnsGate.accept(request, currentGameID.value)) return
-    turns.value = response.turns
-    turnsProblem.value = null
+    const nextStatus = await fetchStatus()
+    status.value = nextStatus
+    connectionError.value = ''
+    worlds.value = await fetchWorlds()
+    const nextWorldID = nextStatus.active_world?.world_id ?? ''
+    if (activeRun.value && currentWorld.value?.world_id && nextWorldID !== currentWorld.value.world_id) {
+      activeRun.value = null
+      failedRun.value = null
+    }
+    if (forceWorld || nextWorldID !== currentWorld.value?.world_id) await loadWorld(nextWorldID)
+    if (activeRun.value && nextWorldID) await pollRun()
   } catch (error) {
-    if (!turnsGate.accept(request, currentGameID.value)) return
-    noteUnauthorized(error)
-    turnsProblem.value = describe(error)
+    connectionError.value = describe(error)
   } finally {
-    if (turnsGate.accept(request, currentGameID.value)) turnsLoading.value = false
+    loaded.value = true
   }
 }
 
-async function refresh() {
-  const updated = await refreshStatus()
-  if (updated?.loaded_game?.id) await refreshTurns(updated.loaded_game.id)
-  loaded.value = true
+async function pollRun() {
+  const run = activeRun.value
+  const worldID = currentWorld.value?.world_id
+  if (!run || !worldID) return
+  try {
+    const current = await fetchRun(worldID, run.run_id)
+    activeRun.value = current
+    if (current.status === 'completed') {
+      activeRun.value = null
+      await refreshOnce(true)
+    } else if (current.status === 'failed' || current.status === 'cancelled' || current.status === 'interrupted') {
+      activeRun.value = null
+      failedRun.value = current
+      await refresh()
+    }
+  } catch (error) {
+    connectionError.value = describe(error)
+  }
+}
+
+function refresh(forceWorld = false): Promise<void> {
+  queuedForceRefresh = queuedForceRefresh || forceWorld
+  if (refreshPromise) return refreshPromise
+  const force = queuedForceRefresh
+  queuedForceRefresh = false
+  refreshPromise = refreshOnce(force).finally(() => {
+    refreshPromise = undefined
+    if (queuedForceRefresh) void refresh()
+  })
+  return refreshPromise
+}
+
+async function configureModel() {
+  if (!modelForm.api_key.trim()) {
+    errorMessage.value = '请输入模型 API Key。'
+    return
+  }
+  modelBusy.value = true
+  errorMessage.value = ''
+  try {
+    status.value = await saveModel({ ...modelForm })
+    modelForm.api_key = ''
+    showModel.value = false
+    await refresh()
+  } catch (error) {
+    errorMessage.value = describe(error)
+  } finally {
+    modelBusy.value = false
+  }
+}
+
+function changeProvider() {
+  const option = providerOptions.value.find(item => item.provider === modelForm.provider)
+  if (option) modelForm.model = option.model
+}
+
+async function startWorld() {
+  busy.value = true
+  errorMessage.value = ''
+  try {
+    await createWorld({ name: newWorld.name, mode: newWorld.mode, player_name: playerName.value, player_profile: playerProfile.value })
+    activeRun.value = null
+    failedRun.value = null
+    newWorld.name = ''
+    showNewWorld.value = false
+    showSaves.value = false
+    await refresh()
+  } catch (error) {
+    errorMessage.value = describe(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function switchWorld(world: WorldSummary) {
+  if (world.world_id === activeWorldID.value || busy.value) return
+  busy.value = true
+  errorMessage.value = ''
+  try {
+    await activateWorld(world.world_id, status.value?.active_revision ?? 0)
+    activeRun.value = null
+    failedRun.value = null
+    await refresh()
+    showSaves.value = false
+  } catch (error) {
+    errorMessage.value = describe(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function sendInput() {
+  if (!canSubmit.value || !currentWorld.value || !status.value) return
+  const text = input.value.trim()
+  const requestKey = crypto.randomUUID()
+  errorMessage.value = ''
+  failedRun.value = null
+  try {
+    const run = await submitRun(currentWorld.value.world_id, {
+      request_key: requestKey,
+      input: text,
+      addressee_id: addressee.value || undefined,
+      expected_active_revision: status.value.active_revision,
+      expected_message_head: currentWorld.value.message_head,
+      expected_event_head: currentWorld.value.event_head,
+      expected_context_epoch: currentWorld.value.context_epoch,
+    })
+    activeRun.value = run
+    input.value = ''
+  } catch (error) {
+    errorMessage.value = describe(error)
+  }
+}
+
+async function stopRun() {
+  if (!activeRun.value || !currentWorld.value) return
+  try {
+    await cancelRun(currentWorld.value.world_id, activeRun.value.run_id)
+  } catch (error) {
+    errorMessage.value = describe(error)
+  }
+}
+
+async function retryFailed() {
+  if (!failedRun.value || !currentWorld.value) return
+  try {
+    activeRun.value = await retryRun(currentWorld.value.world_id, failedRun.value.run_id)
+    failedRun.value = null
+    errorMessage.value = ''
+  } catch (error) {
+    errorMessage.value = describe(error)
+  }
+}
+
+async function saveCurrentAs() {
+  if (!currentWorld.value || !status.value || !newWorld.name.trim()) return
+  saveBusy.value = true
+  errorMessage.value = ''
+  try {
+    copyOperation.value = await saveAs(currentWorld.value.world_id, newWorld.name.trim(), status.value.active_revision)
+    const operationID = copyOperation.value.operation_id
+    for (let i = 0; i < 1500; i += 1) {
+      await new Promise(resolve => window.setTimeout(resolve, 200))
+      copyOperation.value = await fetchCopyOperation(operationID)
+      if (copyOperation.value.status === 'ready' || copyOperation.value.status === 'failed') break
+    }
+    if (copyOperation.value.status === 'failed') throw new Error(copyOperation.value.error || '另存没有完成')
+    if (copyOperation.value.status !== 'ready') throw new Error('另存仍在进行，请稍后再查看存档。')
+    newWorld.name = ''
+    showNewWorld.value = false
+    await refresh()
+  } catch (error) {
+    errorMessage.value = describe(error)
+  } finally {
+    saveBusy.value = false
+  }
+}
+
+function openNewWorld() {
+  newWorldKind.value = 'new'
+  newWorld.name = ''
+  newWorld.mode = currentGame.value?.default_mode ?? 'guided'
+  showNewWorld.value = true
+  showSaves.value = false
+}
+
+function openSaveAs() {
+  newWorldKind.value = 'save'
+  newWorld.name = ''
+  showNewWorld.value = true
+  showSaves.value = false
+}
+
+function displayMessage(message: Message): string {
+  return message.content
+}
+
+function messageClass(message: Message): string {
+  return message.kind === 'player' ? 'message player-message' : 'message narrative-message'
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 onMounted(async () => {
   try {
     await exchangeBootstrapToken()
+    games.value = await fetchGames()
+    await loadModelOptions()
+    await refresh()
   } catch (error) {
-    noteUnauthorized(error)
-    statusProblem.value = describe(error)
+    connectionError.value = describe(error)
+    loaded.value = true
   }
-  await refresh()
-  timer = window.setInterval(refresh, 2000)
+  pollTimer = window.setInterval(refresh, 1500)
 })
 
 onUnmounted(() => {
-  if (timer !== undefined) window.clearInterval(timer)
+  if (pollTimer !== undefined) window.clearInterval(pollTimer)
 })
-
-function formatTime(value: string): string {
-  if (!value) return '—'
-  const time = new Date(value)
-  return Number.isNaN(time.getTime()) ? value : time.toLocaleTimeString()
-}
-
-function formatDuration(milliseconds: number): string {
-  if (!milliseconds) return '—'
-  return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`
-}
-
-function statusLabel(turn: Turn): string {
-  if (turn.status === 'completed') return 'settled'
-  if (turn.status === 'failed') return turn.reason || 'failed'
-  return 'unfinished'
-}
 </script>
 
 <template>
-  <main>
-    <header class="app-header">
-      <div>
-        <h1>World Is Agent</h1>
-        <p class="tagline">Game-native Agent Runtime</p>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">W</div>
+        <div>
+          <div class="brand-name">World Is Agent</div>
+          <div class="brand-subtitle">让故事记得住，也让选择有回应</div>
+        </div>
       </div>
-      <span class="runtime-state" :class="{ ready: status?.ready, offline: loaded && !status }">
-        <span class="state-dot"></span>{{ runtimeLabel }}
-      </span>
+      <div class="topbar-actions">
+        <span v-if="status" class="model-pill" :class="{ connected: status.ready }"><span class="status-dot"></span>{{ modelStatusText }}</span>
+        <button v-if="status?.ready" class="quiet-button" type="button" @click="showModel = true">模型设置</button>
+      </div>
     </header>
 
-    <p v-if="unauthorized" class="banner banner-error">
-      This browser has no Runtime session. Reopen the URL printed by the Runtime to reconnect.
-    </p>
+    <div v-if="connectionError" class="alert alert-error">{{ connectionError }}</div>
+    <div v-if="errorMessage" class="alert alert-error">{{ errorMessage }}</div>
 
-    <section v-if="!status" class="card disconnected-card">
-      <div>
-        <h2>{{ loaded ? 'Runtime disconnected' : 'Connecting to Runtime' }}</h2>
-        <p>{{ statusProblem || 'Reading the local Runtime status…' }}</p>
+    <section v-if="needsModel" class="welcome-grid">
+      <div class="welcome-copy">
+        <span class="section-kicker">第一次进入</span>
+        <h1>把注意力留给故事。</h1>
+        <p>连接一个你可以使用的模型，World Is Agent 会替你组织场景、人物和每个人各自知道的事情。</p>
+        <div class="promise-list">
+          <div><span>01</span><strong>直接进入小型冒险</strong><small>不需要配置 Agent 或记忆参数</small></div>
+          <div><span>02</span><strong>人物保有自己的立场</strong><small>重要人物分别读取自己的经历</small></div>
+          <div><span>03</span><strong>进度自动保存</strong><small>另存之后，各个世界独立继续</small></div>
+        </div>
       </div>
-      <button v-if="loaded" type="button" class="secondary" @click="refresh">Retry</button>
+      <form class="panel model-panel" @submit.prevent="configureModel">
+        <span class="section-kicker">连接模型</span>
+        <h2>选择一个模型服务</h2>
+        <p class="panel-note">凭据只保存在本机运行时，不会显示在页面或故事存档里。</p>
+        <label>服务商<select v-model="modelForm.provider" @change="changeProvider"><option v-for="option in providerOptions" :key="option.provider" :value="option.provider">{{ option.provider }}</option></select></label>
+        <label>模型<input v-model="modelForm.model" autocomplete="off" /></label>
+        <label>API Key<input v-model="modelForm.api_key" type="password" autocomplete="off" placeholder="粘贴后仅用于本机连接验证" /></label>
+        <label>自定义地址 <span class="optional">可选</span><input v-model="modelForm.base_url" autocomplete="off" placeholder="留空使用服务商默认地址" /></label>
+        <button class="primary-button wide" type="submit" :disabled="modelBusy">{{ modelBusy ? '正在验证连接…' : '验证并保存' }}</button>
+        <p v-if="status?.model_error" class="form-error">{{ status.model_error }}</p>
+      </form>
     </section>
 
-    <template v-else>
-      <section class="overview card">
-        <div class="overview-item">
-          <span class="eyebrow">Current game</span>
-          <strong>{{ currentGameTitle }}</strong>
-        </div>
-        <div class="overview-item">
-          <span class="eyebrow">Adapter</span>
-          <strong :class="{ muted: status.adapters.length === 0 }">{{ adapterLabel }}</strong>
-        </div>
-        <div class="overview-item overview-model">
-          <span class="eyebrow">Model</span>
-          <strong>{{ modelLabel }}</strong>
-        </div>
-        <button
-          v-if="status.ready"
-          type="button"
-          class="secondary settings-button"
-          :disabled="configurationBusy"
-          @click="modelSettingsOpen = !modelSettingsOpen"
-        >
-          {{ modelSettingsOpen ? 'Close settings' : 'Model settings' }}
-        </button>
-        <p v-if="status.reason && !status.ready" class="overview-reason">{{ status.reason }}</p>
+    <template v-else-if="loaded && !hasWorld">
+      <section class="page-heading"><span class="section-kicker">选择故事</span><h1>今晚，从一个小故事开始。</h1><p>一个有限的地点，两个有自己想法的人，和一件还没有说清楚的失踪案。</p></section>
+      <section class="story-grid">
+        <article v-for="game in games" :key="game.id" class="story-card">
+          <div class="story-art"><span class="moon"></span><span class="rain rain-a"></span><span class="rain rain-b"></span><span class="window-light"></span></div>
+          <div class="story-card-body"><div class="story-meta">调查冒险 · {{ game.default_mode === 'guided' ? '流程版' : '开放版' }}</div><h2>{{ game.title }}</h2><p>{{ game.description }}</p><button class="primary-button" type="button" @click="openNewWorld">开始这个故事</button></div>
+        </article>
       </section>
+    </template>
 
-      <div class="workspace" :class="{ 'workspace-setup': setupMode && !status.ready }">
-        <aside class="control-column">
-          <GameSetup
-            v-if="showGameSetup"
-            :status="status"
-            :busy="configurationBusy"
-            :begin-status-mutation="beginStatusMutation"
-            :accept-status="acceptStatus"
-            @mutation-failed="recoverAfterMutationFailure"
-            @read-failed="noteReadFailure"
-          />
-
-          <Setup
-            v-if="showModelSetup"
-            :status="status"
-            :mode="modelSettingsOpen ? 'settings' : 'initial'"
-            :busy="configurationBusy"
-            :begin-status-mutation="beginStatusMutation"
-            :accept-status="acceptStatus"
-            @mutation-failed="recoverAfterMutationFailure"
-            @read-failed="noteReadFailure"
-            @saved="closeModelSettings"
-            @cancelled="closeModelSettings"
-          />
-
-          <p v-if="status.last_connection_error" class="banner banner-error connection-error">
-            {{ status.last_connection_error.message }}
-          </p>
-
-          <details class="card advanced">
-            <summary>Advanced details</summary>
-            <dl class="details-list">
-              <div><dt>Adapter endpoint</dt><dd>{{ status.grpc_addr || '—' }}</dd></div>
-              <div><dt>Data root</dt><dd class="path">{{ status.data_root }}</dd></div>
-              <div><dt>Runtime trace</dt><dd class="path">{{ status.trace_path }}</dd></div>
-              <div><dt>Version</dt><dd>{{ status.version || 'development' }}</dd></div>
-            </dl>
-            <div v-if="status.adapters.length" class="connections">
-              <h3>Connections</h3>
-              <div v-for="adapter in status.adapters" :key="adapter.connection_id" class="connection">
-                <strong>{{ adapter.adapter_id }} · {{ adapter.game_id }}</strong>
-                <span>Adapter {{ adapter.adapter_version }} · game {{ adapter.game_version }}</span>
-                <span class="path">Session {{ adapter.session_id }}</span>
-                <span class="path">Connection {{ adapter.connection_id }}</span>
-              </div>
-            </div>
-          </details>
-        </aside>
-
-        <section class="card turns-card">
-          <div class="turns-heading">
-            <div>
-              <span class="eyebrow">Activity</span>
-              <h2>{{ currentGameTitle }} · Recent turns</h2>
-            </div>
-            <span v-if="turnsLoading" class="muted">Refreshing…</span>
+    <template v-else-if="currentWorld">
+      <div class="game-layout">
+        <section class="story-column">
+          <div class="story-heading">
+            <div><span class="section-kicker">{{ currentWorld.scene }} · {{ currentWorld.clock }}</span><h1>{{ currentWorld.name }}</h1></div>
+            <button class="quiet-button" type="button" @click="showSaves = !showSaves">存档与故事</button>
           </div>
-
-          <p v-if="turnsProblem" class="banner banner-error">
-            Unable to read {{ currentGameTitle }} turns: {{ turnsProblem }}
-          </p>
-          <p v-else-if="loaded && !turnsLoading && turns.length === 0" class="empty">
-            No turns recorded for {{ currentGameTitle }} yet. Talk to an NPC in this game and the turn will appear here.
-          </p>
-          <div v-else-if="turns.length > 0" class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th><th>Agent</th><th>Trigger</th><th>Steps</th>
-                  <th>Tools</th><th>Outcome</th><th>Duration</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="turn in turns" :key="turn.turn_id">
-                  <td class="time" data-label="Time">{{ formatTime(turn.started_at) }}</td>
-                  <td data-label="Agent">{{ turn.entity_id || '—' }}</td>
-                  <td class="muted" data-label="Trigger">{{ turn.event_type || '—' }}</td>
-                  <td class="number" data-label="Steps">{{ turn.steps }}</td>
-                  <td data-label="Tools">
-                    <span v-for="tool in turn.tools" :key="tool" class="tool">{{ tool }}</span>
-                    <span v-if="!turn.tools?.length" class="muted">—</span>
-                  </td>
-                  <td data-label="Outcome">
-                    <span class="outcome" :class="`outcome-${turn.status}`">{{ statusLabel(turn) }}</span>
-                    <span v-if="turn.settled_by" class="muted"> · {{ turn.settled_by }}</span>
-                  </td>
-                  <td class="number" data-label="Duration">{{ formatDuration(turn.elapsed_ms) }}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div class="notice-line"><span class="save-dot"></span>游玩进度自动保存到当前存档<span class="notice-separator">·</span><span>第 {{ currentWorld.turn_seq }} 轮</span></div>
+          <div class="transcript">
+            <article v-for="message in messages" :key="message.message_id" :class="messageClass(message)">
+              <div v-if="message.kind === 'narrative'" class="narrative-label">故事</div>
+              <div class="message-content">{{ displayMessage(message) }}</div>
+              <time>{{ formatDate(message.created_at) }}</time>
+            </article>
+            <div v-if="activeRun" class="thinking-card"><span class="thinking-icon"><i></i><i></i><i></i></span><div><strong>正在组织回应</strong><p>人物正在根据自己知道的事情做出选择。</p></div><button class="quiet-button" type="button" @click="stopRun">取消</button></div>
+            <div v-if="failedRun" class="failed-card"><div><strong>这一轮没有完成</strong><p>{{ failedRun.error || '可以保留输入并重新尝试。' }}</p></div><button class="secondary-button" type="button" @click="retryFailed">重试</button></div>
           </div>
+          <form class="composer" @submit.prevent="sendInput">
+            <div class="composer-tools"><label class="address-label">对谁说 <select v-model="addressee"><option value="">让场景判断</option><option v-for="character in characters" :key="character.entity_id" :value="character.entity_id">{{ character.name }}</option></select></label><span class="composer-hint">自由输入 · 说话、观察或行动</span></div>
+            <textarea v-model="input" rows="3" placeholder="你想做什么？" :disabled="Boolean(activeRun)" @keydown.ctrl.enter.prevent="sendInput"></textarea>
+            <div class="composer-footer"><span>Ctrl + Enter 提交</span><button class="primary-button" type="submit" :disabled="!canSubmit">{{ activeRun ? '等待回应' : '继续故事' }}<span aria-hidden="true">↗</span></button></div>
+          </form>
         </section>
+
+        <aside class="side-column">
+          <section class="side-panel character-panel"><div class="side-title"><span>眼前的人</span><span class="side-count">{{ characters.length }}</span></div><div v-for="character in characters" :key="character.entity_id" class="character-row"><div class="avatar" :class="character.entity_id.includes('mercenary') ? 'avatar-iron' : 'avatar-rose'">{{ character.name.slice(0, 1) }}</div><div><strong>{{ character.name }}</strong><span>{{ character.role }}</span></div><span class="presence"></span></div><p class="side-note">普通客人只作为场景的一部分出现。故事会记住真正与你产生经历的人。</p></section>
+          <section class="side-panel"><div class="side-title"><span>当前剧本</span></div><p class="plot-copy">一封没有寄出的信、一枚染血的信蜡，还有两个人并不相同的沉默。</p><div class="mode-tag">{{ currentWorld.mode === 'guided' ? '流程型' : '开放型' }}剧本</div></section>
+          <section class="side-panel compact-panel"><div class="side-title"><span>世界时间</span></div><strong class="clock-value">{{ currentWorld.clock }}</strong><p class="side-note">阅读、设置和等待模型不会让时间自动流逝。</p></section>
+        </aside>
       </div>
     </template>
+
+    <div v-if="showModel" class="modal-backdrop" @click.self="showModel = false"><form class="modal model-modal" @submit.prevent="configureModel"><div class="modal-header"><div><span class="section-kicker">模型设置</span><h2>更新连接</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showModel = false">×</button></div><p class="modal-note">新连接验证通过后才会用于下一轮故事。正在进行的回合继续使用原连接。</p><label>服务商<select v-model="modelForm.provider" @change="changeProvider"><option v-for="option in providerOptions" :key="option.provider" :value="option.provider">{{ option.provider }}</option></select></label><label>模型<input v-model="modelForm.model" autocomplete="off" /></label><label>API Key<input v-model="modelForm.api_key" type="password" autocomplete="off" placeholder="输入新的 Key；不会显示在故事里" /></label><label>自定义地址 <span class="optional">可选</span><input v-model="modelForm.base_url" autocomplete="off" placeholder="留空使用服务商默认地址" /></label><div class="modal-actions"><button class="secondary-button" type="button" @click="showModel = false">取消</button><button class="primary-button" type="submit" :disabled="modelBusy || !modelForm.api_key.trim()">{{ modelBusy ? '正在验证连接…' : '验证并保存' }}</button></div></form></div>
+
+    <div v-if="showSaves" class="modal-backdrop" @click.self="showSaves = false"><section class="modal saves-modal"><div class="modal-header"><div><span class="section-kicker">世界存档</span><h2>你的故事</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showSaves = false">×</button></div><p class="modal-note">读取一个存档后，后续游玩会继续更新那个世界。另存不会离开当前存档。</p><div class="save-list"><button v-for="world in worlds" :key="world.world_id" class="save-item" :class="{ active: world.world_id === activeWorldID }" type="button" @click="switchWorld(world)"><span><strong>{{ world.name }}</strong><small>{{ world.clock }} · {{ world.turn_seq }} 轮 · {{ world.mode === 'guided' ? '流程型' : '开放型' }}</small></span><span>{{ world.world_id === activeWorldID ? '当前' : '读取' }}</span></button></div><div class="save-actions"><button class="secondary-button" type="button" @click="openNewWorld">新开一局</button><button v-if="currentWorld" class="primary-button" type="button" @click="openSaveAs">另存当前进度</button></div></section></div>
+
+    <div v-if="showNewWorld" class="modal-backdrop" @click.self="showNewWorld = false"><form class="modal new-world-modal" @submit.prevent="newWorldKind === 'save' ? saveCurrentAs() : startWorld()"><div class="modal-header"><div><span class="section-kicker">{{ newWorldKind === 'save' ? '保留一个分支' : '进入故事' }}</span><h2>{{ newWorldKind === 'save' ? '另存当前进度' : '确认你的主角' }}</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showNewWorld = false">×</button></div><label>存档名称<input v-model="newWorld.name" :placeholder="newWorldKind === 'save' ? '例如：先调查信蜡' : '例如：雨夜的第一晚'" /></label><template v-if="newWorldKind === 'new'"><label>主角名字<input v-model="playerName" /></label><label>主角简介<textarea v-model="playerProfile" rows="3"></textarea></label><div><span class="field-label">剧本方式</span><div class="mode-options"><button v-for="mode in (currentGame?.modes ?? ['guided', 'open'])" :key="mode" type="button" :class="['mode-option', { selected: newWorld.mode === mode }]" @click="newWorld.mode = mode"><strong>{{ mode === 'guided' ? '流程型' : '开放型' }}</strong><span>{{ mode === 'guided' ? '沿着明确矛盾推进，也保留你的选择' : '世界会继续发生，你可以参加或离开' }}</span></button></div></div></template><div class="modal-actions"><button class="secondary-button" type="button" @click="showNewWorld = false">取消</button><button class="primary-button" type="submit" :disabled="busy || saveBusy || !newWorld.name.trim()">{{ saveBusy ? '正在另存…' : busy ? '正在进入…' : newWorldKind === 'save' ? '创建独立存档' : '开始游玩' }}</button></div></form></div>
   </main>
 </template>
 
 <style>
-:root {
-  color-scheme: light dark;
-  --bg: #f4f5f7;
-  --panel: #ffffff;
-  --surface-subtle: #f8f9fb;
-  --ink: #1c2430;
-  --muted: #677181;
-  --line: #dfe3e8;
-  --accent: #2f6fae;
-  --accent-hover: #245d94;
-  --ok: #277a4b;
-  --ok-soft: #e4f3ea;
-  --warn: #9b5b19;
-  --warn-soft: #f8ecdd;
-  --bad: #a33a3a;
-  --bad-soft: #fae8e8;
-  --shadow: 0 1px 2px rgb(20 32 50 / 5%), 0 8px 24px rgb(20 32 50 / 4%);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #15171a;
-    --panel: #1e2125;
-    --surface-subtle: #25292e;
-    --ink: #edf0f3;
-    --muted: #a2a9b3;
-    --line: #343a42;
-    --accent: #78a9dc;
-    --accent-hover: #94bbe2;
-    --ok: #72c291;
-    --ok-soft: #203d2d;
-    --warn: #dda566;
-    --warn-soft: #46331f;
-    --bad: #eb9292;
-    --bad-soft: #482626;
-    --shadow: none;
-  }
-}
-
+:root { color-scheme: light; --paper: #f5f1e9; --paper-deep: #ebe4d8; --ink: #25221e; --muted: #7e756b; --line: #ded5c8; --panel: #fffdf8; --accent: #b8503d; --accent-dark: #933b2d; --gold: #b88743; --blue: #405e72; --shadow: 0 18px 50px rgba(70, 53, 36, .08); }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-button, select, input { font: inherit; }
-button { padding: 8px 14px; border: 1px solid transparent; border-radius: 6px; background: var(--accent); color: #fff; font-weight: 650; cursor: pointer; }
-button:hover:not(:disabled) { background: var(--accent-hover); }
-button:disabled { cursor: not-allowed; opacity: .5; }
-button.secondary { border-color: var(--line); background: var(--panel); color: var(--ink); }
-button.secondary:hover:not(:disabled) { border-color: var(--accent); background: var(--surface-subtle); color: var(--accent); }
-
-main { max-width: 1280px; margin: 0 auto; padding: 30px 24px 64px; }
-.app-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
-.app-header h1 { margin: 0; font-size: 23px; letter-spacing: -.02em; }
-.tagline { margin: 2px 0 0; color: var(--muted); }
-.runtime-state { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--warn); background: var(--warn-soft); font-size: 12px; font-weight: 700; text-transform: capitalize; }
-.runtime-state.ready { color: var(--ok); background: var(--ok-soft); }
-.runtime-state.offline { color: var(--bad); background: var(--bad-soft); }
-.state-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-
-.card { margin-bottom: 18px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); }
-.card h2 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
-.overview { position: relative; display: grid; grid-template-columns: minmax(170px, .8fr) minmax(170px, .8fr) minmax(240px, 1.4fr) auto; align-items: center; gap: 18px 28px; }
-.overview-item { display: grid; min-width: 0; gap: 2px; }
-.overview-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.eyebrow, .details-list dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.overview-reason { grid-column: 1 / -1; margin: -4px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); }
-.settings-button { justify-self: end; }
-
-.workspace { display: grid; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr); gap: 18px; align-items: start; }
-.workspace-setup { grid-template-columns: minmax(0, 620px); }
-.control-column { min-width: 0; }
-.turns-card { min-width: 0; min-height: 220px; }
-.turns-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-.turns-heading h2 { margin-top: 2px; }
-.table-wrap { overflow-x: auto; }
-
-.banner { margin: 0 0 16px; padding: 11px 13px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 7px; background: var(--panel); overflow-wrap: anywhere; }
-.banner-error { border-left-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
-.connection-error { font-size: 13px; }
-.problem { color: var(--bad); overflow-wrap: anywhere; }
-.muted, .empty { color: var(--muted); }
-.empty { margin: 0; padding: 22px 0; text-align: center; }
-.disconnected-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.disconnected-card h2 { margin-bottom: 4px; }
-.disconnected-card p { margin: 0; color: var(--muted); }
-
-.advanced { padding: 0; overflow: hidden; box-shadow: none; }
-.advanced summary { padding: 14px 16px; cursor: pointer; font-weight: 650; }
-.advanced[open] summary { border-bottom: 1px solid var(--line); }
-.details-list { display: grid; gap: 13px; margin: 0; padding: 16px; }
-.details-list div { min-width: 0; }
-.details-list dd { margin: 2px 0 0; overflow-wrap: anywhere; }
-.path { font: 12px/1.45 ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace; }
-.connections { padding: 0 16px 16px; }
-.connections h3 { margin: 0 0 8px; font-size: 13px; }
-.connection { display: grid; gap: 2px; padding: 10px 0; border-top: 1px solid var(--line); }
-.connection span { color: var(--muted); }
-
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; text-align: left; text-transform: uppercase; letter-spacing: .05em; }
-td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-tr:last-child td { border-bottom: none; }
-.time, .number { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tool { display: inline-block; margin: 0 4px 2px 0; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; font: 12px ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace; }
-.outcome { font-weight: 700; }
-.outcome-completed { color: var(--ok); }
-.outcome-failed { color: var(--bad); }
-.outcome-unfinished { color: var(--warn); }
-
-@media (max-width: 900px) {
-  .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .settings-button { justify-self: start; }
-  .workspace { grid-template-columns: minmax(0, 1fr); }
-}
-
-@media (max-width: 640px) {
-  main { padding: 22px 14px 48px; }
-  .app-header { align-items: flex-start; }
-  .overview { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .card { padding: 16px; }
-  .advanced { padding: 0; }
-  .table-wrap { overflow: visible; }
-  table, tbody { display: block; }
-  thead { display: none; }
-  tr { display: grid; gap: 7px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-  tr:last-child { border-bottom: 0; }
-  td { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; padding: 0; border: 0; white-space: normal; }
-  td::before { content: attr(data-label); color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-}
+body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.65 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .52; }
+.shell { width: min(1240px, calc(100% - 48px)); margin: 0 auto; padding: 26px 0 64px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+.brand, .topbar-actions, .model-pill, .composer-tools, .composer-footer, .story-heading, .side-title, .character-row, .modal-header, .modal-actions, .save-actions { display: flex; align-items: center; }
+.brand { gap: 12px; }
+.brand-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: var(--ink); color: var(--paper); font-family: Georgia, serif; font-size: 19px; }
+.brand-name { font: 700 16px/1.1 Georgia, serif; letter-spacing: .01em; }
+.brand-subtitle { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.topbar-actions { gap: 14px; }
+.model-pill { gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; }
+.model-pill.connected { color: var(--blue); background: #edf2f1; }
+.status-dot, .save-dot, .presence { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.quiet-button, .icon-button { border: 0; background: transparent; color: var(--muted); }
+.quiet-button { padding: 7px 3px; font-size: 12px; }
+.quiet-button:hover { color: var(--ink); }
+.icon-button { padding: 0 4px; font-size: 26px; line-height: 1; }
+.alert { margin: 18px 0 0; padding: 11px 14px; border: 1px solid var(--line); border-radius: 8px; }
+.alert-error { border-color: #e8b9ae; background: #fff1ed; color: #984233; }
+.welcome-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: clamp(36px, 8vw, 120px); align-items: center; min-height: 650px; }
+.welcome-copy { padding: 35px 0; }
+.section-kicker { color: var(--accent); font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+h1, h2, p { margin-top: 0; }
+h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 500; letter-spacing: -.025em; }
+.welcome-copy h1 { max-width: 560px; margin: 14px 0 20px; font-size: clamp(46px, 6vw, 76px); line-height: 1.02; }
+.welcome-copy > p { max-width: 480px; margin-bottom: 42px; color: var(--muted); font-size: 17px; }
+.promise-list { display: grid; gap: 19px; max-width: 460px; }
+.promise-list div { display: grid; grid-template-columns: 36px 1fr; column-gap: 10px; }
+.promise-list span { grid-row: span 2; color: var(--gold); font: 12px Georgia, serif; }
+.promise-list strong { font-size: 14px; }
+.promise-list small { color: var(--muted); font-size: 12px; }
+.panel, .side-panel, .composer, .story-card, .modal { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); }
+.model-panel { padding: 30px; border-radius: 14px; }
+.model-panel h2 { margin: 9px 0 4px; font-size: 28px; }
+.panel-note, .modal-note { margin: 0 0 24px; color: var(--muted); font-size: 12px; }
+label { display: grid; gap: 6px; margin-top: 15px; color: var(--muted); font-size: 12px; }
+input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 7px; outline: none; background: #fffefa; color: var(--ink); }
+input, select { height: 42px; padding: 0 12px; }
+textarea { padding: 11px 13px; resize: vertical; }
+input:focus, select:focus, textarea:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(184, 135, 67, .12); }
+.optional { margin-left: 4px; color: #aaa095; }
+.primary-button, .secondary-button { border-radius: 7px; padding: 10px 16px; font-weight: 700; }
+.primary-button { border: 1px solid var(--accent); background: var(--accent); color: white; }
+.primary-button:hover:not(:disabled) { border-color: var(--accent-dark); background: var(--accent-dark); }
+.secondary-button { border: 1px solid var(--line); background: transparent; color: var(--ink); }
+.secondary-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.wide { width: 100%; margin-top: 23px; }
+.form-error { margin: 13px 0 0; color: var(--accent-dark); font-size: 12px; }
+.page-heading { padding: 72px 0 34px; }
+.page-heading h1 { margin: 10px 0 8px; font-size: 46px; }
+.page-heading p { margin: 0; color: var(--muted); font-size: 16px; }
+.story-grid { display: grid; grid-template-columns: minmax(280px, 450px); gap: 20px; }
+.story-card { overflow: hidden; border-radius: 14px; }
+.story-art { position: relative; height: 190px; overflow: hidden; background: linear-gradient(160deg, #273d4c, #151d27 68%); }
+.moon { position: absolute; top: 28px; right: 70px; width: 54px; height: 54px; border-radius: 50%; background: #e7c883; box-shadow: 0 0 35px rgba(231, 200, 131, .3); }
+.rain { position: absolute; top: -20px; width: 1px; height: 250px; transform: rotate(18deg); background: linear-gradient(transparent, rgba(213, 230, 229, .35)); }
+.rain-a { left: 58px; }.rain-b { left: 145px; height: 220px; opacity: .55; }
+.window-light { position: absolute; right: 30px; bottom: 0; width: 170px; height: 88px; background: linear-gradient(180deg, #e8b469, #b9583d); opacity: .6; clip-path: polygon(9% 100%, 15% 30%, 90% 10%, 100% 100%); }
+.story-card-body { padding: 24px; }.story-meta { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }.story-card h2 { margin: 8px 0 6px; font-size: 28px; }.story-card p { min-height: 48px; margin-bottom: 20px; color: var(--muted); }
+.game-layout { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 46px; padding-top: 36px; }
+.story-column { min-width: 0; }.story-heading { justify-content: space-between; gap: 20px; }.story-heading h1 { margin: 7px 0 0; font-size: 36px; }.notice-line { display: flex; align-items: center; gap: 7px; margin: 15px 0 28px; color: var(--muted); font-size: 11px; }.save-dot { color: #6f9b77; }.notice-separator { color: #c4b8aa; }
+.transcript { min-height: 330px; padding-bottom: 20px; }.message { max-width: 86%; margin: 0 0 24px; }.narrative-message { position: relative; padding-left: 18px; border-left: 2px solid #d8b77c; }.player-message { margin-left: auto; padding: 12px 15px; border-radius: 11px 11px 2px 11px; background: #e9e1d5; }.message-content { white-space: pre-wrap; font-size: 15px; }.narrative-label { margin-bottom: 4px; color: var(--accent); font: 12px Georgia, serif; }.message time { display: block; margin-top: 6px; color: #aaa096; font-size: 10px; }.player-message time { text-align: right; }
+.thinking-card, .failed-card { display: flex; align-items: center; gap: 14px; margin: 12px 0 20px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: 9px; background: rgba(255, 253, 248, .6); }.thinking-card strong, .failed-card strong { font-size: 13px; }.thinking-card p, .failed-card p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }.thinking-card .quiet-button, .failed-card .secondary-button { margin-left: auto; white-space: nowrap; }.thinking-icon { display: flex; align-items: end; gap: 3px; width: 20px; height: 20px; }.thinking-icon i { display: block; width: 4px; height: 9px; border-radius: 4px; background: var(--gold); animation: pulse 1s infinite ease-in-out; }.thinking-icon i:nth-child(2) { height: 15px; animation-delay: .15s; }.thinking-icon i:nth-child(3) { animation-delay: .3s; } @keyframes pulse { 0%,100% { transform: scaleY(.65); opacity: .5; } 50% { transform: scaleY(1); opacity: 1; } }
+.composer { padding: 16px; border-radius: 12px; }.composer-tools { justify-content: space-between; gap: 15px; }.address-label { display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 6px; margin: 0; }.address-label select { width: auto; height: 28px; padding: 0 7px; border: 0; background: transparent; color: var(--ink); font-size: 12px; }.composer-hint, .composer-footer { color: var(--muted); font-size: 11px; }.composer textarea { min-height: 80px; margin: 10px 0; border: 0; background: transparent; box-shadow: none; font-size: 15px; }.composer textarea:focus { box-shadow: none; }.composer-footer { justify-content: space-between; gap: 12px; }.composer-footer .primary-button { display: flex; gap: 8px; align-items: center; padding: 8px 13px; }
+.side-column { display: grid; align-content: start; gap: 16px; padding-top: 6px; }.side-panel { padding: 18px; border-radius: 10px; box-shadow: none; }.side-title { justify-content: space-between; margin-bottom: 15px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }.side-count { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: var(--paper-deep); color: var(--ink); font-size: 10px; }.character-row { gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }.character-row > div:nth-child(2) { display: grid; gap: 1px; }.character-row strong { font-size: 13px; }.character-row span { color: var(--muted); font-size: 11px; }.avatar { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: white; font: 15px Georgia, serif; }.avatar-rose { background: #ae6659; }.avatar-iron { background: #536b79; }.presence { width: 5px; height: 5px; margin-left: auto; color: #78a482; }.side-note { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }.plot-copy { margin: 0; font: 16px/1.55 Georgia, serif; }.mode-tag { display: inline-block; margin-top: 15px; padding: 3px 8px; border-radius: 99px; background: var(--paper-deep); color: var(--muted); font-size: 11px; }.clock-value { font: 27px Georgia, serif; }
+.modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(37, 34, 30, .34); }.modal { width: min(100%, 560px); max-height: calc(100vh - 40px); overflow: auto; padding: 28px; border-radius: 14px; }.modal-header { justify-content: space-between; gap: 20px; }.modal-header h2 { margin: 6px 0 0; font-size: 30px; }.save-list { display: grid; gap: 7px; }.save-item { display: flex; align-items: center; justify-content: space-between; gap: 15px; width: 100%; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }.save-item:hover, .save-item.active { border-color: var(--gold); background: #fffbf1; }.save-item span:first-child { display: grid; gap: 2px; }.save-item small { color: var(--muted); }.save-item > span:last-child { color: var(--accent); font-size: 11px; }.save-actions, .modal-actions { justify-content: flex-end; gap: 10px; margin-top: 24px; }.mode-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.field-label { display: block; margin: 15px 0 6px; color: var(--muted); font-size: 12px; }.mode-option { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }.mode-option span { color: var(--muted); font-size: 11px; line-height: 1.45; }.mode-option.selected { border-color: var(--accent); background: #fff4ef; }.mode-option.selected strong { color: var(--accent); }
+@media (max-width: 860px) { .shell { width: min(100% - 28px, 680px); padding-top: 18px; }.welcome-grid, .game-layout { grid-template-columns: 1fr; gap: 28px; }.welcome-grid { min-height: auto; padding: 45px 0; }.welcome-copy h1 { font-size: 52px; }.side-column { grid-template-columns: 1fr 1fr; }.compact-panel { grid-column: span 2; }.story-heading h1 { font-size: 30px; } }
+@media (max-width: 520px) { .topbar { align-items: flex-start; }.topbar-actions { display: grid; justify-items: end; gap: 4px; }.brand-subtitle { display: none; }.welcome-copy h1 { font-size: 43px; }.side-column { grid-template-columns: 1fr; }.compact-panel { grid-column: auto; }.message { max-width: 94%; }.mode-options { grid-template-columns: 1fr; }.modal { padding: 21px; } }
 </style>
