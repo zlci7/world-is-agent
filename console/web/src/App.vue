@@ -27,7 +27,8 @@ const showNewWorld = ref(false)
 const showSaves = ref(false)
 const showModel = ref(false)
 const showAgentSettings = ref(false)
-const currentView = ref<'home' | 'play'>('home')
+const currentView = ref<'home' | 'story' | 'play'>('home')
+const selectedGameID = ref('')
 const deleteCandidate = ref<WorldSummary | null>(null)
 const settingsTab = ref<'basic' | 'advanced'>('basic')
 const modelBusy = ref(false)
@@ -66,7 +67,13 @@ const needsModel = computed(() => loaded.value && !status.value?.ready)
 const hasWorld = computed(() => Boolean(currentWorld.value && activeWorldID.value))
 const canSubmit = computed(() => Boolean(input.value.trim()) && !activeRun.value && !busy.value && hasWorld.value && status.value?.ready)
 const modelStatusText = computed(() => model.value.configured ? `${model.value.provider ?? '模型'} · ${model.value.model ?? ''}` : '尚未连接模型')
-const currentGame = computed(() => games.value[0])
+const currentGame = computed(() => games.value.find(game => game.id === selectedGameID.value) ?? games.value[0])
+const storyWorlds = computed(() => worlds.value.filter(world => world.game_id === currentGame.value?.id))
+const recentStoryWorld = computed(() => {
+  const active = status.value?.active_world
+  if (active?.game_id === currentGame.value?.id) return active
+  return storyWorlds.value[0] ?? null
+})
 const narrativeSummary = computed(() => {
   const perspective = { first_person: '第一人称', second_person: '第二人称', third_person: '第三人称' }[narrativeSettings.value.perspective]
   const length = { concise: '简短', standard: '标准', detailed: '细致' }[narrativeSettings.value.length]
@@ -122,12 +129,13 @@ async function loadWorld(worldID: string) {
     characters.value = []
     messages.value = []
     narrativeSettings.value = { perspective: 'second_person', length: 'standard', detail: 'balanced', custom_instruction: '' }
-    currentView.value = 'home'
+    if (currentView.value === 'play') currentView.value = 'home'
     return
   }
   const result = await fetchWorld(worldID)
   if (activeWorldID.value !== worldID) return
   currentWorld.value = result.world
+  selectedGameID.value = result.world.game_id
   playerName.value = result.player_name
   playerProfile.value = result.player_profile
   narrativeSettings.value = result.narrative_settings
@@ -287,6 +295,7 @@ async function startWorld() {
 
 async function switchWorld(world: WorldSummary) {
   if (busy.value) return
+  selectedGameID.value = world.game_id
   if (world.world_id === activeWorldID.value) {
     currentView.value = 'play'
     showSaves.value = false
@@ -314,6 +323,12 @@ function returnHome() {
   showAgentSettings.value = false
 }
 
+function openStory(game: GameSummary) {
+  selectedGameID.value = game.id
+  currentView.value = 'story'
+  showSaves.value = false
+}
+
 function confirmDelete(world: WorldSummary) {
   deleteCandidate.value = world
   showSaves.value = false
@@ -330,10 +345,11 @@ async function deleteSelectedWorld() {
   errorMessage.value = ''
   try {
     const deletingActive = target.world_id === activeWorldID.value
+    selectedGameID.value = target.game_id
     await deleteWorld(target.world_id, status.value.active_revision)
     deleteCandidate.value = null
     if (deletingActive) {
-      currentView.value = 'home'
+      currentView.value = 'story'
       activeRun.value = null
       failedRun.value = null
       input.value = ''
@@ -447,6 +463,7 @@ onMounted(async () => {
   try {
     await exchangeBootstrapToken()
     games.value = await fetchGames()
+    selectedGameID.value = games.value[0]?.id ?? ''
     await loadModelOptions()
     await refresh()
   } catch (error) {
@@ -473,7 +490,7 @@ onUnmounted(() => {
       </div>
       <div class="topbar-actions">
         <span v-if="status" class="model-pill" :class="{ connected: status.ready }"><span class="status-dot"></span>{{ modelStatusText }}</span>
-        <button v-if="currentView === 'play'" class="quiet-button" type="button" @click="returnHome">返回首页</button>
+        <button v-if="currentView !== 'home'" class="quiet-button" type="button" @click="returnHome">返回首页</button>
         <button v-if="currentWorld && currentView === 'play'" class="quiet-button" type="button" @click="openAgentSettings()">故事设置</button>
         <button v-if="status?.ready" class="quiet-button" type="button" @click="showModel = true">模型设置</button>
       </div>
@@ -507,22 +524,37 @@ onUnmounted(() => {
     </section>
 
     <template v-else-if="loaded && currentView === 'home'">
-      <section class="page-heading"><span class="section-kicker">故事首页</span><h1>今晚，故事从哪里继续？</h1><p>继续已有旅程，或从一个新剧本开始。</p></section>
+      <section class="page-heading"><span class="section-kicker">故事首页</span><h1>今晚，故事从哪里继续？</h1><p>继续上次旅程，或选择一个故事重新开始。</p></section>
       <section v-if="currentWorld" class="continue-panel">
         <div><span class="section-kicker">继续上次故事</span><h2>{{ currentWorld.name }}</h2><p>{{ currentWorld.scene }} · {{ currentWorld.clock }} · 第 {{ currentWorld.turn_seq }} 轮</p></div>
         <button class="primary-button" type="button" @click="switchWorld(currentWorld)">继续故事</button>
       </section>
-      <div class="home-section-heading"><div><span class="section-kicker">选择剧本</span><h2>开始新的故事</h2></div></div>
+      <div class="home-section-heading"><div><span class="section-kicker">开始故事</span><h2>选择一个剧本</h2></div></div>
       <section class="story-grid">
         <article v-for="game in games" :key="game.id" class="story-card">
           <div class="story-art"><span class="moon"></span><span class="rain rain-a"></span><span class="rain rain-b"></span><span class="window-light"></span></div>
-          <div class="story-card-body"><div class="story-meta">调查冒险 · {{ game.default_mode === 'guided' ? '流程版' : '开放版' }}</div><h2>{{ game.title }}</h2><p>{{ game.description }}</p><button class="primary-button" type="button" @click="openNewWorld">开始这个故事</button></div>
+          <div class="story-card-body"><div class="story-meta">调查冒险 · {{ game.default_mode === 'guided' ? '流程版' : '开放版' }}</div><h2>{{ game.title }}</h2><p>{{ game.description }}</p><button class="primary-button" type="button" @click="openStory(game)">进入这个故事</button></div>
         </article>
       </section>
-      <section v-if="worlds.length" class="home-saves">
-        <div class="home-section-heading"><div><span class="section-kicker">已有进度</span><h2>你的存档</h2></div><span>{{ worlds.length }} 个</span></div>
+    </template>
+
+    <template v-else-if="loaded && currentView === 'story' && currentGame">
+      <section class="story-detail">
+        <div class="story-detail-copy">
+          <span class="section-kicker">选择进入方式</span>
+          <h1>{{ currentGame.title }}</h1>
+          <p>{{ currentGame.description }}</p>
+          <div class="story-detail-actions">
+            <button v-if="recentStoryWorld" class="primary-button" type="button" @click="switchWorld(recentStoryWorld)">继续最近进度</button>
+            <button :class="recentStoryWorld ? 'secondary-button' : 'primary-button'" type="button" @click="openNewWorld">开始新的故事</button>
+          </div>
+        </div>
+        <div class="story-detail-art"><span class="moon"></span><span class="rain rain-a"></span><span class="rain rain-b"></span><span class="window-light"></span></div>
+      </section>
+      <section v-if="storyWorlds.length" class="story-saves">
+        <div class="home-section-heading"><div><span class="section-kicker">故事进度</span><h2>选择存档</h2></div><span>{{ storyWorlds.length }} 个</span></div>
         <div class="save-list">
-          <div v-for="world in worlds" :key="world.world_id" class="save-item" :class="{ active: world.world_id === activeWorldID }"><button class="save-open" type="button" @click="switchWorld(world)"><span><strong>{{ world.name }}</strong><small>{{ world.clock }} · {{ world.turn_seq }} 轮 · {{ world.mode === 'guided' ? '流程型' : '开放型' }}</small></span><span>{{ world.world_id === activeWorldID ? '继续' : '读取' }}</span></button><button class="delete-button" type="button" :aria-label="`删除存档 ${world.name}`" @click="confirmDelete(world)">删除</button></div>
+          <div v-for="world in storyWorlds" :key="world.world_id" class="save-item" :class="{ active: world.world_id === activeWorldID }"><button class="save-open" type="button" @click="switchWorld(world)"><span><strong>{{ world.name }}</strong><small>{{ world.clock }} · {{ world.turn_seq }} 轮 · {{ world.mode === 'guided' ? '流程型' : '开放型' }}</small></span><span>{{ world.world_id === activeWorldID ? '继续' : '读取' }}</span></button><button class="delete-button" type="button" :aria-label="`删除存档 ${world.name}`" @click="confirmDelete(world)">删除</button></div>
         </div>
       </section>
     </template>
@@ -583,7 +615,7 @@ onUnmounted(() => {
       </form>
     </div>
 
-    <div v-if="showSaves" class="modal-backdrop" @click.self="showSaves = false"><section class="modal saves-modal"><div class="modal-header"><div><span class="section-kicker">世界存档</span><h2>你的故事</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showSaves = false">×</button></div><p class="modal-note">读取一个存档后，后续游玩会继续更新那个世界。另存不会离开当前存档。</p><div class="save-list"><div v-for="world in worlds" :key="world.world_id" class="save-item" :class="{ active: world.world_id === activeWorldID }"><button class="save-open" type="button" @click="switchWorld(world)"><span><strong>{{ world.name }}</strong><small>{{ world.clock }} · {{ world.turn_seq }} 轮 · {{ world.mode === 'guided' ? '流程型' : '开放型' }}</small></span><span>{{ world.world_id === activeWorldID ? '当前' : '读取' }}</span></button><button class="delete-button" type="button" :aria-label="`删除存档 ${world.name}`" @click="confirmDelete(world)">删除</button></div></div><div class="save-actions"><button class="secondary-button" type="button" @click="openNewWorld">新开一局</button><button v-if="currentWorld" class="primary-button" type="button" @click="openSaveAs">另存当前进度</button></div></section></div>
+    <div v-if="showSaves" class="modal-backdrop" @click.self="showSaves = false"><section class="modal saves-modal"><div class="modal-header"><div><span class="section-kicker">当前剧本</span><h2>存档与故事</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showSaves = false">×</button></div><p class="modal-note">这里只显示当前剧本的存档。读取后，后续游玩会持续更新所选进度；另存不会离开当前存档。</p><div class="save-list"><div v-for="world in storyWorlds" :key="world.world_id" class="save-item" :class="{ active: world.world_id === activeWorldID }"><button class="save-open" type="button" @click="switchWorld(world)"><span><strong>{{ world.name }}</strong><small>{{ world.clock }} · {{ world.turn_seq }} 轮 · {{ world.mode === 'guided' ? '流程型' : '开放型' }}</small></span><span>{{ world.world_id === activeWorldID ? '当前' : '读取' }}</span></button><button class="delete-button" type="button" :aria-label="`删除存档 ${world.name}`" @click="confirmDelete(world)">删除</button></div></div><div class="save-actions"><button class="secondary-button" type="button" @click="openNewWorld">新开一局</button><button v-if="currentWorld" class="primary-button" type="button" @click="openSaveAs">另存当前进度</button></div></section></div>
 
     <div v-if="deleteCandidate" class="modal-backdrop" @click.self="deleteCandidate = null"><section class="modal confirm-modal"><div class="modal-header"><div><span class="section-kicker">删除存档</span><h2>确认删除“{{ deleteCandidate.name }}”</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="deleteCandidate = null">×</button></div><p class="modal-note">这个存档及其独立故事进度会从本机删除，其他另存世界不受影响。</p><p v-if="deleteCandidate.world_id === activeWorldID && activeRun" class="form-error">当前故事仍在生成，请先取消或等待本轮完成。</p><div class="modal-actions"><button class="secondary-button" type="button" @click="deleteCandidate = null">保留存档</button><button class="danger-button" type="button" :disabled="deleteBusy || Boolean(deleteCandidate.world_id === activeWorldID && activeRun)" @click="deleteSelectedWorld">{{ deleteBusy ? '正在删除…' : '确认删除' }}</button></div></section></div>
 
@@ -627,7 +659,7 @@ h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 500; lette
 .promise-list span { grid-row: span 2; color: var(--gold); font: 12px Georgia, serif; }
 .promise-list strong { font-size: 14px; }
 .promise-list small { color: var(--muted); font-size: 12px; }
-.panel, .side-panel, .composer, .story-card, .modal { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); }
+.panel, .side-panel, .composer, .story-card, .story-detail, .modal { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); }
 .model-panel { padding: 30px; border-radius: 14px; }
 .model-panel h2 { margin: 9px 0 4px; font-size: 28px; }
 .panel-note, .modal-note { margin: 0 0 24px; color: var(--muted); font-size: 12px; }
@@ -649,7 +681,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); box-shado
 .page-heading p { margin: 0; color: var(--muted); font-size: 16px; }
 .story-grid { display: grid; grid-template-columns: minmax(280px, 450px); gap: 20px; }
 .story-card { overflow: hidden; border-radius: 14px; }
-.story-art { position: relative; height: 190px; overflow: hidden; background: linear-gradient(160deg, #273d4c, #151d27 68%); }
+.story-art, .story-detail-art { position: relative; overflow: hidden; background: linear-gradient(160deg, #273d4c, #151d27 68%); }
+.story-art { height: 190px; }
 .moon { position: absolute; top: 28px; right: 70px; width: 54px; height: 54px; border-radius: 50%; background: #e7c883; box-shadow: 0 0 35px rgba(231, 200, 131, .3); }
 .rain { position: absolute; top: -20px; width: 1px; height: 250px; transform: rotate(18deg); background: linear-gradient(transparent, rgba(213, 230, 229, .35)); }
 .rain-a { left: 58px; }.rain-b { left: 145px; height: 220px; opacity: .55; }
@@ -663,7 +696,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); box-shado
 .side-column { display: grid; align-content: start; gap: 16px; padding-top: 6px; }.side-panel { padding: 18px; border-radius: 10px; box-shadow: none; }.side-title { justify-content: space-between; margin-bottom: 15px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }.side-count { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: var(--paper-deep); color: var(--ink); font-size: 10px; }.character-row { gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }.character-row > div:nth-child(2) { display: grid; gap: 1px; }.character-row strong { font-size: 13px; }.character-row span { color: var(--muted); font-size: 11px; }.avatar { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: white; font: 15px Georgia, serif; }.avatar-rose { background: #ae6659; }.avatar-iron { background: #536b79; }.presence { width: 5px; height: 5px; margin-left: auto; color: #78a482; }.side-note { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }.plot-copy { margin: 0; font: 16px/1.55 Georgia, serif; }.mode-tag { display: inline-block; margin-top: 15px; padding: 3px 8px; border-radius: 99px; background: var(--paper-deep); color: var(--muted); font-size: 11px; }.clock-value { font: 27px Georgia, serif; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(37, 34, 30, .34); }.modal { width: min(100%, 560px); max-height: calc(100vh - 40px); overflow: auto; padding: 28px; border-radius: 14px; }.modal-header { justify-content: space-between; gap: 20px; }.modal-header h2 { margin: 6px 0 0; font-size: 30px; }.save-list { display: grid; gap: 7px; }.save-item { display: flex; align-items: center; justify-content: space-between; gap: 15px; width: 100%; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }.save-item:hover, .save-item.active { border-color: var(--gold); background: #fffbf1; }.save-item span:first-child { display: grid; gap: 2px; }.save-item small { color: var(--muted); }.save-item > span:last-child { color: var(--accent); font-size: 11px; }.save-actions, .modal-actions { justify-content: flex-end; gap: 10px; margin-top: 24px; }.mode-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.field-label { display: block; margin: 15px 0 6px; color: var(--muted); font-size: 12px; }.mode-option { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }.mode-option span { color: var(--muted); font-size: 11px; line-height: 1.45; }.mode-option.selected { border-color: var(--accent); background: #fff4ef; }.mode-option.selected strong { color: var(--accent); }
 .inline-action { padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: none; }.inline-action:hover { color: var(--accent-dark); }.setting-summary { display: block; font: 18px/1.35 Georgia, serif; }.agent-settings-modal { width: min(100%, 760px); }.settings-tabs { display: flex; gap: 22px; margin: 0 0 22px; border-bottom: 1px solid var(--line); }.settings-tabs button { margin-bottom: -1px; padding: 10px 1px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 700; }.settings-tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }.settings-section { display: grid; gap: 20px; }.settings-section .field-label { margin-top: 0; }.setting-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }.setting-option { display: grid; align-content: start; gap: 5px; min-height: 88px; padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--ink); text-align: left; }.setting-option span { color: var(--muted); font-size: 11px; line-height: 1.5; }.setting-option:hover { border-color: #c8b59b; }.setting-option.selected { border-color: var(--accent); background: #fff4ef; }.setting-option.selected strong { color: var(--accent); }.guardrail-note { display: grid; gap: 3px; padding: 13px 15px; border-left: 3px solid var(--gold); background: #faf5ea; }.guardrail-note strong { font-size: 12px; }.guardrail-note span { color: var(--muted); font-size: 11px; }.agent-list { gap: 10px; }.agent-card { padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: #fffefa; }.agent-card > div { display: flex; align-items: center; gap: 9px; }.agent-card h3 { margin: 0; font: 600 17px/1.3 Georgia, serif; }.agent-card p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }.agent-card label small { justify-self: end; color: #aaa095; }.agent-status { padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 750; }.agent-status.editable { background: #f4e4dd; color: var(--accent-dark); }.agent-status.locked { background: var(--paper-deep); color: var(--muted); }
-.continue-panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 48px; padding: 24px; border: 1px solid #d8b77c; border-radius: 12px; background: #fffaf0; }.continue-panel h2, .home-section-heading h2 { margin: 6px 0 2px; font-size: 27px; }.continue-panel p { margin: 0; color: var(--muted); }.home-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin: 34px 0 14px; }.home-section-heading > span { color: var(--muted); font-size: 12px; }.home-saves { max-width: 700px; margin-top: 44px; }.save-item { padding: 0; overflow: hidden; }.save-open { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 15px; min-width: 0; padding: 13px 14px; border: 0; background: transparent; color: var(--ink); text-align: left; }.save-open > span:first-child { display: grid; gap: 2px; min-width: 0; }.save-open > span:last-child { color: var(--accent); font-size: 11px; }.delete-button { align-self: stretch; padding: 0 14px; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 11px; }.delete-button:hover { background: #fff1ed; color: var(--accent-dark); }.danger-button { padding: 10px 16px; border: 1px solid var(--accent-dark); border-radius: 7px; background: var(--accent-dark); color: white; font-weight: 700; }.danger-button:hover:not(:disabled) { background: #762d23; }.confirm-modal { width: min(100%, 480px); }
-@media (max-width: 860px) { .shell { width: min(100% - 28px, 680px); padding-top: 18px; }.welcome-grid, .game-layout { grid-template-columns: 1fr; gap: 28px; }.welcome-grid { min-height: auto; padding: 45px 0; }.welcome-copy h1 { font-size: 52px; }.side-column { grid-template-columns: 1fr 1fr; }.compact-panel { grid-column: span 2; }.story-heading h1 { font-size: 30px; } }
+.continue-panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 48px; padding: 24px; border: 1px solid #d8b77c; border-radius: 12px; background: #fffaf0; }.continue-panel h2, .home-section-heading h2 { margin: 6px 0 2px; font-size: 27px; }.continue-panel p { margin: 0; color: var(--muted); }.home-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin: 34px 0 14px; }.home-section-heading > span { color: var(--muted); font-size: 12px; }.story-detail { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(260px, .8fr); min-height: 350px; margin-top: 48px; overflow: hidden; border-radius: 14px; }.story-detail-copy { display: grid; align-content: center; justify-items: start; padding: clamp(32px, 6vw, 70px); }.story-detail h1 { margin: 10px 0 14px; font-size: clamp(38px, 5vw, 58px); line-height: 1.06; }.story-detail-copy > p { max-width: 590px; color: var(--muted); font-size: 16px; }.story-detail-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }.story-saves { max-width: 760px; margin-top: 38px; }.save-item { padding: 0; overflow: hidden; }.save-open { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 15px; min-width: 0; padding: 13px 14px; border: 0; background: transparent; color: var(--ink); text-align: left; }.save-open > span:first-child { display: grid; gap: 2px; min-width: 0; }.save-open > span:last-child { color: var(--accent); font-size: 11px; }.delete-button { align-self: stretch; padding: 0 14px; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 11px; }.delete-button:hover { background: #fff1ed; color: var(--accent-dark); }.danger-button { padding: 10px 16px; border: 1px solid var(--accent-dark); border-radius: 7px; background: var(--accent-dark); color: white; font-weight: 700; }.danger-button:hover:not(:disabled) { background: #762d23; }.confirm-modal { width: min(100%, 480px); }
+@media (max-width: 860px) { .shell { width: min(100% - 28px, 680px); padding-top: 18px; }.welcome-grid, .game-layout, .story-detail { grid-template-columns: 1fr; gap: 28px; }.welcome-grid { min-height: auto; padding: 45px 0; }.welcome-copy h1 { font-size: 52px; }.story-detail { gap: 0; }.story-detail-art { min-height: 190px; order: -1; }.side-column { grid-template-columns: 1fr 1fr; }.compact-panel { grid-column: span 2; }.story-heading h1 { font-size: 30px; } }
 @media (max-width: 520px) { .topbar { align-items: flex-start; }.topbar-actions { display: grid; justify-items: end; gap: 4px; }.brand-subtitle { display: none; }.welcome-copy h1 { font-size: 43px; }.side-column { grid-template-columns: 1fr; }.compact-panel { grid-column: auto; }.message { max-width: 94%; }.mode-options, .setting-options { grid-template-columns: 1fr; }.modal { padding: 21px; }.setting-option { min-height: auto; }.settings-tabs { gap: 16px; }.continue-panel { align-items: flex-start; flex-direction: column; }.continue-panel .primary-button { width: 100%; }.delete-button { padding: 0 10px; } }
 </style>
