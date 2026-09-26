@@ -39,33 +39,13 @@ func (a *App) SubmitRun(ctx context.Context, worldID string, request RunRequest)
 	if request.RequestKey == "" || request.Input == "" || len([]rune(request.Input)) > 4000 {
 		return Run{}, ErrInvalidRequest
 	}
-	activeID, activeRevision, err := a.activeWorld(ctx)
-	if err != nil || activeID != worldID {
-		return Run{}, ErrVersionConflict
-	}
-	if request.ExpectedActiveRevision > 0 && request.ExpectedActiveRevision != activeRevision {
-		return Run{}, ErrVersionConflict
-	}
-	a.modelMu.RLock()
-	configured := a.generator != nil
-	a.modelMu.RUnlock()
-	if !configured {
-		return Run{}, ErrModelNotConfigured
-	}
 	path, status, err := a.worldRecord(ctx, worldID)
 	if err != nil {
 		return Run{}, err
 	}
-	if status != "ready" {
-		return Run{}, ErrWorldNotReady
-	}
-
 	world := a.worldRuntimeFor(worldID)
 	world.mu.Lock()
 	defer world.mu.Unlock()
-	if world.savePending {
-		return Run{}, ErrWorldBusy
-	}
 	store, err := openWorldDB(path)
 	if err != nil {
 		return Run{}, err
@@ -78,6 +58,25 @@ func (a *App) SubmitRun(ctx context.Context, worldID string, request RunRequest)
 			return Run{}, ErrIdempotencyConflict
 		}
 		return existing, nil
+	}
+	activeID, activeRevision, err := a.activeWorld(ctx)
+	if err != nil || activeID != worldID {
+		return Run{}, ErrVersionConflict
+	}
+	if request.ExpectedActiveRevision > 0 && request.ExpectedActiveRevision != activeRevision {
+		return Run{}, ErrVersionConflict
+	}
+	if status != "ready" {
+		return Run{}, ErrWorldNotReady
+	}
+	a.modelMu.RLock()
+	configured := a.generator != nil
+	a.modelMu.RUnlock()
+	if !configured {
+		return Run{}, ErrModelNotConfigured
+	}
+	if world.savePending {
+		return Run{}, ErrWorldBusy
 	}
 	snapshot, err := loadWorldSnapshot(ctx, store, 1)
 	if err != nil {
@@ -98,9 +97,13 @@ func (a *App) SubmitRun(ctx context.Context, worldID string, request RunRequest)
 		return Run{}, ErrWorldBusy
 	}
 	now := time.Now().UTC()
+	attempt := request.attempt
+	if attempt < 1 {
+		attempt = 1
+	}
 	run := Run{
 		RunID: newID("run"), RequestKey: request.RequestKey, RequestHash: a.hashRun(request),
-		Input: request.Input, AddresseeID: cleanText(request.AddresseeID), Attempt: 1,
+		Input: request.Input, AddresseeID: cleanText(request.AddresseeID), Attempt: attempt,
 		Status: "accepted", CreatedAt: now, UpdatedAt: now,
 	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO runs(
@@ -110,7 +113,7 @@ func (a *App) SubmitRun(ctx context.Context, worldID string, request RunRequest)
 	if err != nil {
 		return Run{}, err
 	}
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	runtime := &runRuntime{Cancel: cancel, Done: make(chan struct{}), WorldID: worldID, RunID: run.RunID, ActiveRevision: activeRevision}
 	a.runsMu.Lock()
 	a.runs[run.RunID] = runtime
@@ -165,7 +168,9 @@ func (a *App) runWorker(ctx context.Context, runtime *runRuntime, run Run) {
 			status, reason, message = "cancelled", "cancelled", "the turn was cancelled"
 		}
 		_ = updateRunStatus(context.Background(), store.db, run.RunID, status, reason, message)
+		return
 	}
+	_ = a.touchWorld(context.Background(), runtime.WorldID)
 }
 
 func (a *App) Run(ctx context.Context, worldID, runID string) (Run, error) {
@@ -236,7 +241,7 @@ func (a *App) RetryRun(ctx context.Context, worldID, runID, requestKey string) (
 	if strings.TrimSpace(requestKey) == "" {
 		requestKey = newID("retry")
 	}
-	return a.SubmitRun(ctx, worldID, RunRequest{RequestKey: requestKey, Input: run.Input, AddresseeID: run.AddresseeID})
+	return a.SubmitRun(ctx, worldID, RunRequest{RequestKey: requestKey, Input: run.Input, AddresseeID: run.AddresseeID, attempt: run.Attempt + 1})
 }
 
 func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turnOutput, error) {
@@ -253,7 +258,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 	now := time.Now().UTC()
 	playerEventID := run.RunID + ":input"
 	output := turnOutput{
-		Clock:    runClock(snapshot.Summary.Clock, run.Input),
+		Clock:    snapshot.Summary.Clock,
 		Events:   []Event{{EventID: playerEventID, EventType: "player_attempt", ActorID: "player", TargetID: recipient, Content: run.Input, RunID: run.RunID, Stage: 1, SceneVersion: snapshot.SceneVersion, SourceType: "player", CreatedAt: now}},
 		Memories: []Memory{}, Perceptions: []Perception{},
 	}
@@ -295,24 +300,30 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 		if !decisions[character.EntityID].Silent || !hasSpeech(decisions) {
 			continue
 		}
-		follow := publicReplies(decisions)
+		follow := publicReplies(decisions, snapshot.Characters)
 		followDecisions := make(map[string]npcDecision)
 		followText := map[string]string{character.EntityID: "另一位人物刚才公开回应：" + follow}
 		if err := a.decideNPCs(ctx, snapshot, run, def, followText, followDecisions, 2, follow); err != nil {
 			return turnOutput{}, err
 		}
 		decision := followDecisions[character.EntityID]
+		decisions[character.EntityID] = decision
 		if decision.Speech == "" {
 			continue
 		}
 		eventID := run.RunID + ":" + character.EntityID + ":speech:2"
 		output.Events = append(output.Events, Event{EventID: eventID, EventType: "npc_dialogue", ActorID: character.EntityID, TargetID: "player", Content: decision.Speech, RunID: run.RunID, Stage: 2, SceneVersion: snapshot.SceneVersion, SourceType: "visible_dialogue", CreatedAt: time.Now().UTC()})
+		for _, other := range snapshot.Characters {
+			if other.EntityID != character.EntityID {
+				output.Perceptions = append(output.Perceptions, Perception{RecipientID: other.EntityID, SourceEventID: eventID, SourceType: "heard_public_reply", Content: decision.Speech, Stage: 2, SceneVersion: snapshot.SceneVersion, CreatedAt: time.Now().UTC()})
+			}
+		}
 		if decision.Memory != "" {
 			output.Memories = append(output.Memories, Memory{RecipientID: character.EntityID, Kind: "character_judgment", Content: cleanText(decision.Memory), SourceEventID: eventID, CreatedAt: time.Now().UTC()})
 		}
 	}
 
-	public := publicReplies(decisions)
+	public := publicReplies(decisions, snapshot.Characters)
 	if public == "" {
 		public = "没有人立刻回答。客栈里的雨声显得更清楚了。"
 	}
@@ -321,6 +332,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 		return turnOutput{}, err
 	}
 	output.Narrative = host.Narrative
+	output.Clock = advanceClock(snapshot.Summary.Clock, run.Input, host.TimeMinutes)
 	output.Events = append(output.Events, Event{EventID: run.RunID + ":outcome", EventType: "turn_settled", ActorID: "scene", Content: public, RunID: run.RunID, Stage: 3, SceneVersion: snapshot.SceneVersion, SourceType: "scene", CreatedAt: time.Now().UTC()})
 	for _, character := range snapshot.Characters {
 		memory := "玩家说：" + run.Input
@@ -336,11 +348,22 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 	return output, nil
 }
 
-func runClock(clock, input string) string {
-	if strings.Contains(input, "等待") || strings.Contains(strings.ToLower(input), "wait") {
-		return clock + "（经过一段等待）"
+func advanceClock(clock, input string, minutes int) string {
+	if minutes == 0 && !strings.Contains(input, "等待") && !strings.Contains(strings.ToLower(input), "wait") {
+		return clock
 	}
-	return clock
+	if minutes == 0 {
+		minutes = 30
+	}
+	var day, hour, minute int
+	if _, err := fmt.Sscanf(clock, "第 %d 日 %d:%d", &day, &hour, &minute); err != nil || day < 1 || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return clock
+	}
+	total := (day-1)*24*60 + hour*60 + minute + minutes
+	if total < 0 {
+		return clock
+	}
+	return fmt.Sprintf("第 %d 日 %02d:%02d", total/(24*60)+1, (total/60)%24, total%60)
 }
 
 func sourceTypeFor(private bool, id, recipient string) string {
@@ -362,9 +385,10 @@ func hasSpeech(decisions map[string]npcDecision) bool {
 	return false
 }
 
-func publicReplies(decisions map[string]npcDecision) string {
+func publicReplies(decisions map[string]npcDecision, characters []Character) string {
 	var parts []string
-	for _, decision := range decisions {
+	for _, character := range characters {
+		decision := decisions[character.EntityID]
 		if decision.Speech != "" {
 			parts = append(parts, decision.Speech)
 		}
@@ -387,12 +411,18 @@ func (a *App) decideNPCs(ctx context.Context, snapshot worldSnapshot, run Run, d
 	var decisionMu sync.Mutex
 	for _, character := range snapshot.Characters {
 		character := character
+		perception, present := perceptions[character.EntityID]
+		if stage > 1 && !present {
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			input := buildNPCPrompt(snapshot, character, run, perceptions[character.EntityID], stage, stimulus)
+			input := buildNPCPrompt(snapshot, character, run, perception, stage, stimulus)
 			var decision npcDecision
-			err := generateJSON(npcCtx, generator, "你是一个重要 NPC。只根据自己的角色资料、个人记忆和本阶段感知作决定。你可以沉默；speech 是你愿意让在场者听见的对白，action_intent 只是尝试，不是已经发生的事实。memory 只写本次真正获知的简短经历。", input, &decision, 1024)
+			callCtx, callCancel := context.WithTimeout(npcCtx, 60*time.Second)
+			defer callCancel()
+			err := generateJSON(callCtx, generator, "你是一个重要 NPC。只根据自己的角色资料、个人记忆和本阶段感知作决定。你可以沉默；speech 是你愿意让在场者听见的对白，action_intent 只是尝试，不是已经发生的事实。memory 只写本次真正获知的简短经历。", input, &decision, 1024)
 			if err != nil {
 				errMu.Lock()
 				if firstErr == nil {
@@ -430,7 +460,7 @@ func buildNPCPrompt(snapshot worldSnapshot, character Character, run Run, percep
 	if stimulus != "" {
 		fmt.Fprintf(&builder, "新刺激：%s\n", stimulus)
 	}
-	fmt.Fprintf(&builder, "玩家的原始输入只在允许的感知中出现：%s\n输出 JSON：speech、action_intent、silent、memory。不要输出额外字段。", run.Input)
+	fmt.Fprintf(&builder, "玩家本轮在你可见范围内的表达：%s\n输出 JSON：speech、action_intent、silent、memory。不要输出额外字段。", perception)
 	return builder.String()
 }
 
@@ -463,9 +493,15 @@ func (a *App) narrate(ctx context.Context, snapshot worldSnapshot, run Run, def 
 	if generator == nil {
 		return hostResult{}, ErrModelNotConfigured
 	}
-	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n玩家本次表达：%s\n人物已确定的公开回应：%s\n在场重要人物：%s\n请组织一段玩家可见的自然正文。耳语原文只可在授权人物的内部经历中使用，不能把未公开秘密写给玩家。玩家的输入是行动尝试，不是已经成功的事实。输出 JSON，字段 narrative、time_minutes、scene。time_minutes 只能是 0 到 120 的非负整数。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, snapshot.PlayerName, run.Input, public, characterNames(snapshot.Characters))
+	playerInput := run.Input
+	if private {
+		playerInput = "玩家进行了私下交谈；耳语原文不提供给场景主，只能根据已经公开的回应组织叙事。"
+	}
+	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n玩家本次表达：%s\n人物已确定的公开回应：%s\n在场重要人物：%s\n请组织一段玩家可见的自然正文。耳语原文只可在授权人物的内部经历中使用，不能把未公开秘密写给玩家。玩家的输入是行动尝试，不是已经成功的事实。输出 JSON，字段 narrative、time_minutes、scene。time_minutes 只能是 0 到 120 的非负整数。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, snapshot.PlayerName, playerInput, public, characterNames(snapshot.Characters))
 	var result hostResult
-	if err := generateJSON(ctx, generator, "你是场景主 Agent。你负责把已经确定的公开结果组织成连贯叙事，不替重要人物做未经决策的选择，不向玩家泄露作者秘密。", input, &result, 2048); err != nil {
+	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer callCancel()
+	if err := generateJSON(callCtx, generator, "你是场景主 Agent。你负责把已经确定的公开结果组织成连贯叙事，不替重要人物做未经决策的选择，不向玩家泄露作者秘密。", input, &result, 2048); err != nil {
 		return hostResult{}, err
 	}
 	result.Narrative = cleanText(result.Narrative)

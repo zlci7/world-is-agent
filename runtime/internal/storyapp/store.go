@@ -20,6 +20,7 @@ type worldSnapshot struct {
 	Summary       WorldSummary
 	PlayerName    string
 	PlayerProfile string
+	Bystanders    []string
 	SceneVersion  int64
 	Characters    []Character
 	Messages      []Message
@@ -107,6 +108,12 @@ CREATE TABLE IF NOT EXISTS worlds (
 );
 CREATE TABLE IF NOT EXISTS user_play_state (
   user_id TEXT PRIMARY KEY, active_world_id TEXT NOT NULL, active_revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS activation_operations (
+  operation_id TEXT PRIMARY KEY, request_key TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL, game_id TEXT NOT NULL, target_world_id TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL, request_hash TEXT NOT NULL,
+  status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS copy_operations (
   operation_id TEXT PRIMARY KEY, request_key TEXT NOT NULL UNIQUE,
@@ -204,7 +211,7 @@ func initializeWorld(ctx context.Context, store *worldStore, userID, worldID str
 		"turn_seq": "0", "message_head": "1", "event_head": "0", "context_epoch": "1",
 		"scene_version": "1", "scene": def.Scene, "clock": def.Clock,
 		"player_name": playerName, "player_profile": playerProfile, "status": "ready",
-		"generation": "1", "plot_status": "active",
+		"generation": "1", "plot_status": "active", "bystanders": marshalJSON(def.Bystanders),
 	}
 	for key, value := range values {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES(?,?)`, key, value); err != nil {
@@ -285,6 +292,12 @@ func loadWorldSnapshot(ctx context.Context, store *worldStore, limit int) (world
 	}
 	if value, e := get("updated_at"); e == nil {
 		out.Summary.UpdatedAt, _ = time.Parse(time.RFC3339Nano, value)
+	}
+	if value, e := get("bystanders"); e == nil {
+		_ = json.Unmarshal([]byte(value), &out.Bystanders)
+	}
+	if len(out.Bystanders) == 0 {
+		out.Bystanders = append([]string(nil), lanternDefinition().Bystanders...)
 	}
 	out.Characters, err = loadCharacters(ctx, store.db)
 	if err != nil {
@@ -516,13 +529,13 @@ func commitTurn(ctx context.Context, store *worldStore, run Run, narrative strin
 		}
 	}
 	messageHead++
-	messageID := run.RunID + ":narrative"
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(seq,message_id,kind,content,run_id,created_at) VALUES(?,?,?,?,?,?)`, messageHead, messageID, "narrative", narrative, run.RunID, nowText()); err != nil {
+	inputID := run.RunID + ":input"
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(seq,message_id,kind,content,run_id,created_at) VALUES(?,?,?,?,?,?)`, messageHead, inputID, "player", run.Input, run.RunID, nowText()); err != nil {
 		return 0, err
 	}
 	messageHead++
-	inputID := run.RunID + ":input"
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(seq,message_id,kind,content,run_id,created_at) VALUES(?,?,?,?,?,?)`, messageHead, inputID, "player", run.Input, run.RunID, nowText()); err != nil {
+	messageID := run.RunID + ":narrative"
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(seq,message_id,kind,content,run_id,created_at) VALUES(?,?,?,?,?,?)`, messageHead, messageID, "narrative", narrative, run.RunID, nowText()); err != nil {
 		return 0, err
 	}
 	turnSeq++

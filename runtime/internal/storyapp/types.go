@@ -46,21 +46,22 @@ type Logger interface {
 }
 
 type App struct {
-	root       string
-	userID     string
-	appDB      *sql.DB
-	dataRoot   string
-	modelPath  string
-	modelMu    sync.RWMutex
-	generator  model.TextGenerator
-	modelInfo  ModelInfo
-	modelError string
-	worldMu    sync.Mutex
-	worlds     map[string]*worldRuntime
-	runsMu     sync.Mutex
-	runs       map[string]*runRuntime
-	logger     Logger
-	closed     chan struct{}
+	root         string
+	userID       string
+	appDB        *sql.DB
+	dataRoot     string
+	modelPath    string
+	modelMu      sync.RWMutex
+	generator    model.TextGenerator
+	modelInfo    ModelInfo
+	modelError   string
+	worldMu      sync.Mutex
+	worlds       map[string]*worldRuntime
+	activationMu sync.Mutex
+	runsMu       sync.Mutex
+	runs         map[string]*runRuntime
+	logger       Logger
+	closed       chan struct{}
 }
 
 type ModelInfo struct {
@@ -84,8 +85,8 @@ type Status struct {
 	UserID          string        `json:"user_id"`
 	ActiveWorld     *WorldSummary `json:"active_world"`
 	ActiveRevision  int64         `json:"active_revision"`
-	DataRoot        string        `json:"data_root"`
-	ModelConfigPath string        `json:"model_config_path"`
+	DataRoot        string        `json:"-"`
+	ModelConfigPath string        `json:"-"`
 }
 
 type GameSummary struct {
@@ -119,6 +120,28 @@ type Character struct {
 	Profile      string `json:"profile"`
 	Knowledge    string `json:"knowledge"`
 	InScene      bool   `json:"in_scene"`
+}
+
+// PublicCharacter is the player-facing character projection. Private role
+// material stays inside the story runtime and is never sent through ordinary
+// play routes.
+type PublicCharacter struct {
+	EntityID     string `json:"entity_id"`
+	DefinitionID string `json:"definition_id"`
+	Name         string `json:"name"`
+	Role         string `json:"role"`
+	InScene      bool   `json:"in_scene"`
+}
+
+func PublicCharacterViews(characters []Character) []PublicCharacter {
+	views := make([]PublicCharacter, 0, len(characters))
+	for _, character := range characters {
+		views = append(views, PublicCharacter{
+			EntityID: character.EntityID, DefinitionID: character.DefinitionID,
+			Name: character.Name, Role: character.Role, InScene: character.InScene,
+		})
+	}
+	return views
 }
 
 type Message struct {
@@ -199,6 +222,7 @@ type RunRequest struct {
 	ExpectedMessageHead    int64  `json:"expected_message_head"`
 	ExpectedEventHead      int64  `json:"expected_event_head"`
 	ExpectedContextEpoch   int64  `json:"expected_context_epoch"`
+	attempt                int
 }
 
 type runRuntime struct {

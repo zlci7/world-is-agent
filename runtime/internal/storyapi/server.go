@@ -108,6 +108,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/active-world":
 		s.activeWorld(w, r)
 	default:
+		if strings.HasPrefix(r.URL.Path, "/api/v1/world-copy-operations/") {
+			s.copyOperation(w, r, strings.TrimPrefix(r.URL.Path, "/api/v1/world-copy-operations/"))
+			return
+		}
 		s.handleWorldRoute(w, r)
 	}
 }
@@ -256,7 +260,7 @@ func (s *Server) world(w http.ResponseWriter, r *http.Request, id string) {
 			writeAppError(w, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"world": snapshot.Summary, "player_name": snapshot.PlayerName, "player_profile": snapshot.PlayerProfile, "messages": snapshot.Messages, "characters": snapshot.Characters})
+		writeJSON(w, 200, map[string]any{"world": snapshot.Summary, "player_name": snapshot.PlayerName, "player_profile": snapshot.PlayerProfile, "messages": snapshot.Messages, "characters": storyapp.PublicCharacterViews(snapshot.Characters), "bystanders": snapshot.Bystanders})
 	case "DELETE":
 		if err := s.app.DeleteWorld(r.Context(), id); err != nil {
 			writeAppError(w, err)
@@ -295,7 +299,7 @@ func (s *Server) entities(w http.ResponseWriter, r *http.Request, id string) {
 		writeAppError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"entities": entities})
+	writeJSON(w, 200, map[string]any{"entities": storyapp.PublicCharacterViews(entities)})
 }
 func (s *Server) activate(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "POST" {
@@ -303,12 +307,13 @@ func (s *Server) activate(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	var request struct {
-		ExpectedActiveRevision int64 `json:"expected_active_revision"`
+		ExpectedActiveRevision int64  `json:"expected_active_revision"`
+		RequestKey             string `json:"request_key"`
 	}
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	status, err := s.app.ActivateWorld(r.Context(), id, request.ExpectedActiveRevision)
+	status, err := s.app.ActivateWorld(r.Context(), id, request.ExpectedActiveRevision, request.RequestKey)
 	if err != nil {
 		writeAppError(w, err)
 		return
@@ -334,6 +339,19 @@ func (s *Server) saveAs(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	writeJSON(w, 202, map[string]any{"operation": operation})
+}
+
+func (s *Server) copyOperation(w http.ResponseWriter, r *http.Request, operationID string) {
+	if r.Method != "GET" {
+		writeError(w, 405, "method_not_allowed", "copy operation status is read with GET")
+		return
+	}
+	operation, err := s.app.CopyOperation(r.Context(), operationID)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"operation": operation})
 }
 func (s *Server) runs(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "POST" {
@@ -517,6 +535,9 @@ func writeAppError(w http.ResponseWriter, err error) {
 		status = 409
 		code = "idempotency_conflict"
 	case errors.Is(err, storyapp.ErrModelNotConfigured):
+		status = 409
+		code = "model_not_configured"
+	case strings.HasPrefix(err.Error(), "model_not_configured:"):
 		status = 409
 		code = "model_not_configured"
 	case errors.Is(err, storyapp.ErrSaveFailed):

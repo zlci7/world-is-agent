@@ -64,6 +64,10 @@ func Open(ctx context.Context, options Options) (*App, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := app.markInterruptedCopies(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return app, nil
 }
 
@@ -197,15 +201,18 @@ func (a *App) CreateWorld(ctx context.Context, name, mode, playerName, playerPro
 		return WorldSummary{}, err
 	}
 	if activate {
+		a.activationMu.Lock()
 		if err := a.activate(ctx, worldID, 0); err != nil {
+			a.activationMu.Unlock()
 			return WorldSummary{}, err
 		}
+		a.activationMu.Unlock()
 	}
 	return a.worldSummary(ctx, worldID)
 }
 
 func (a *App) ListWorlds(ctx context.Context) ([]WorldSummary, error) {
-	rows, err := a.appDB.QueryContext(ctx, `SELECT world_id,name,status,updated_at FROM worlds WHERE user_id=? AND game_id=? ORDER BY updated_at DESC`, a.userID, GameID)
+	rows, err := a.appDB.QueryContext(ctx, `SELECT world_id,name,status,updated_at FROM worlds WHERE user_id=? AND game_id=? AND status='ready' ORDER BY updated_at DESC`, a.userID, GameID)
 	if err != nil {
 		return nil, err
 	}
@@ -316,6 +323,11 @@ func (a *App) worldPath(worldID string) string {
 	return filepath.Join(a.root, "worlds", a.userID, GameID, worldID, "world.db")
 }
 
+func (a *App) touchWorld(ctx context.Context, worldID string) error {
+	_, err := a.appDB.ExecContext(ctx, `UPDATE worlds SET updated_at=? WHERE user_id=? AND game_id=? AND world_id=?`, nowText(), a.userID, GameID, worldID)
+	return err
+}
+
 func (a *App) markInterrupted(ctx context.Context) error {
 	rows, err := a.appDB.QueryContext(ctx, `SELECT path FROM worlds WHERE user_id=? AND game_id=? AND status='ready'`, a.userID, GameID)
 	if err != nil {
@@ -340,6 +352,39 @@ func (a *App) markInterrupted(ctx context.Context) error {
 			return err
 		}
 		store.db.Close()
+	}
+	return nil
+}
+
+func (a *App) markInterruptedCopies(ctx context.Context) error {
+	rows, err := a.appDB.QueryContext(ctx, `SELECT operation_id,target_world_id FROM copy_operations WHERE user_id=? AND game_id=? AND status='copying'`, a.userID, GameID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type copyRef struct{ operationID, worldID string }
+	var refs []copyRef
+	for rows.Next() {
+		var ref copyRef
+		if err := rows.Scan(&ref.operationID, &ref.worldID); err != nil {
+			return err
+		}
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		path, _, recordErr := a.worldRecord(ctx, ref.worldID)
+		if recordErr == nil {
+			_ = os.RemoveAll(filepath.Dir(path))
+		}
+		if _, err := a.appDB.ExecContext(ctx, `UPDATE copy_operations SET status='failed',error=?,updated_at=? WHERE user_id=? AND game_id=? AND operation_id=?`, "另存任务在运行时重启，原存档保持不变", nowText(), a.userID, GameID, ref.operationID); err != nil {
+			return err
+		}
+		if _, err := a.appDB.ExecContext(ctx, `UPDATE worlds SET status='failed',updated_at=? WHERE user_id=? AND game_id=? AND world_id=?`, nowText(), a.userID, GameID, ref.worldID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -387,12 +432,12 @@ func (a *App) ConfigureModel(ctx context.Context, request ModelConfigRequest) (S
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return Status{}, err
 	}
-	secretPath := filepath.Join(a.root, "secrets", "model.key")
-	if err := secret.Write(secretPath, request.APIKey); err != nil {
+	secretDir := filepath.Clean(filepath.Join(configDir, "..", "secrets"))
+	secretPath := filepath.Join(secretDir, "model.key")
+	tmpKey := filepath.Join(secretDir, "model.pending.key")
+	if err := secret.Write(tmpKey, request.APIKey); err != nil {
 		return Status{}, err
 	}
-	tmpKey := filepath.Join(a.root, "secrets", "model.pending.key")
-	_ = secret.Write(tmpKey, request.APIKey)
 	tmpConfig := filepath.Join(configDir, "model.pending.json")
 	window := llm.DefaultWindowLimits(provider, request.Model)
 	config := llm.Config{Provider: provider, Model: strings.TrimSpace(request.Model), BaseURL: strings.TrimRight(strings.TrimSpace(request.BaseURL), "/"), APIKey: "file:../secrets/model.pending.key", WindowLimits: window}
