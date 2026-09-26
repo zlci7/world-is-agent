@@ -1,84 +1,60 @@
 # World Is Agent
 
-**让游戏里的角色拥有身份、记忆，并根据正在发生的事情自主作出回应。**
+World Is Agent 是一个本机运行的 AI 叙事游戏。玩家在浏览器中进入预置调查冒险，与两名有独立经历的重要人物和场景路人互动；每个世界单独保存正文、事件、人物感知与记忆。
 
-World Is Agent（WIA）在本机运行，通过游戏 Adapter 接收实时状态、调用大语言模型，再把角色的对话或行动交回游戏执行。模型配置、游戏切换和运行记录都可以在本地 Web 控制台中管理。
-
-![World Is Agent 架构概览](docs/images/world-is-agent.jpg)
-
-> 架构图展示可扩展的模型接入方向；当前版本正式支持 DeepSeek 和 OpenAI。
-
-## 你可以用它做什么
-
-- 让游戏角色结合身份、当前环境和历史记忆进行对话与决策。
-- 在 Web 控制台中选择游戏、配置模型并查看最近的 Agent 回合。
-- 在同一个 Runtime 进程中切换游戏，保留各游戏已经记录的历史。
-- 使用 DeepSeek 或 OpenAI，也可以配置兼容接口的 Base URL。
-
-## 支持的游戏
-
-| 游戏 | Adapter | 运行环境 | 安装说明 |
-| --- | --- | --- | --- |
-| Stardew Valley | 0.1.1 | Windows、SMAPI | [Stardew Valley Adapter](https://github.com/zlci7/world-is-agent-adapters/tree/main/stardew-valley) |
-| RimWorld | 0.1.0 | RimWorld 1.6、Windows x64 | [RimWorld Adapter](https://github.com/zlci7/world-is-agent-adapters/tree/main/rimworld) |
-
-Runtime 和游戏 Adapter 分开发布。安装 WIA 时需要一个 Runtime，以及与你所玩游戏匹配的 Adapter。
-
-## 使用前准备
-
-- Windows x64。
-- 已安装的 Stardew Valley 或 RimWorld。
-- 对应游戏的 WIA Adapter。
-- DeepSeek 或 OpenAI API Key。
+当前交付为 Phase12 M1：核心游玩与可靠存档。正式入口是本地 Runtime 和玩家工作台，不依赖游戏 Adapter 或外部游戏运行时。
 
 ## 开始使用
 
-1. 从 [Releases](https://github.com/zlci7/world-is-agent/releases) 下载 `world-is-agent-v0.2.0-windows-amd64.zip` 并解压。
-2. 从 [官方 Adapter 仓库](https://github.com/zlci7/world-is-agent-adapters) 安装对应游戏的 Adapter。
-3. 运行 `wia-runtime.exe`，浏览器会自动打开本地控制台。
-4. 在页面中选择游戏，填写模型服务商、模型和 API Key。
-5. 等待状态变为 **Ready**，然后启动游戏并加载存档。
-
-如果 Releases 页面中还没有对应版本，说明该版本尚未正式发布。不要混用不匹配的 Runtime 和 Adapter 版本。
-
-## Runtime 怎样连接游戏
-
-网页不需要填写游戏安装目录。Adapter 安装在游戏的 Mod 目录中，游戏启动后会自动连接本机的 `127.0.0.1:50051`。
-
-建议先启动 Runtime、选择游戏并等待 **Ready**，再启动游戏。连接暂时中断时，当前版本的 Stardew Valley 和 RimWorld Adapter 会自动重试。
-
-在 Web 控制台中使用 **Switch game（切换游戏）** 会取消正在执行的回合、保留已经写入的历史，并等待新游戏的 Adapter 连接。使用 **Model settings（模型设置）** 可以更换模型服务商、模型、API Key 和 Base URL；新配置通过检查后才会生效。
-
-## 本地数据与 API Key
-
-Runtime 默认把数据保存在：
-
-```text
-%LOCALAPPDATA%\WorldIsAgent\
-├── config\     游戏与模型配置
-├── secrets\    API Key 文件
-└── data\       回合 Trace
-```
-
-API Key 不会写入普通配置文件，也不会由网页返回。当前版本使用本地文件保存密钥，尚未接入系统密钥链。
-
-## 当前发布状态
-
-Stardew Valley 与 RimWorld 的基础实机闭环已经通过。Runtime 0.2.0、Stardew Adapter 0.1.1 和 RimWorld Adapter 0.1.0 正在完成发布前的运行时切换、自动重连和模型修改验收；对应 tag 与 Release 在验收完成后发布。
-
-## 开发者入口
-
-从源码构建 Windows Runtime：
+运行环境：Windows、Go 1.25+；首次从源码构建工作台还需要 Node.js 20+。
 
 ```powershell
-.\scripts\release-runtime.ps1
+cd D:\data\project\game-agent\world-is-agent\console\web
+npm ci
+npm run build
+
+cd ..\..
+go run ./runtime/cmd/server
 ```
 
+Runtime 会打开本地浏览器并打印带会话令牌的工作台地址。若没有自动打开，复制日志中的 `local client` 地址到浏览器即可。
+
+首次进入时，在工作台填写 DeepSeek 或 OpenAI 的 API Key。Runtime 会先验证连接，再将凭据保存在本机数据目录的 secrets 文件中；普通配置、页面响应和故事存档都不包含 API Key。
+
+也可以先构建可执行文件：
+
+```powershell
+go build -o wia-runtime.exe ./runtime/cmd/server
+.\wia-runtime.exe
+```
+
+通过 `-data-root` 指定数据目录，或使用 `WIA_DATA_ROOT`。默认数据目录是 `%LOCALAPPDATA%\WorldIsAgent`。每个世界位于独立的 SQLite 数据库中；另存会创建新的 world_id，读取后继续写入所选世界。
+
+## M1 可体验内容
+
+- 预置故事《暮灯镇的失踪信使》，支持流程型与开放型开局。
+- 两名重要 NPC：客栈老板沈岚、佣兵铁杉；开场保留十名场景路人。
+- NPC 并行决策、公开回应后的下一阶段反应、按人物分开的感知和记忆。
+- 私下交谈的旁观隔离：授权人物看到原文，其他人物只看到交谈迹象。
+- 自动保存、世界列表、显式读取、新开一局、另存为独立分支。
+- 生成状态、取消、失败输入保留、显式重试、幂等请求和版本冲突保护。
+- 本地回环 HTTP 会话、模型连接引导和响应式玩家工作台。
+
+## 当前验证
+
+阶段工程验证记录在 [Phase12 M1 验收记录](docs/phase12/acceptance/M1.md)；阶段状态见 [Phase12 开发状态](docs/phase12/WIA_Phase12_开发状态.md)。
+
+已完成自动化回归、race 检查、静态检查、前端类型检查与生产构建，并实际启动构建后的 Runtime 验证本地会话、状态接口和内置页面。真实模型连续游玩需要在工作台提供可用的 Provider API Key，当前开发环境未预置凭据。
+
+后续阶段再加入长期整理、建议、内容编辑、统一纠正、多用户服务端与完整发布包。
+
+## 相关文档
+
 - [系统架构](ARCHITECTURE.md)
-- [当前状态](docs/STATUS.md)
-- [开发指南](docs/development/guide.md)
-- [测试与验收](docs/development/testing.md)
-- [Protocol](protocol/README.md)
+- [公开状态](docs/STATUS.md)
+- [Phase12 产品说明](docs/phase12/WIA_产品说明_v1.0.md)
+- [Phase12 技术方案](docs/phase12/WIA_Phase12_技术方案_v1.0.md)
+- [Phase12 开发执行指南](docs/phase12/WIA_Phase12_开发执行指南.md)
 
 ## 许可证
 

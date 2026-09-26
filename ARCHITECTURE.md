@@ -1,179 +1,65 @@
-# Architecture
+# World Is Agent 架构
 
-World Is Agent (WIA) is an open runtime for building AI agents inside virtual worlds.
-
-The architecture is organized around one idea: worlds keep their native rules and execution, while WIA provides the runtime layer that gives entities identity, memory, context, and agentic behavior.
-
-## The Shape Of WIA
+Phase12 将 World Is Agent 定义为一个本机叙事游戏 Runtime。玩家通过本地浏览器进入故事，Runtime 负责世界身份、人物感知、模型协调、原子回合和独立存档。
 
 ```text
-          Virtual World
-
-     Minecraft / Unity / Games
-              |
-              |
-        WIA Adapter
-              |
-              |
-        WIA Runtime
- ┌────────────┼────────────┐
- Identity   Memory     Context
-              |
-           Agent
-              |
-            LLM
+本地浏览器工作台
+        │  loopback HTTP + session cookie
+        ▼
+Story API
+        │
+        ├── AppStore：用户作用域、活动世界、模型配置、另存任务
+        ├── Story Coordinator：回合、NPC 阶段、取消、幂等、版本
+        ├── Text Provider：DeepSeek / OpenAI
+        └── WorldStore：每个 world_id 一个 SQLite 数据库
+                         ├── 正文与事件
+                         ├── 人物感知与记忆
+                         └── 世界时间与回合状态
 ```
 
-This is the core mental model:
+## 运行边界
 
-- Virtual worlds own native state, rules, physics, UI, and execution.
-- Adapters translate world-specific APIs into WIA protocol messages.
-- The Runtime coordinates identity, memory, context, tools, turns, traces, and lifecycle.
-- Agents make decisions through model calls and available capabilities.
-- LLM providers are replaceable behind a provider-neutral interface.
-
-## Layer Responsibilities
+Runtime 绑定一个本机 `local` owner 和一个预置故事 `lantern-dusk`。每个新世界分配新的 `world_id`，路径位于：
 
 ```text
-Agent owns intent.
-Runtime owns cognition.
-Protocol owns contracts.
-Adapter owns translation.
-Game owns execution.
+<data-root>/story-app/
+  app.db
+  config/model.json
+  secrets/model.key
+  worlds/<user>/<game>/<world>/world.db
 ```
 
-### Virtual World
+应用库保存目录与活动选择；世界库保存本世界采用的故事版本、主角、人物实例、正文、事件、感知、记忆、回合和世界时间。模型凭据只保存在 secrets 文件中，不复制到世界库。
 
-The world is the source of truth for current state and real effects.
-
-Examples include game engines, mod APIs, simulations, and custom virtual environments. Stardew Valley and RimWorld are the current real validation worlds.
-
-### WIA Adapter
-
-An adapter connects a specific world to WIA.
-
-It provides four protocol surfaces:
+## 一轮故事
 
 ```text
-Event        what happened
-Observation  what is true now
-Capability   what this entity can do
-Action       execute this capability in the world
+玩家输入
+  → 固定世界快照与版本检查
+  → 两名重要 NPC 并行读取各自上下文
+  → 公开对白形成下一阶段刺激
+  → 沉默人物按需追加一次回应
+  → 场景主组织玩家可见正文
+  → 一个 SQLite 事务提交事件、感知、记忆、正文、时钟和 completed
 ```
 
-Adapter code owns game-specific concepts such as NPC objects, map tiles, UI menus, pathfinding, schedules, weather, and mod API threading rules.
+NPC 只收到自己的角色资料、个人感知、个人经历和本阶段允许的刺激。私下输入对授权人物保留原文，对旁观人物只生成交谈迹象；场景主收到私聊的公开投影，不收到耳语原文。失败、取消或中断的输入保留在 run 表供界面恢复，不进入正式历史。
 
-### WIA Runtime
+## 可靠性合同
 
-The Runtime is reusable infrastructure for agent execution.
+- 同一世界单写者；不同世界可以独立运行。
+- `request_key` 和请求哈希保证重复提交返回原 run，负载变化返回冲突。
+- 活动世界使用单调 `active_revision`；切换、回合和另存携带预期版本。
+- 回合完成使用同一个事务，防止正文、事件、感知、记忆和完成态分裂。
+- 取消通过上下文和数据库 `cancel_requested` 共同竞争提交门。
+- 进程重启会将未终结回合标为 `interrupted`；不会自动重放模型调用。
+- 另存使用 SQLite `VACUUM INTO` 创建独立世界，生成中等待指定回合的终态，失败时目标不可游玩且源世界保持完整。
+- HTTP 只监听 loopback，浏览器通过启动 URL 的一次性令牌换取 HttpOnly session cookie；普通游玩接口只返回公开人物投影。
 
-It owns:
+## 模型边界
 
-```text
-AgentSession identity
-AgentTurn lifecycle
-bounded multi-step execution
-tool scheduling
-bounded recent memory, session history, and summaries
-context projection
-trace and observability
-timeouts and cancellation
-async action suspend / resume
-```
+模型只负责候选对白、意图和场景正文。程序负责人物身份、可见范围、阶段顺序、输出 JSON 的重复键和未知字段拒绝、活动版本、取消竞争以及落盘事务。正式 Runtime 不自动使用 Fake；Fake 仅由测试注入。
 
-The Runtime communicates through protocol contracts and provider-neutral model types.
+## 当前范围
 
-The Runtime also owns Game Profiles: agent configuration, prompts, policies, and definition catalogs. A process loads one selected profile as one published runtime instance. HTTP status and gateway admission read the same instance snapshot. Matching adapters may connect through multiple EnvironmentSessions; another game's adapter is rejected before environment readiness.
-
-### Identity, Memory, Context
-
-These are the core cognitive layers of WIA.
-
-- Identity decides which agent a world event belongs to.
-- Memory stores agent state under that identity. The default MVP0 backend is SQLite, physically separated by game and world and scoped by entity, with an in-memory backend available for tests and local runs.
-- Context builds the model input from current observation, recent memory, transcript, tools, and runtime policy.
-
-### Agent
-
-An agent runs inside an AgentTurn.
-
-The current runtime models agents as `AgentSession` and `AgentTurn` concepts. `AgentSession` is the logical identity and state scope for an entity. `AgentTurn` is one bounded execution triggered by a world event.
-
-A turn observes the target entity, builds context, calls the model, executes tool calls, receives results, and either continues or settles.
-
-### LLM
-
-LLM providers are implementation details behind the runtime model interface.
-
-The current codebase includes Fake, DeepSeek, and OpenAI providers.
-
-## Runtime Loop
-
-At a high level, one WIA turn looks like this:
-
-```text
-World Event
-  -> AgentSession resolution
-  -> Observe target entity
-  -> Build context
-  -> Model decision
-  -> Tool call
-  -> Action request
-  -> Action result
-  -> Memory / trace update
-  -> Turn completion
-```
-
-Multi-step turns repeat the model decision and tool result feedback loop within configured budgets.
-
-Async actions can suspend a turn, wait for a terminal result, re-observe the world, and resume the same turn.
-
-## Adapter Boundary
-
-Adapters are allowed to know the game deeply.
-
-The Runtime expects adapters to translate that knowledge into stable protocol messages:
-
-```text
-Game-specific API
-  -> Adapter-owned mapping
-  -> WIA Protocol
-  -> Runtime-owned execution
-```
-
-This lets new world integrations focus on adapter development while sharing the same runtime.
-
-## Current Implementation
-
-The current MVP0 implementation includes:
-
-- Go Runtime over gRPC bidirectional streaming.
-- Protocol v1alpha2.
-- Stardew Valley SMAPI adapter.
-- RimWorld 1.6 adapter.
-- Embedded `stardew-valley` and `rimworld` Game Profiles selected through the local console.
-- Stable agent identity by game, world, and entity.
-- SQLite-backed memory, physically separated by game and world and scoped by entity, with bounded recent memory, session history, summaries, and history retrieval; an in-memory backend remains for tests and local runs.
-- Context projection with a deterministic estimated-token budget.
-- Bounded multi-step AgentTurn.
-- Dynamic capability-driven tools.
-- Sync and async action lifecycle.
-- JSONL turn trace.
-- Stardew dialogue, player input, emote, face-player, and same-location movement validation.
-
-Current architecture limits:
-
-- Async action waiting is process-local.
-- Same-agent FIFO scheduling is validated within one live EnvironmentSession.
-- Cross-stream recovery and durable continuation are future work.
-- Memory is independent of the game save: records from an abandoned branch can become visible again when comparable game time catches up.
-- One Runtime process loads one Game Profile at a time. Game and model changes retire the current instance, cancel its turns and streams, drain owned work, and publish a complete replacement without restarting the process. Connections and event handlers remain bound to their instance generation.
-- Multiple same-game streams are separate EnvironmentSessions and do not provide a concurrent same-save write guarantee.
-
-## Further Reading
-
-- [Current status](docs/STATUS.md)
-- [Development guide](docs/development/guide.md)
-- [Runtime Architecture Baseline](<docs/summary/GameAgent Runtime 整体架构设计规范.md>)
-- [Multi-game Compatibility and Agent Binding](<docs/summary/GameAgent 多游戏兼容性与 Agent Binding 决策.md>)
-- [Official Adapter workflow](docs/development/guide.md#official-adapters)
+M1 提供一个可直接游玩的调查冒险、流程型/开放型开局、人物信息差、自动保存、另存读取、生成取消和失败重试。长期摘要与语义检索、行动建议、内容编辑、统一纠正、多用户服务端和发布包属于后续阶段。
