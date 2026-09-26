@@ -382,25 +382,88 @@ func scanSaveOperation(row interface{ Scan(...any) error }) (SaveOperation, bool
 	return op, true, nil
 }
 
-func (a *App) DeleteWorld(ctx context.Context, worldID string) error {
-	active, _, err := a.activeWorldState(ctx)
-	if err != nil {
-		return err
-	}
-	if active == worldID {
-		return ErrWorldBusy
-	}
+func (a *App) DeleteWorld(ctx context.Context, worldID string, expectedRevision int64) error {
+	a.activationMu.Lock()
+	defer a.activationMu.Unlock()
+
 	path, status, err := a.worldRecord(ctx, worldID)
 	if err != nil {
 		return err
 	}
-	if status == "copying" {
+	if status != "ready" {
+		if status == "copying" || status == "deleting" {
+			return ErrWorldBusy
+		}
+		return ErrWorldNotReady
+	}
+	world := a.worldRuntimeFor(worldID)
+	world.mu.Lock()
+	defer world.mu.Unlock()
+	if world.savePending {
 		return ErrWorldBusy
 	}
-	if _, err := a.appDB.ExecContext(ctx, `DELETE FROM worlds WHERE user_id=? AND game_id=? AND world_id=?`, a.userID, GameID, worldID); err != nil {
+	store, err := openWorldDB(path)
+	if err != nil {
 		return err
 	}
-	return os.RemoveAll(filepath.Dir(path))
+	activeRuns, err := countActiveRuns(ctx, store.db)
+	_ = store.db.Close()
+	if err != nil {
+		return err
+	}
+	if activeRuns > 0 {
+		return ErrWorldBusy
+	}
+
+	activeID, activeRevision, err := a.activeWorldState(ctx)
+	if err != nil {
+		return err
+	}
+	if expectedRevision != activeRevision {
+		return ErrVersionConflict
+	}
+	tx, err := a.appDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE worlds SET status='deleting',updated_at=? WHERE user_id=? AND game_id=? AND world_id=? AND status='ready'`, nowText(), a.userID, GameID, worldID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return err
+		}
+		return ErrWorldBusy
+	}
+	if activeID == worldID {
+		result, err = tx.ExecContext(ctx, `UPDATE user_play_state SET active_world_id='',active_revision=? WHERE user_id=? AND active_world_id=? AND active_revision=?`, activeRevision+1, a.userID, worldID, activeRevision)
+		if err != nil {
+			return err
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			if err != nil {
+				return err
+			}
+			return ErrVersionConflict
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if err := os.RemoveAll(filepath.Dir(path)); err != nil {
+		_, _ = a.appDB.ExecContext(context.Background(), `UPDATE worlds SET status='ready',updated_at=? WHERE user_id=? AND game_id=? AND world_id=? AND status='deleting'`, nowText(), a.userID, GameID, worldID)
+		return err
+	}
+	if _, err := a.appDB.ExecContext(ctx, `DELETE FROM worlds WHERE user_id=? AND game_id=? AND world_id=? AND status='deleting'`, a.userID, GameID, worldID); err != nil {
+		return err
+	}
+	a.worldMu.Lock()
+	delete(a.worlds, worldID)
+	a.worldMu.Unlock()
+	return nil
 }
 
 func (a *App) CurrentWorld(ctx context.Context) (WorldSummary, error) {

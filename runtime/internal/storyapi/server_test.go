@@ -261,6 +261,39 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 	if operation.Status != "ready" {
 		t.Fatalf("copy operation = %+v", operation)
 	}
+
+	response, body = requestJSON(t, client, http.MethodDelete, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID), nil)
+	if response.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "invalid_request") {
+		t.Fatalf("delete without active revision = %d, body = %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, client, http.MethodDelete, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"?expected_active_revision=999", nil)
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "version_conflict") {
+		t.Fatalf("stale active-world delete = %d, body = %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, client, http.MethodDelete, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"?expected_active_revision=1", nil)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete active world = %d, body = %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/api/v1/status", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status after active delete = %d, body = %s", response.StatusCode, body)
+	}
+	decodeJSONBody(t, body, &statusEnvelope)
+	if statusEnvelope.Status.ActiveWorld != nil || statusEnvelope.Status.ActiveRevision != 2 {
+		t.Fatalf("status after active delete = %+v", statusEnvelope.Status)
+	}
+	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID), nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("deleted active world remains readable = %d, body = %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, client, http.MethodDelete, server.URL()+"/api/v1/worlds/"+url.PathEscape(operation.TargetWorldID)+"?expected_active_revision=2", nil)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete inactive world = %d, body = %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/api/v1/worlds", nil)
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"worlds":[]`) {
+		t.Fatalf("world list after deletes = %d, body = %s", response.StatusCode, body)
+	}
 }
 
 func requestJSON(t *testing.T, client *http.Client, method, endpoint string, value any) (*http.Response, []byte) {

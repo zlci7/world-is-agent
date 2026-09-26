@@ -278,7 +278,13 @@ func (s *Server) world(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		writeJSON(w, 200, map[string]any{"world": snapshot.Summary, "player_name": snapshot.PlayerName, "player_profile": snapshot.PlayerProfile, "narrative_settings": snapshot.Narrative, "messages": snapshot.Messages, "characters": storyapp.PublicCharacterViews(snapshot.Characters), "bystanders": snapshot.Bystanders})
 	case "DELETE":
-		if err := s.app.DeleteWorld(r.Context(), id); err != nil {
+		raw := strings.TrimSpace(r.URL.Query().Get("expected_active_revision"))
+		expectedRevision, err := strconv.ParseInt(raw, 10, 64)
+		if raw == "" || err != nil || expectedRevision < 0 {
+			writeError(w, 400, "invalid_request", "expected_active_revision must be a non-negative integer")
+			return
+		}
+		if err := s.app.DeleteWorld(r.Context(), id, expectedRevision); err != nil {
 			writeAppError(w, err)
 			return
 		}

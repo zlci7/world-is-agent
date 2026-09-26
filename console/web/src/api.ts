@@ -76,6 +76,11 @@ export async function activateWorld(worldID: string, expectedRevision: number, r
   })
 }
 
+export async function deleteWorld(worldID: string, expectedRevision: number): Promise<void> {
+  const query = new URLSearchParams({ expected_active_revision: String(expectedRevision) })
+  await request(`/api/v1/worlds/${encodeURIComponent(worldID)}?${query}`, { method: 'DELETE' })
+}
+
 export async function submitRun(worldID: string, input: { request_key: string; input: string; addressee_id?: string; expected_active_revision: number; expected_message_head: number; expected_event_head: number; expected_context_epoch: number }): Promise<Run> {
   const result = await request<{ run: Run }>(`/api/v1/worlds/${encodeURIComponent(worldID)}/runs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
