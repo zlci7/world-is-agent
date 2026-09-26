@@ -26,8 +26,22 @@ func (apiGenerator) GenerateText(ctx context.Context, request model.TextRequest)
 	if strings.Contains(request.System, "结构化回合意图") {
 		return model.TextResponse{Text: `{"intent_type":"speak","addressee_id":"npc:innkeeper","visibility":"private"}`}, nil
 	}
-	if strings.Contains(request.System, "场景主 Agent") {
-		return model.TextResponse{Text: `{"narrative":"雨声沿着窗棂滑下，客栈里的人都听见了这句话。","time_minutes":0,"scene":"旧渡口客栈"}`}, nil
+	if strings.Contains(request.System, "场景协调 Agent") {
+		var candidates []storyapp.Event
+		start := strings.Index(request.Input, "待裁定行动(JSON)：")
+		end := strings.Index(request.Input, "\n所有可用重要人物：")
+		if start < 0 || end < start || json.Unmarshal([]byte(request.Input[start+len("待裁定行动(JSON)："):end]), &candidates) != nil {
+			return model.TextResponse{Text: `{}`}, nil
+		}
+		outcomes := make([]map[string]any, 0, len(candidates))
+		for _, candidate := range candidates {
+			outcomes = append(outcomes, map[string]any{"action_id": candidate.EventID, "status": "succeeded", "content": "行动已经完成。", "recipients": []string{"player", "npc:innkeeper", "npc:mercenary"}})
+		}
+		data, _ := json.Marshal(map[string]any{"time_minutes": 0, "scene": "旧渡口客栈", "scene_characters": []string{"npc:innkeeper", "npc:mercenary"}, "outcomes": outcomes})
+		return model.TextResponse{Text: string(data)}, nil
+	}
+	if strings.Contains(request.System, "玩家正文 Agent") {
+		return model.TextResponse{Text: `{"narrative":"雨声沿着窗棂滑下，客栈里的人都听见了这句话。"}`}, nil
 	}
 	return model.TextResponse{Text: `{"speech":"我听见了。","action_intent":"继续观察","silent":false,"memory":"我记住了这次交谈。"}`}, nil
 }

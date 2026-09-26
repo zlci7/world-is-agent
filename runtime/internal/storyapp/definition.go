@@ -42,31 +42,6 @@ func characterByID(def gameDefinition, id string) (Character, bool) {
 	return Character{}, false
 }
 
-func defaultAddressee(input string) string {
-	// 保留这个函数作为旧存档读取时的兼容入口，但只识别明确的称呼短语。
-	// 叙事正文中的人物名或职业名不再单独决定玩家正在对谁说话。
-	value := strings.ToLower(strings.TrimSpace(input))
-	for _, phrase := range []string{"对老板", "向老板", "跟老板", "给老板", "问老板", "告诉老板", "对沈岚", "向沈岚", "跟沈岚", "给沈岚", "问沈岚", "对innkeeper", "向innkeeper", "对佣兵", "向佣兵", "跟佣兵", "给佣兵", "问佣兵", "对铁杉", "向铁杉", "跟铁杉", "给铁杉", "问铁杉", "对mercenary", "向mercenary", "只有老板", "仅老板", "只让老板", "耳语给老板", "低声对老板", "只有沈岚", "仅沈岚", "只让沈岚", "耳语给沈岚", "低声对沈岚", "只有佣兵", "仅佣兵", "只让佣兵", "耳语给佣兵", "低声对佣兵", "只有铁杉", "仅铁杉", "只让铁杉", "耳语给铁杉", "低声对铁杉", "only innkeeper", "only mercenary"} {
-		if strings.Contains(value, phrase) {
-			if strings.Contains(phrase, "老板") || strings.Contains(phrase, "沈岚") || strings.Contains(phrase, "innkeeper") {
-				return "npc:innkeeper"
-			}
-			return "npc:mercenary"
-		}
-	}
-	return ""
-}
-
-func isPrivateInput(input string) bool {
-	value := strings.ToLower(input)
-	for _, marker := range []string{"私下", "耳语", "低声", "悄悄", "只对", "只有", "仅让", "仅对", "whisper", "quietly", "secret", "only"} {
-		if strings.Contains(value, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 func sceneCharacters(characters []Character) []Character {
 	result := make([]Character, 0, len(characters))
 	for _, character := range characters {
@@ -84,39 +59,6 @@ func findSceneCharacter(characters []Character, id string) (Character, bool) {
 		}
 	}
 	return Character{}, false
-}
-
-func privateInputHint(input, recipient string, characters []Character) bool {
-	value := strings.ToLower(strings.TrimSpace(input))
-	if isPrivateInput(value) {
-		return true
-	}
-	if recipient == "" {
-		return false
-	}
-	character, ok := findSceneCharacter(characters, recipient)
-	if !ok {
-		return false
-	}
-	name := strings.ToLower(character.Name)
-	role := strings.ToLower(character.Role)
-	aliases := []string{name, role}
-	if character.EntityID == "npc:innkeeper" {
-		aliases = append(aliases, "innkeeper")
-	}
-	if character.EntityID == "npc:mercenary" {
-		aliases = append(aliases, "mercenary")
-	}
-	for _, alias := range aliases {
-		if alias == "" {
-			continue
-		}
-		if (strings.Contains(value, "只有"+alias) || strings.Contains(value, "仅"+alias) || strings.Contains(value, "only "+alias)) &&
-			(strings.Contains(value, "听见") || strings.Contains(value, "听到") || strings.Contains(value, "能听") || strings.Contains(value, "hear")) {
-			return true
-		}
-	}
-	return false
 }
 
 func cleanText(value string) string {

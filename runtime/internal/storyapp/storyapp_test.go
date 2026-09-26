@@ -56,7 +56,7 @@ func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequ
 		if strings.Contains(playerInput, "佣兵") || strings.Contains(playerInput, "铁杉") {
 			intent = `{"intent_type":"speak","addressee_id":"npc:mercenary","visibility":"public"}`
 		}
-		if strings.Contains(playerInput, "私下") || strings.Contains(playerInput, "低声") || strings.Contains(playerInput, "耳语") {
+		if strings.Contains(playerInput, "私下") || strings.Contains(playerInput, "低声") || strings.Contains(playerInput, "耳语") || (strings.Contains(playerInput, "只有") && strings.Contains(playerInput, "能听")) {
 			intent = strings.Replace(intent, `"visibility":"public"`, `"visibility":"private"`, 1)
 		}
 		return model.TextResponse{Text: intent}, nil
@@ -70,13 +70,47 @@ func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequ
 		}
 		return model.TextResponse{Text: `{"speech":"","action_intent":"保持观察","silent":true,"memory":"我看见有人在客栈里行动。"}`}, nil
 	}
+	if strings.Contains(req.System, "场景协调 Agent") {
+		var candidates []Event
+		start := strings.Index(req.Input, "待裁定行动(JSON)：")
+		end := strings.Index(req.Input, "\n所有可用重要人物：")
+		if start < 0 || end < start || json.Unmarshal([]byte(req.Input[start+len("待裁定行动(JSON)："):end]), &candidates) != nil {
+			return model.TextResponse{Text: `{}`}, nil
+		}
+		currentIDs := strings.TrimSpace(strings.SplitN(req.Input, "当前在场人物 entity_id：", 2)[1])
+		if newline := strings.IndexByte(currentIDs, '\n'); newline >= 0 {
+			currentIDs = currentIDs[:newline]
+		}
+		characters := []string{}
+		if currentIDs != "" {
+			characters = strings.Split(currentIDs, ",")
+		}
+		outcomes := make([]hostActionResult, 0, len(candidates))
+		for _, candidate := range candidates {
+			recipients := append([]string{"player"}, characters...)
+			outcomes = append(outcomes, hostActionResult{ActionID: candidate.EventID, Status: "succeeded", Content: candidate.ActorID + "完成了行动：" + candidate.Content, Recipients: recipients})
+		}
+		g.mu.Lock()
+		scene := g.scene
+		g.mu.Unlock()
+		if scene == "" {
+			scene = "旧渡口客栈"
+		} else if scene != "旧渡口客栈" {
+			characters = []string{}
+		}
+		data, _ := json.Marshal(hostResult{TimeMinutes: 0, Scene: scene, SceneCharacters: characters, Outcomes: outcomes})
+		return model.TextResponse{Text: string(data)}, nil
+	}
+	if strings.Contains(req.System, "玩家正文 Agent") {
+		return model.TextResponse{Text: `{"narrative":"雨声敲打着屋檐。沈岚的回答让柜台边的空气紧了一瞬，铁杉也把视线从河面收了回来。"}`}, nil
+	}
 	g.mu.Lock()
 	scene := g.scene
 	g.mu.Unlock()
 	if scene == "" {
 		scene = "旧渡口客栈"
 	}
-	return model.TextResponse{Text: fmt.Sprintf(`{"narrative":"雨声敲打着屋檐。沈岚的回答让柜台边的空气紧了一瞬，铁杉也把视线从河面收了回来。","time_minutes":0,"scene":%q}`, scene)}, nil
+	return model.TextResponse{Text: fmt.Sprintf(`{"narrative":"unexpected generator request","time_minutes":0,"scene":%q}`, scene)}, nil
 }
 
 func newTestApp(t *testing.T, generator model.TextGenerator) *App {
@@ -169,7 +203,7 @@ func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 	if len(snapshot.Events) < 3 {
 		t.Fatalf("events = %+v", snapshot.Events)
 	}
-	var followUp bool
+	var followUp, recipientKeptPrivateContext, resolvedAction, resultPerceived bool
 	generator.mu.Lock()
 	requests := append([]string(nil), generator.requests...)
 	generator.mu.Unlock()
@@ -177,17 +211,37 @@ func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 		if strings.Contains(request, "你的身份：铁杉") && strings.Contains(request, "今晚有人会来搜查") {
 			t.Fatalf("private text leaked to mercenary prompt: %s", request)
 		}
+		if strings.Contains(request, "你的身份：沈岚") && strings.Contains(request, "阶段：2") && strings.Contains(request, "今晚有人会来搜查") {
+			recipientKeptPrivateContext = true
+		}
 		if strings.Contains(request, "剧本：") && strings.Contains(request, "今晚有人会来搜查") {
 			t.Fatalf("private text leaked to host prompt: %s", request)
+		}
+		if strings.Contains(request, "玩家可见且已经确定") && strings.Contains(request, "玩家主动向我提供了消息") {
+			t.Fatalf("private NPC memory leaked to narrative prompt: %s", request)
 		}
 	}
 	for _, event := range snapshot.Events {
 		if event.Stage == 2 && event.ActorID == "npc:mercenary" && event.EventType == "npc_dialogue" {
 			followUp = true
 		}
+		if event.EventType == "npc_action_result" {
+			resolvedAction = true
+		}
+	}
+	for _, perception := range snapshot.Perceptions["npc:innkeeper"] {
+		if perception.SourceType == "action_succeeded" {
+			resultPerceived = true
+		}
 	}
 	if !followUp {
 		t.Fatalf("stage-two follow-up missing: %+v", snapshot.Events)
+	}
+	if !recipientKeptPrivateContext {
+		t.Fatal("stage-two recipient lost the private stage-one perception")
+	}
+	if !resolvedAction || !resultPerceived {
+		t.Fatalf("action result loop is incomplete: events=%+v perceptions=%+v", snapshot.Events, snapshot.Perceptions["npc:innkeeper"])
 	}
 }
 
@@ -217,7 +271,7 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 			innkeeperPrompt = request
 		case strings.Contains(request, "你的身份：铁杉"):
 			mercenaryPrompt = request
-		case strings.Contains(request, "人物已确定的公开回应"):
+		case strings.Contains(request, "本轮玩家可见且已经确定的对白与结果"):
 			hostPrompt = request
 		}
 	}
@@ -227,7 +281,7 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 	if !strings.Contains(mercenaryPrompt, "不是直接回应者") {
 		t.Fatalf("mercenary prompt does not identify the non-addressee: %s", mercenaryPrompt)
 	}
-	if !strings.Contains(hostPrompt, "玩家本轮明确对谁说：沈岚（客栈老板）") {
+	if !strings.Contains(hostPrompt, "明确交谈对象：沈岚（客栈老板）") {
 		t.Fatalf("host prompt does not preserve the resolved addressee: %s", hostPrompt)
 	}
 	if !strings.Contains(hostPrompt, "沈岚（客栈老板）说：") {
@@ -583,16 +637,21 @@ func TestSceneHostProposalAndSceneVersionAreCommitted(t *testing.T) {
 	if snapshot.Summary.Scene != "客栈后院" || snapshot.SceneVersion != 2 {
 		t.Fatalf("scene was not committed: %q / %d", snapshot.Summary.Scene, snapshot.SceneVersion)
 	}
+	for _, character := range snapshot.Characters {
+		if character.InScene {
+			t.Fatalf("old-scene character remained present after scene transition: %+v", character)
+		}
+	}
 	generator.mu.Lock()
 	requests := append([]string(nil), generator.requests...)
 	generator.mu.Unlock()
 	var host string
 	for _, request := range requests {
-		if strings.Contains(request, "人物内部决策提案") {
+		if strings.Contains(request, "待裁定行动(JSON)") {
 			host = request
 		}
 	}
-	if !strings.Contains(host, "近期公开叙事") || !strings.Contains(host, "action_intent") {
+	if !strings.Contains(host, "NPC 协调提案") || !strings.Contains(host, "action_intent") || strings.Contains(host, "玩家主动向我提供了消息") {
 		t.Fatalf("scene host did not receive the full context: %s", host)
 	}
 }
@@ -682,8 +741,75 @@ func (g fixedJSONGenerator) GenerateText(context.Context, model.TextRequest) (mo
 	return model.TextResponse{Text: g.text}, nil
 }
 
+type intentResultGenerator struct {
+	base   *scriptedGenerator
+	intent string
+}
+
+func (g intentResultGenerator) GenerateText(ctx context.Context, request model.TextRequest) (model.TextResponse, error) {
+	if strings.Contains(request.System, "结构化回合意图") {
+		return model.TextResponse{Text: g.intent}, nil
+	}
+	return g.base.GenerateText(ctx, request)
+}
+
+func TestSemanticIntentIsNotOverwrittenByKeywordHints(t *testing.T) {
+	t.Run("mentioned innkeeper does not replace mercenary target", func(t *testing.T) {
+		generator := intentResultGenerator{base: &scriptedGenerator{}, intent: `{"intent_type":"speak","addressee_id":"npc:mercenary","visibility":"private"}`}
+		app := newTestApp(t, generator)
+		world, err := app.CreateWorld(context.Background(), "语义目标", "guided", "旅人", "", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "semantic-target", Input: "我对佣兵说：不要告诉老板，钥匙在井底。"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result := waitRun(t, app, world.WorldID, run.RunID); result.Status != "completed" {
+			t.Fatalf("run = %+v", result)
+		}
+		snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Events[1].EventType != "player_attempt" || snapshot.Events[1].TargetID != "npc:mercenary" {
+			t.Fatalf("semantic target was overwritten: %+v", snapshot.Events)
+		}
+	})
+
+	t.Run("word only does not force private visibility", func(t *testing.T) {
+		generator := intentResultGenerator{base: &scriptedGenerator{}, intent: `{"intent_type":"speak","addressee_id":"npc:innkeeper","visibility":"public"}`}
+		app := newTestApp(t, generator)
+		world, err := app.CreateWorld(context.Background(), "语义可见性", "guided", "旅人", "", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := "我大声对老板说：我只有一枚铜币。"
+		run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "semantic-visibility", Input: input})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result := waitRun(t, app, world.WorldID, run.RunID); result.Status != "completed" {
+			t.Fatalf("run = %+v", result)
+		}
+		snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var heard bool
+		for _, perception := range snapshot.Perceptions["npc:mercenary"] {
+			if perception.Content == input && perception.SourceType == "direct_hearing" {
+				heard = true
+			}
+		}
+		if !heard {
+			t.Fatalf("public input was hidden from observer: %+v", snapshot.Perceptions["npc:mercenary"])
+		}
+	})
+}
+
 func TestRequiredJSONFieldsRejectEmptyObjects(t *testing.T) {
-	for _, text := range []string{`{}`, `null`} {
+	for _, text := range []string{`{}`, `null`, `{"speech":null,"action_intent":null,"silent":null,"memory":null}`} {
 		var decision npcDecision
 		if err := generateJSON(context.Background(), fixedJSONGenerator{text: text}, "", "", &decision, 100, "speech", "action_intent", "silent", "memory"); err == nil {
 			t.Fatalf("empty NPC response accepted: %s", text)

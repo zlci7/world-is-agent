@@ -524,7 +524,7 @@ func countActiveRuns(ctx context.Context, db *sql.DB) (int, error) {
 	return count, err
 }
 
-func commitTurn(ctx context.Context, store *worldStore, run Run, narrative string, events []Event, perceptions []Perception, memories []Memory, clock, scene string, sceneVersion int64) (int64, error) {
+func commitTurn(ctx context.Context, store *worldStore, run Run, narrative string, events []Event, perceptions []Perception, memories []Memory, clock, scene string, sceneVersion int64, sceneCharacters []string) (int64, error) {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -609,6 +609,21 @@ func commitTurn(ctx context.Context, store *worldStore, run Run, narrative strin
 	}
 	if err := metaSetTx(ctx, tx, "scene_version", strconv.FormatInt(sceneVersion, 10)); err != nil {
 		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE characters SET in_scene=0`); err != nil {
+		return 0, err
+	}
+	for _, entityID := range sceneCharacters {
+		result, err := tx.ExecContext(ctx, `UPDATE characters SET in_scene=1 WHERE entity_id=?`, entityID)
+		if err != nil {
+			return 0, err
+		}
+		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+			if err != nil {
+				return 0, err
+			}
+			return 0, ErrGenerationFailed
+		}
 	}
 	if err := metaSetTx(ctx, tx, "updated_at", nowText()); err != nil {
 		return 0, err

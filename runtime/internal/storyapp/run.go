@@ -26,19 +26,32 @@ type turnIntent struct {
 }
 
 type hostResult struct {
-	Narrative   string `json:"narrative"`
-	TimeMinutes int    `json:"time_minutes"`
-	Scene       string `json:"scene"`
+	TimeMinutes     int                `json:"time_minutes"`
+	Scene           string             `json:"scene"`
+	SceneCharacters []string           `json:"scene_characters"`
+	Outcomes        []hostActionResult `json:"outcomes"`
+}
+
+type hostActionResult struct {
+	ActionID   string   `json:"action_id"`
+	Status     string   `json:"status"`
+	Content    string   `json:"content"`
+	Recipients []string `json:"recipients"`
+}
+
+type narrativeResult struct {
+	Narrative string `json:"narrative"`
 }
 
 type turnOutput struct {
-	Narrative    string
-	Clock        string
-	Scene        string
-	SceneVersion int64
-	Events       []Event
-	Perceptions  []Perception
-	Memories     []Memory
+	Narrative       string
+	Clock           string
+	Scene           string
+	SceneVersion    int64
+	SceneCharacters []string
+	Events          []Event
+	Perceptions     []Perception
+	Memories        []Memory
 }
 
 func (a *App) SubmitRun(ctx context.Context, worldID string, request RunRequest) (Run, error) {
@@ -179,7 +192,7 @@ func (a *App) runWorker(ctx context.Context, runtime *runRuntime, run Run) {
 		_ = updateRunStatus(context.Background(), store.db, run.RunID, "cancelled", "world_switched", "the active world changed")
 		return
 	}
-	if _, err := commitTurn(ctx, store, run, output.Narrative, output.Events, output.Perceptions, output.Memories, output.Clock, output.Scene, output.SceneVersion); err != nil {
+	if _, err := commitTurn(ctx, store, run, output.Narrative, output.Events, output.Perceptions, output.Memories, output.Clock, output.Scene, output.SceneVersion, output.SceneCharacters); err != nil {
 		status, reason, message := "failed", "storage_unavailable", "the completed turn could not be saved"
 		if errors.Is(err, context.Canceled) {
 			status, reason, message = "cancelled", "cancelled", "the turn was cancelled"
@@ -322,8 +335,6 @@ func resolveTurnIntent(ctx context.Context, generator model.TextGenerator, snaps
 	intent.AddresseeID = cleanText(intent.AddresseeID)
 	if explicitRecipient != "" {
 		intent.AddresseeID = explicitRecipient
-	} else if hintedRecipient := defaultAddressee(run.Input); hintedRecipient != "" {
-		intent.AddresseeID = hintedRecipient
 	}
 	if intent.IntentType == "" {
 		return turnIntent{}, ErrGenerationFailed
@@ -336,18 +347,8 @@ func resolveTurnIntent(ctx context.Context, generator model.TextGenerator, snaps
 			return turnIntent{}, ErrInvalidRequest
 		}
 	}
-	if intent.Visibility == "" {
-		if privateInputHint(run.Input, intent.AddresseeID, participants) {
-			intent.Visibility = "private"
-		} else {
-			intent.Visibility = "public"
-		}
-	}
 	if intent.Visibility != "public" && intent.Visibility != "private" {
 		return turnIntent{}, ErrGenerationFailed
-	}
-	if privateInputHint(run.Input, intent.AddresseeID, participants) {
-		intent.Visibility = "private"
 	}
 	if intent.Visibility == "private" && intent.AddresseeID == "" {
 		return turnIntent{}, ErrInvalidRequest
@@ -372,8 +373,9 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 	playerEventID := run.RunID + ":input"
 	output := turnOutput{
 		Clock: snapshot.Summary.Clock, Scene: snapshot.Summary.Scene, SceneVersion: snapshot.SceneVersion,
-		Events:   []Event{{EventID: playerEventID, EventType: "player_attempt", ActorID: "player", TargetID: recipient, Content: run.Input, RunID: run.RunID, Stage: 1, SceneVersion: snapshot.SceneVersion, SourceType: "player", CreatedAt: now}},
-		Memories: []Memory{}, Perceptions: []Perception{},
+		SceneCharacters: characterIDs(participants),
+		Events:          []Event{{EventID: playerEventID, EventType: "player_attempt", ActorID: "player", TargetID: recipient, Content: run.Input, RunID: run.RunID, Stage: 1, SceneVersion: snapshot.SceneVersion, SourceType: "player", CreatedAt: now}},
+		Memories:        []Memory{}, Perceptions: []Perception{},
 	}
 	decisions := make(map[string]npcDecision)
 	perceptText := make(map[string]string)
@@ -385,14 +387,12 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 		}
 		output.Perceptions = append(output.Perceptions, Perception{RecipientID: character.EntityID, SourceEventID: playerEventID, SourceType: sourceTypeFor(private, character.EntityID, recipient), Content: perceptText[character.EntityID], Stage: 1, SceneVersion: snapshot.SceneVersion, CreatedAt: now})
 	}
-	if err := a.decideNPCs(ctx, generator, snapshot, def, recipient, intent.IntentType, perceptText, decisions, 1, ""); err != nil {
+	if err := a.decideNPCs(ctx, generator, snapshot, def, recipient, intent.IntentType, perceptText, nil, decisions, 1, ""); err != nil {
 		return turnOutput{}, err
 	}
 	var publicReplyLog []string
-	var decisionHistory []string
 	for _, character := range participants {
 		decision := decisions[character.EntityID]
-		decisionHistory = append(decisionHistory, formatDecision(character, decision, 1))
 		if reply := appendNPCDecisionOutput(&output, run, character, decision, participants, perceptText[character.EntityID], playerEventID, snapshot.SceneVersion, 1); reply != "" {
 			publicReplyLog = append(publicReplyLog, reply)
 		}
@@ -405,14 +405,14 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 			previous := decisions[character.EntityID]
 			followDecisions := make(map[string]npcDecision)
 			followText := map[string]string{character.EntityID: "公开回应的新刺激：" + follow}
-			if err := a.decideNPCs(ctx, generator, snapshot, def, recipient, intent.IntentType, followText, followDecisions, 2, follow); err != nil {
+			priorTurn := map[string]string{character.EntityID: fmt.Sprintf("第一阶段感知：%s\n第一阶段自己的决定：%s", perceptText[character.EntityID], formatSelfDecision(previous))}
+			if err := a.decideNPCs(ctx, generator, snapshot, def, recipient, intent.IntentType, followText, priorTurn, followDecisions, 2, follow); err != nil {
 				return turnOutput{}, err
 			}
 			decision, ok := followDecisions[character.EntityID]
 			if !ok {
 				continue
 			}
-			decisionHistory = append(decisionHistory, formatDecision(character, decision, 2))
 			if reply := appendNPCDecisionOutput(&output, run, character, decision, participants, followText[character.EntityID], playerEventID, snapshot.SceneVersion, 2); reply != "" {
 				publicReplyLog = append(publicReplyLog, reply)
 			}
@@ -420,23 +420,28 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 		}
 	}
 
-	public := strings.Join(publicReplyLog, "\n")
-	if public == "" {
-		public = "没有人立刻回答。客栈里的雨声显得更清楚了。"
-	}
-	host, err := a.narrate(ctx, generator, snapshot, run, def, recipient, intent.IntentType, public, private, decisions, decisionHistory)
+	publicReplies := strings.Join(publicReplyLog, "\n")
+	host, err := a.coordinateTurn(ctx, generator, snapshot, run, intent, decisions, output.Events, publicReplies)
 	if err != nil {
 		return turnOutput{}, err
 	}
-	output.Narrative = host.Narrative
 	output.Clock = advanceClock(snapshot.Summary.Clock, run.Input, host.TimeMinutes)
-	if host.Scene != "" {
-		output.Scene = host.Scene
-	}
+	output.Scene = host.Scene
+	output.SceneCharacters = append([]string(nil), host.SceneCharacters...)
 	if output.Scene != snapshot.Summary.Scene {
 		output.SceneVersion = snapshot.SceneVersion + 1
 	}
-	output.Events = append(output.Events, Event{EventID: run.RunID + ":outcome", EventType: "turn_settled", ActorID: "scene", Content: public, RunID: run.RunID, Stage: 3, SceneVersion: output.SceneVersion, SourceType: "scene", CreatedAt: time.Now().UTC()})
+	visibleOutcomes, err := appendHostOutcomes(&output, run, participants, host.Outcomes)
+	if err != nil {
+		return turnOutput{}, err
+	}
+	playerProjection := joinVisibleResults(publicReplies, visibleOutcomes)
+	result, err := a.narrateVisible(ctx, generator, snapshot, run, def, recipient, intent.IntentType, playerProjection, private, output.Clock, output.Scene, output.SceneCharacters)
+	if err != nil {
+		return turnOutput{}, err
+	}
+	output.Narrative = result.Narrative
+	output.Events = append(output.Events, Event{EventID: run.RunID + ":outcome", EventType: "turn_settled", ActorID: "scene", Content: playerProjection, RunID: run.RunID, Stage: 3, SceneVersion: output.SceneVersion, SourceType: "scene", CreatedAt: time.Now().UTC()})
 	for _, character := range participants {
 		memory := "玩家说：" + run.Input
 		kind := "heard_player"
@@ -452,9 +457,6 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 }
 
 func appendNPCDecisionOutput(output *turnOutput, run Run, character Character, decision npcDecision, participants []Character, perception, playerEventID string, sceneVersion int64, stage int) string {
-	if decision.Silent {
-		output.Perceptions = append(output.Perceptions, Perception{RecipientID: character.EntityID, SourceEventID: playerEventID, SourceType: "observation", Content: perception, Stage: stage, SceneVersion: sceneVersion, CreatedAt: time.Now().UTC()})
-	}
 	sourceEventID := playerEventID
 	if decision.ActionIntent != "" {
 		actionEventID := fmt.Sprintf("%s:%s:action:%d", run.RunID, character.EntityID, stage)
@@ -479,6 +481,71 @@ func appendNPCDecisionOutput(output *turnOutput, run Run, character Character, d
 		output.Memories = append(output.Memories, Memory{RecipientID: character.EntityID, Kind: "character_judgment", Content: cleanText(decision.Memory), SourceEventID: sourceEventID, CreatedAt: time.Now().UTC()})
 	}
 	return reply
+}
+
+func appendHostOutcomes(output *turnOutput, run Run, participants []Character, outcomes []hostActionResult) ([]string, error) {
+	actions := make(map[string]Event)
+	for _, event := range output.Events {
+		if event.EventType == "npc_action_intent" {
+			actions[event.EventID] = event
+		}
+	}
+	if len(outcomes) != len(actions) {
+		return nil, ErrGenerationFailed
+	}
+	participantIDs := make(map[string]bool, len(participants))
+	for _, character := range participants {
+		participantIDs[character.EntityID] = true
+	}
+	seen := make(map[string]bool, len(outcomes))
+	var visible []string
+	for index, outcome := range outcomes {
+		outcome.ActionID = cleanText(outcome.ActionID)
+		outcome.Status = strings.ToLower(cleanText(outcome.Status))
+		outcome.Content = cleanText(outcome.Content)
+		action, ok := actions[outcome.ActionID]
+		if !ok || seen[outcome.ActionID] || outcome.Content == "" || (outcome.Status != "succeeded" && outcome.Status != "failed" && outcome.Status != "partial") || outcome.Recipients == nil {
+			return nil, ErrGenerationFailed
+		}
+		seen[outcome.ActionID] = true
+		recipients := make(map[string]bool, len(outcome.Recipients)+1)
+		for _, id := range outcome.Recipients {
+			id = cleanText(id)
+			if id != "player" && !participantIDs[id] {
+				return nil, ErrGenerationFailed
+			}
+			recipients[id] = true
+		}
+		// An actor always observes the resolved result of its own attempt.
+		recipients[action.ActorID] = true
+		resultID := fmt.Sprintf("%s:result:%d", outcome.ActionID, index+1)
+		output.Events = append(output.Events, Event{EventID: resultID, EventType: "npc_action_result", ActorID: action.ActorID, TargetID: action.TargetID, Content: outcome.Content, RunID: run.RunID, Stage: 3, SceneVersion: output.SceneVersion, SourceType: "action_" + outcome.Status, CreatedAt: time.Now().UTC()})
+		for _, character := range participants {
+			if recipients[character.EntityID] {
+				output.Perceptions = append(output.Perceptions, Perception{RecipientID: character.EntityID, SourceEventID: resultID, SourceType: "action_" + outcome.Status, Content: outcome.Content, Stage: 3, SceneVersion: output.SceneVersion, CreatedAt: time.Now().UTC()})
+			}
+		}
+		if recipients["player"] {
+			visible = append(visible, outcome.Content)
+		}
+	}
+	return visible, nil
+}
+
+func joinVisibleResults(publicReplies string, outcomes []string) string {
+	parts := make([]string, 0, len(outcomes)+1)
+	if value := cleanText(publicReplies); value != "" {
+		parts = append(parts, value)
+	}
+	for _, outcome := range outcomes {
+		if value := cleanText(outcome); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	if len(parts) == 0 {
+		return "没有人立刻回答，也没有发生玩家可见的新结果。"
+	}
+	return strings.Join(parts, "\n")
 }
 
 func mergeNPCDecision(previous, current npcDecision) npcDecision {
@@ -533,7 +600,7 @@ func describeRecipient(def gameDefinition, recipient string) string {
 	return "未明确指定具体人物"
 }
 
-func (a *App) decideNPCs(ctx context.Context, generator model.TextGenerator, snapshot worldSnapshot, def gameDefinition, recipient, intentType string, perceptions map[string]string, decisions map[string]npcDecision, stage int, stimulus string) error {
+func (a *App) decideNPCs(ctx context.Context, generator model.TextGenerator, snapshot worldSnapshot, def gameDefinition, recipient, intentType string, perceptions, priorTurn map[string]string, decisions map[string]npcDecision, stage int, stimulus string) error {
 	if generator == nil {
 		return ErrModelNotConfigured
 	}
@@ -552,7 +619,7 @@ func (a *App) decideNPCs(ctx context.Context, generator model.TextGenerator, sna
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			input := buildNPCPrompt(snapshot, def, character, recipient, intentType, perception, stage, stimulus)
+			input := buildNPCPrompt(snapshot, def, character, recipient, intentType, perception, priorTurn[character.EntityID], stage, stimulus)
 			var decision npcDecision
 			callCtx, callCancel := context.WithTimeout(npcCtx, 60*time.Second)
 			defer callCancel()
@@ -584,7 +651,7 @@ func (a *App) decideNPCs(ctx context.Context, generator model.TextGenerator, sna
 	return firstErr
 }
 
-func buildNPCPrompt(snapshot worldSnapshot, def gameDefinition, character Character, recipient, intentType, perception string, stage int, stimulus string) string {
+func buildNPCPrompt(snapshot worldSnapshot, def gameDefinition, character Character, recipient, intentType, perception, priorTurn string, stage int, stimulus string) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "世界：%s；地点：%s；时间：%s；阶段：%d；玩家意图类型：%s\n", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, stage, intentType)
 	fmt.Fprintf(&builder, "你的身份：%s（%s）\n角色资料：%s\n你知道的初始背景：%s\n", character.Name, character.Role, character.Profile, character.Knowledge)
@@ -597,12 +664,19 @@ func buildNPCPrompt(snapshot worldSnapshot, def gameDefinition, character Charac
 	}
 	fmt.Fprintf(&builder, "你的近期个人感知（来源和发言者必须保持一致）：\n%s\n", joinPerceptions(snapshot, snapshot.Perceptions[character.EntityID]))
 	fmt.Fprintf(&builder, "你的个人经历：\n%s\n", joinMemories(snapshot.Memories[character.EntityID]))
+	if priorTurn != "" {
+		fmt.Fprintf(&builder, "本轮此前只有你自己知道的感知与决定：\n%s\n", priorTurn)
+	}
 	fmt.Fprintf(&builder, "本阶段新感知：%s\n", perception)
 	if stimulus != "" {
 		fmt.Fprintf(&builder, "新刺激：%s\n", stimulus)
 	}
 	fmt.Fprintf(&builder, "玩家本轮在你可见范围内的表达：%s\n输出 JSON：speech、action_intent、silent、memory。不要输出额外字段。", perception)
 	return builder.String()
+}
+
+func formatSelfDecision(decision npcDecision) string {
+	return fmt.Sprintf("speech=%q；action_intent=%q；silent=%t；memory=%q", decision.Speech, decision.ActionIntent, decision.Silent, decision.Memory)
 }
 
 func joinPerceptions(snapshot worldSnapshot, items []Perception) string {
@@ -652,25 +726,52 @@ func joinMemories(items []Memory) string {
 	return strings.Join(parts, "\n")
 }
 
-func (a *App) narrate(ctx context.Context, generator model.TextGenerator, snapshot worldSnapshot, run Run, def gameDefinition, recipient, intentType string, public string, private bool, decisions map[string]npcDecision, decisionHistory []string) (hostResult, error) {
+func (a *App) coordinateTurn(ctx context.Context, generator model.TextGenerator, snapshot worldSnapshot, run Run, intent turnIntent, decisions map[string]npcDecision, events []Event, publicReplies string) (hostResult, error) {
 	if generator == nil {
 		return hostResult{}, ErrModelNotConfigured
 	}
-	playerInput := run.Input
-	if private {
-		playerInput = "玩家进行了私下交谈；耳语原文不提供给场景主，只能根据已经公开的回应组织叙事。"
+	var actionCandidates []Event
+	for _, event := range events {
+		if event.EventType == "npc_action_intent" {
+			actionCandidates = append(actionCandidates, event)
+		}
 	}
-	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n主角简介：%s\n近期公开叙事：%s\n玩家本次表达：%s\n玩家本轮意图类型：%s\n玩家本轮明确对谁说：%s\n人物已确定的公开回应（每条回应前的角色名就是实际发言者，不要把台词改分配给其他人物）：%s\n人物内部决策提案（仅供场景主协调；action_intent 是行动尝试，memory 是个人记忆，不得直接当成已经发生的公开事实）：%s\n本轮所有 NPC 决策记录：%s\n在场重要人物：%s\n请组织一段玩家可见的自然正文。耳语原文只可在授权人物的内部经历中使用，不能把未公开秘密写给玩家。玩家的输入和 NPC 的 action_intent 都是行动尝试，不是已经成功的事实。输出 JSON，字段 narrative、time_minutes、scene。time_minutes 只能是 0 到 120 的非负整数。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, snapshot.PlayerName, snapshot.PlayerProfile, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), public, decisionContext(decisions, snapshot.Characters), strings.Join(decisionHistory, "\n"), characterNames(sceneCharacters(snapshot.Characters)))
+	actionJSON, _ := json.Marshal(actionCandidates)
+	input := fmt.Sprintf("世界：%s\n当前地点：%s\n当前时间：%s\n玩家本轮输入：%s\n结构化意图：type=%s；target=%s；visibility=%s\nNPC 已确定的公开对白：%s\nNPC 协调提案（只包含公开对白、行动尝试与沉默状态，不含个人记忆）：\n%s\n待裁定行动(JSON)：%s\n所有可用重要人物：%s\n当前在场人物 entity_id：%s\n请协调本轮事实。每个待裁定行动必须且只能产生一个 outcome，并用 action_id 精确引用；status 只能是 succeeded、failed、partial；content 写已确定结果而不是尝试；recipients 只列实际感知结果的 player 或人物 entity_id，行动者本人可省略。scene_characters 给出回合结束后实际在场的重要人物 entity_id，人物进入或离开只影响之后的阶段，不回填此前信息。输出 JSON：time_minutes、scene、scene_characters、outcomes。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, run.Input, intent.IntentType, intent.AddresseeID, intent.Visibility, publicReplies, coordinationDecisionContext(decisions, snapshot.Characters), actionJSON, availableCharacterIDs(snapshot.Characters), strings.Join(characterIDs(sceneCharacters(snapshot.Characters)), ","))
 	var result hostResult
 	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer callCancel()
-	if err := generateJSON(callCtx, generator, "你是场景主 Agent。你负责把已经确定的公开结果组织成连贯叙事，不替重要人物做未经决策的选择，不向玩家泄露作者秘密。", input, &result, 2048, "narrative", "time_minutes", "scene"); err != nil {
+	if err := generateJSON(callCtx, generator, "你是场景协调 Agent。你可以读取本轮协调资料来裁定行动结果、时间和场景，但不要写玩家正文，也不要把 NPC 的行动尝试直接当成成功事实。", input, &result, 2048, "time_minutes", "scene", "scene_characters", "outcomes"); err != nil {
 		return hostResult{}, err
 	}
-	result.Narrative = cleanText(result.Narrative)
 	result.Scene = cleanText(result.Scene)
-	if result.Narrative == "" || result.TimeMinutes < 0 || result.TimeMinutes > 120 {
+	if result.Scene == "" || result.TimeMinutes < 0 || result.TimeMinutes > 120 || result.SceneCharacters == nil || result.Outcomes == nil {
 		return hostResult{}, ErrGenerationFailed
+	}
+	if err := validateSceneCharacters(result.SceneCharacters, snapshot.Characters); err != nil {
+		return hostResult{}, err
+	}
+	return result, nil
+}
+
+func (a *App) narrateVisible(ctx context.Context, generator model.TextGenerator, snapshot worldSnapshot, run Run, def gameDefinition, recipient, intentType, playerProjection string, private bool, clock, scene string, sceneCharacters []string) (narrativeResult, error) {
+	if generator == nil {
+		return narrativeResult{}, ErrModelNotConfigured
+	}
+	playerInput := run.Input
+	if private {
+		playerInput = "玩家进行了私下交谈；耳语原文不属于玩家可见叙述输入。"
+	}
+	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n主角简介：%s\n近期公开叙事：%s\n玩家本次可公开描述的表达：%s\n玩家意图类型：%s\n明确交谈对象：%s\n本轮玩家可见且已经确定的对白与结果：%s\n回合结束后在场人物：%s\n只根据以上玩家可见投影组织一段自然正文，不新增行动成功、秘密、承诺或人物立场。输出 JSON：narrative。", GameID, scene, clock, snapshot.PlayerName, snapshot.PlayerProfile, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), playerProjection, strings.Join(sceneCharacters, ","))
+	var result narrativeResult
+	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer callCancel()
+	if err := generateJSON(callCtx, generator, "你是玩家正文 Agent。你只能把已经投影给玩家的结果写成连贯叙事，不接触或猜测 NPC 私人记忆和隐藏结果。", input, &result, 2048, "narrative"); err != nil {
+		return narrativeResult{}, err
+	}
+	result.Narrative = cleanText(result.Narrative)
+	if result.Narrative == "" {
+		return narrativeResult{}, ErrGenerationFailed
 	}
 	return result, nil
 }
@@ -692,11 +793,11 @@ func narrativeHistory(messages []Message) string {
 	return strings.Join(parts, "\n")
 }
 
-func decisionContext(decisions map[string]npcDecision, characters []Character) string {
+func coordinationDecisionContext(decisions map[string]npcDecision, characters []Character) string {
 	var parts []string
 	for _, character := range sceneCharacters(characters) {
 		decision := decisions[character.EntityID]
-		parts = append(parts, fmt.Sprintf("%s（%s）：speech=%q；action_intent=%q；silent=%t；memory=%q", character.Name, character.Role, decision.Speech, decision.ActionIntent, decision.Silent, decision.Memory))
+		parts = append(parts, fmt.Sprintf("%s（%s，%s）：speech=%q；action_intent=%q；silent=%t", character.Name, character.Role, character.EntityID, decision.Speech, decision.ActionIntent, decision.Silent))
 	}
 	if len(parts) == 0 {
 		return "（暂无）"
@@ -704,16 +805,37 @@ func decisionContext(decisions map[string]npcDecision, characters []Character) s
 	return strings.Join(parts, "\n")
 }
 
-func formatDecision(character Character, decision npcDecision, stage int) string {
-	return fmt.Sprintf("阶段%d %s（%s）：speech=%q；action_intent=%q；silent=%t；memory=%q", stage, character.Name, character.Role, decision.Speech, decision.ActionIntent, decision.Silent, decision.Memory)
+func characterIDs(items []Character) []string {
+	result := make([]string, 0, len(items))
+	for _, character := range items {
+		result = append(result, character.EntityID)
+	}
+	return result
 }
 
-func characterNames(items []Character) string {
-	var names []string
+func availableCharacterIDs(items []Character) string {
+	var ids []string
 	for _, character := range items {
-		names = append(names, character.Name)
+		ids = append(ids, fmt.Sprintf("%s=%s（%s）", character.EntityID, character.Name, character.Role))
 	}
-	return strings.Join(names, "、")
+	return strings.Join(ids, "、")
+}
+
+func validateSceneCharacters(ids []string, characters []Character) error {
+	available := make(map[string]bool, len(characters))
+	for _, character := range characters {
+		available[character.EntityID] = true
+	}
+	seen := make(map[string]bool, len(ids))
+	for index, id := range ids {
+		id = cleanText(id)
+		if id == "" || !available[id] || seen[id] {
+			return ErrGenerationFailed
+		}
+		ids[index] = id
+		seen[id] = true
+	}
+	return nil
 }
 
 func generateJSON(ctx context.Context, generator model.TextGenerator, system, input string, target any, maxOutput int, requiredFields ...string) error {
@@ -730,7 +852,8 @@ func generateJSON(ctx context.Context, generator model.TextGenerator, system, in
 			return ErrGenerationFailed
 		}
 		for _, field := range requiredFields {
-			if _, ok := object[field]; !ok {
+			raw, ok := object[field]
+			if !ok || strings.EqualFold(strings.TrimSpace(string(raw)), "null") {
 				return ErrGenerationFailed
 			}
 		}
