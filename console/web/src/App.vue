@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   activateWorld, cancelRun, createWorld, exchangeBootstrapToken, fetchCopyOperation, fetchGames,
-  fetchModel, fetchRun, fetchStatus, fetchWorld, fetchWorlds, retryRun, saveAs, saveModel, submitRun,
+  fetchModel, fetchRun, fetchRuns, fetchStatus, fetchWorld, fetchWorlds, retryRun, saveAs, saveModel, submitRun,
 } from './api'
 import { ApiError, type Character, type GameSummary, type Message, type ModelInfo, type Run, type SaveOperation, type Status, type WorldSummary } from './types'
 
@@ -100,12 +100,42 @@ async function refreshOnce(forceWorld = false) {
       activeRun.value = null
       failedRun.value = null
     }
-    if (forceWorld || nextWorldID !== currentWorld.value?.world_id) await loadWorld(nextWorldID)
+    const nextSummary = nextStatus.active_world
+    const worldChanged = nextSummary && currentWorld.value && (
+      nextSummary.message_head !== currentWorld.value.message_head ||
+      nextSummary.event_head !== currentWorld.value.event_head ||
+      nextSummary.turn_seq !== currentWorld.value.turn_seq ||
+      nextSummary.clock !== currentWorld.value.clock ||
+      nextSummary.scene !== currentWorld.value.scene
+    )
+    if (forceWorld || nextWorldID !== currentWorld.value?.world_id || worldChanged) await loadWorld(nextWorldID)
+    if (nextWorldID) await restoreRunState(nextWorldID)
     if (activeRun.value && nextWorldID) await pollRun()
   } catch (error) {
     connectionError.value = describe(error)
   } finally {
     loaded.value = true
+  }
+}
+
+async function restoreRunState(worldID: string) {
+  const runs = await fetchRuns(worldID)
+  const latest = runs[0]
+  if (!latest) {
+    activeRun.value = null
+    failedRun.value = null
+    return
+  }
+  if (latest.status === 'accepted' || latest.status === 'running') {
+    activeRun.value = latest
+    failedRun.value = null
+  } else if (latest.status === 'failed' || latest.status === 'cancelled' || latest.status === 'interrupted') {
+    activeRun.value = null
+    failedRun.value = latest
+    if (!input.value.trim()) input.value = latest.input
+  } else {
+    activeRun.value = null
+    failedRun.value = null
   }
 }
 
@@ -122,7 +152,7 @@ async function pollRun() {
     } else if (current.status === 'failed' || current.status === 'cancelled' || current.status === 'interrupted') {
       activeRun.value = null
       failedRun.value = current
-      await refresh()
+      await refreshOnce(true)
     }
   } catch (error) {
     connectionError.value = describe(error)
@@ -237,6 +267,7 @@ async function retryFailed() {
   try {
     activeRun.value = await retryRun(currentWorld.value.world_id, failedRun.value.run_id)
     failedRun.value = null
+    input.value = ''
     errorMessage.value = ''
   } catch (error) {
     errorMessage.value = describe(error)

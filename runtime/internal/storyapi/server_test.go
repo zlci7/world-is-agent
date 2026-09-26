@@ -23,6 +23,9 @@ func (apiGenerator) GenerateText(ctx context.Context, request model.TextRequest)
 	if err := ctx.Err(); err != nil {
 		return model.TextResponse{}, err
 	}
+	if strings.Contains(request.System, "结构化回合意图") {
+		return model.TextResponse{Text: `{"intent_type":"speak","addressee_id":"npc:innkeeper","visibility":"private"}`}, nil
+	}
 	if strings.Contains(request.System, "场景主 Agent") {
 		return model.TextResponse{Text: `{"narrative":"雨声沿着窗棂滑下，客栈里的人都听见了这句话。","time_minutes":0,"scene":"旧渡口客栈"}`}, nil
 	}
@@ -67,6 +70,19 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 	response, _ = requestJSON(t, client, http.MethodPost, server.URL()+"/api/session", map[string]string{"token": token})
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("session status = %d", response.StatusCode)
+	}
+	originRequest, err := http.NewRequest(http.MethodGet, server.URL()+"/api/v1/status", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originRequest.Header.Set("Origin", "http://attacker.invalid")
+	originResponse, err := client.Do(originRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = originResponse.Body.Close()
+	if originResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("unexpected origin status = %d", originResponse.StatusCode)
 	}
 
 	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/", nil)
@@ -136,6 +152,18 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 	}
 	if run.Status != "completed" {
 		t.Fatalf("run = %+v", run)
+	}
+
+	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"/runs", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("list runs = %d, body = %s", response.StatusCode, body)
+	}
+	var runsEnvelope struct {
+		Runs []storyapp.Run `json:"runs"`
+	}
+	decodeJSONBody(t, body, &runsEnvelope)
+	if len(runsEnvelope.Runs) != 1 || runsEnvelope.Runs[0].RunID != run.RunID {
+		t.Fatalf("runs = %+v", runsEnvelope.Runs)
 	}
 
 	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID), nil)

@@ -80,6 +80,11 @@ export async function fetchRun(worldID: string, runID: string): Promise<Run> {
   return result.run
 }
 
+export async function fetchRuns(worldID: string): Promise<Run[]> {
+  const result = await request<{ runs: Run[] }>(`/api/v1/worlds/${encodeURIComponent(worldID)}/runs`)
+  return result.runs
+}
+
 export async function cancelRun(worldID: string, runID: string): Promise<void> {
   await request(`/api/v1/worlds/${encodeURIComponent(worldID)}/runs/${encodeURIComponent(runID)}/cancel`, { method: 'POST' })
 }

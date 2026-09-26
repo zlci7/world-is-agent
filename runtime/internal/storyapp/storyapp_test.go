@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ type scriptedGenerator struct {
 	requests []string
 	fail     bool
 	delay    time.Duration
+	scene    string
 }
 
 func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequest) (model.TextResponse, error) {
@@ -39,6 +41,26 @@ func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequ
 	if fail {
 		return model.TextResponse{Text: `{"unknown":true}`}, nil
 	}
+	if strings.Contains(req.System, "结构化回合意图") {
+		playerInput := req.Input
+		if marker := strings.Index(playerInput, "玩家输入："); marker >= 0 {
+			playerInput = playerInput[marker+len("玩家输入："):]
+			if end := strings.Index(playerInput, "\n显式目标"); end >= 0 {
+				playerInput = playerInput[:end]
+			}
+		}
+		intent := `{"intent_type":"speak","addressee_id":"","visibility":"public"}`
+		if strings.Contains(playerInput, "老板") || strings.Contains(playerInput, "沈岚") {
+			intent = `{"intent_type":"speak","addressee_id":"npc:innkeeper","visibility":"public"}`
+		}
+		if strings.Contains(playerInput, "佣兵") || strings.Contains(playerInput, "铁杉") {
+			intent = `{"intent_type":"speak","addressee_id":"npc:mercenary","visibility":"public"}`
+		}
+		if strings.Contains(playerInput, "私下") || strings.Contains(playerInput, "低声") || strings.Contains(playerInput, "耳语") {
+			intent = strings.Replace(intent, `"visibility":"public"`, `"visibility":"private"`, 1)
+		}
+		return model.TextResponse{Text: intent}, nil
+	}
 	if strings.Contains(req.System, "重要 NPC") {
 		if strings.Contains(req.Input, "你的身份：沈岚") {
 			return model.TextResponse{Text: `{"speech":"沈岚压低声音说：先别惊动客人。","action_intent":"保护柜台下的东西","silent":false,"memory":"玩家主动向我提供了消息。"}`}, nil
@@ -48,7 +70,13 @@ func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequ
 		}
 		return model.TextResponse{Text: `{"speech":"","action_intent":"保持观察","silent":true,"memory":"我看见有人在客栈里行动。"}`}, nil
 	}
-	return model.TextResponse{Text: `{"narrative":"雨声敲打着屋檐。沈岚的回答让柜台边的空气紧了一瞬，铁杉也把视线从河面收了回来。","time_minutes":0,"scene":"旧渡口客栈"}`}, nil
+	g.mu.Lock()
+	scene := g.scene
+	g.mu.Unlock()
+	if scene == "" {
+		scene = "旧渡口客栈"
+	}
+	return model.TextResponse{Text: fmt.Sprintf(`{"narrative":"雨声敲打着屋檐。沈岚的回答让柜台边的空气紧了一瞬，铁杉也把视线从河面收了回来。","time_minutes":0,"scene":%q}`, scene)}, nil
 }
 
 func newTestApp(t *testing.T, generator model.TextGenerator) *App {
@@ -468,4 +496,197 @@ func TestStrictJSONRejectsDuplicateKeys(t *testing.T) {
 		t.Fatal("unknown field accepted")
 	}
 	_ = json.Valid
+}
+
+func TestStructuredIntentUsesDirectAddressAndPrivateVisibility(t *testing.T) {
+	generator := &scriptedGenerator{}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "目标解析", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "intent-1", Input: "只有铁杉能听见的声音：老板柜台下有东西。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+	snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, perception := range snapshot.Perceptions["npc:innkeeper"] {
+		if strings.Contains(perception.Content, "老板柜台下有东西") {
+			t.Fatalf("private input leaked to innkeeper observer: %+v", perception)
+		}
+	}
+	var target bool
+	for _, event := range snapshot.Events {
+		if event.EventType == "player_attempt" && event.TargetID == "npc:mercenary" {
+			target = true
+		}
+	}
+	if !target {
+		t.Fatalf("direct target was not persisted: %+v", snapshot.Events)
+	}
+}
+
+func TestOffSceneCharactersDoNotParticipate(t *testing.T) {
+	app := newTestApp(t, &scriptedGenerator{})
+	world, err := app.CreateWorld(context.Background(), "在场过滤", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openWorldDB(app.worldPath(world.WorldID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE characters SET in_scene=0 WHERE entity_id='npc:mercenary'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.db.Close()
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "scene-filter-1", Input: "跟老板打声招呼。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+	snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Perceptions["npc:mercenary"]) != 0 || len(snapshot.Memories["npc:mercenary"]) != 0 {
+		t.Fatalf("off-scene character received turn data: %+v / %+v", snapshot.Perceptions["npc:mercenary"], snapshot.Memories["npc:mercenary"])
+	}
+}
+
+func TestSceneHostProposalAndSceneVersionAreCommitted(t *testing.T) {
+	generator := &scriptedGenerator{scene: "客栈后院"}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "场景提交", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "scene-1", Input: "我观察窗边。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+	snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Summary.Scene != "客栈后院" || snapshot.SceneVersion != 2 {
+		t.Fatalf("scene was not committed: %q / %d", snapshot.Summary.Scene, snapshot.SceneVersion)
+	}
+	generator.mu.Lock()
+	requests := append([]string(nil), generator.requests...)
+	generator.mu.Unlock()
+	var host string
+	for _, request := range requests {
+		if strings.Contains(request, "人物内部决策提案") {
+			host = request
+		}
+	}
+	if !strings.Contains(host, "近期公开叙事") || !strings.Contains(host, "action_intent") {
+		t.Fatalf("scene host did not receive the full context: %s", host)
+	}
+}
+
+func TestRetryUsesOriginalWorldHead(t *testing.T) {
+	generator := &scriptedGenerator{fail: true}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "重试基线", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "retry-base-1", Input: "我观察窗边。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitRun(t, app, world.WorldID, failed.RunID); result.Status != "failed" {
+		t.Fatalf("failed run = %+v", result)
+	}
+	generator.mu.Lock()
+	generator.fail = false
+	generator.mu.Unlock()
+	later, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "retry-base-2", Input: "我看看柜台。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitRun(t, app, world.WorldID, later.RunID); result.Status != "completed" {
+		t.Fatalf("later run = %+v", result)
+	}
+	if _, err := app.RetryRun(context.Background(), world.WorldID, failed.RunID, "retry-after-head"); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("retry after a later turn error = %v", err)
+	}
+}
+
+func TestSaveAsFailsWhenTheBoundaryRunFails(t *testing.T) {
+	generator := &scriptedGenerator{fail: true, delay: 40 * time.Millisecond}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "另存失败", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "copy-fail-run", Input: "我靠近柜台。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := app.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := app.SaveAs(context.Background(), world.WorldID, "失败分支", "copy-fail", status.ActiveRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		operation, err = app.CopyOperation(context.Background(), operation.OperationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if operation.Status != "copying" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if operation.Status != "failed" {
+		t.Fatalf("copy operation = %+v", operation)
+	}
+	if result := waitRun(t, app, world.WorldID, run.RunID); result.Status != "failed" {
+		t.Fatalf("boundary run = %+v", result)
+	}
+}
+
+func TestOpeningTheSameDataRootIsRejected(t *testing.T) {
+	root := t.TempDir()
+	first, err := Open(context.Background(), Options{DataRoot: root, UserID: LocalUserID, Generator: &scriptedGenerator{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if _, err := Open(context.Background(), Options{DataRoot: root, UserID: LocalUserID, Generator: &scriptedGenerator{}}); !errors.Is(err, ErrAppBusy) {
+		t.Fatalf("second app open error = %v", err)
+	}
+}
+
+type fixedJSONGenerator struct{ text string }
+
+func (g fixedJSONGenerator) GenerateText(context.Context, model.TextRequest) (model.TextResponse, error) {
+	return model.TextResponse{Text: g.text}, nil
+}
+
+func TestRequiredJSONFieldsRejectEmptyObjects(t *testing.T) {
+	for _, text := range []string{`{}`, `null`} {
+		var decision npcDecision
+		if err := generateJSON(context.Background(), fixedJSONGenerator{text: text}, "", "", &decision, 100, "speech", "action_intent", "silent", "memory"); err == nil {
+			t.Fatalf("empty NPC response accepted: %s", text)
+		}
+	}
 }

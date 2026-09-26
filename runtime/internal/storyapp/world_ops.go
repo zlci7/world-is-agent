@@ -259,17 +259,36 @@ func (a *App) clearSavePending(worldID string) {
 
 func (a *App) performCopyLocked(ctx context.Context, operation SaveOperation, source *worldStore) error {
 	targetPath := a.worldPath(operation.TargetWorldID)
-	if err := cloneWorld(ctx, source, targetPath, operation.TargetWorldID); err != nil {
+	if err := cloneWorld(ctx, source, targetPath, operation.TargetWorldID, operation.TargetName); err != nil {
 		return err
 	}
 	now := nowText()
-	if _, err := a.appDB.ExecContext(ctx, `UPDATE worlds SET status='ready',updated_at=? WHERE user_id=? AND game_id=? AND world_id=?`, now, a.userID, GameID, operation.TargetWorldID); err != nil {
+	tx, err := a.appDB.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	if _, err := a.appDB.ExecContext(ctx, `UPDATE copy_operations SET status='ready',error='',updated_at=? WHERE operation_id=?`, now, operation.OperationID); err != nil {
+	defer tx.Rollback()
+	worldResult, err := tx.ExecContext(ctx, `UPDATE worlds SET status='ready',updated_at=? WHERE user_id=? AND game_id=? AND world_id=? AND status='copying'`, now, a.userID, GameID, operation.TargetWorldID)
+	if err != nil {
 		return err
 	}
-	return nil
+	if affected, err := worldResult.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return err
+		}
+		return ErrSaveFailed
+	}
+	copyResult, err := tx.ExecContext(ctx, `UPDATE copy_operations SET status='ready',error='',updated_at=? WHERE operation_id=? AND status='copying'`, now, operation.OperationID)
+	if err != nil {
+		return err
+	}
+	if affected, err := copyResult.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return err
+		}
+		return ErrSaveFailed
+	}
+	return tx.Commit()
 }
 
 func (a *App) failCopy(ctx context.Context, operation SaveOperation, err error) (SaveOperation, error) {

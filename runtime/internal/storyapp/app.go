@@ -42,11 +42,16 @@ func Open(ctx context.Context, options Options) (*App, error) {
 	if err := os.MkdirAll(filepath.Join(appRoot, "config"), 0o755); err != nil {
 		return nil, err
 	}
+	processLock, err := acquireProcessLock(filepath.Join(appRoot, "app.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrAppBusy, err)
+	}
 	db, err := openAppDB(filepath.Join(appRoot, "app.db"))
 	if err != nil {
+		_ = processLock.Release()
 		return nil, err
 	}
-	app := &App{root: appRoot, dataRoot: root, appDB: db, userID: userID, worlds: make(map[string]*worldRuntime), runs: make(map[string]*runRuntime), logger: options.Logger, closed: make(chan struct{})}
+	app := &App{root: appRoot, dataRoot: root, appDB: db, processLock: processLock, userID: userID, worlds: make(map[string]*worldRuntime), runs: make(map[string]*runRuntime), logger: options.Logger, closed: make(chan struct{})}
 	if options.ModelConfigPath != "" {
 		app.modelPath = options.ModelConfigPath
 	} else if value := strings.TrimSpace(os.Getenv("WIA_MODEL_CONFIG")); value != "" {
@@ -62,10 +67,12 @@ func Open(ctx context.Context, options Options) (*App, error) {
 	}
 	if err := app.markInterrupted(ctx); err != nil {
 		db.Close()
+		_ = processLock.Release()
 		return nil, err
 	}
 	if err := app.markInterruptedCopies(ctx); err != nil {
 		db.Close()
+		_ = processLock.Release()
 		return nil, err
 	}
 	return app, nil
@@ -93,10 +100,16 @@ func (a *App) Close() error {
 		case <-time.After(5 * time.Second):
 		}
 	}
+	var err error
 	if a.appDB != nil {
-		return a.appDB.Close()
+		err = a.appDB.Close()
 	}
-	return nil
+	a.processLockOnce.Do(func() {
+		if lockErr := a.processLock.Release(); err == nil {
+			err = lockErr
+		}
+	})
+	return err
 }
 
 func (a *App) loadModelConfig(allowFake bool) {
@@ -442,19 +455,26 @@ func (a *App) ConfigureModel(ctx context.Context, request ModelConfigRequest) (S
 	if strings.TrimSpace(request.APIKey) == "" {
 		return Status{}, ErrInvalidRequest
 	}
+	a.modelConfigMu.Lock()
+	configLockHeld := true
+	defer func() {
+		if configLockHeld {
+			a.modelConfigMu.Unlock()
+		}
+	}()
 	configDir := filepath.Dir(a.modelPath)
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return Status{}, err
 	}
 	secretDir := filepath.Clean(filepath.Join(configDir, "..", "secrets"))
 	secretPath := filepath.Join(secretDir, "model.key")
-	tmpKey := filepath.Join(secretDir, "model.pending.key")
+	tmpKey := filepath.Join(secretDir, "model.pending."+newID("cfg")+".key")
 	if err := secret.Write(tmpKey, request.APIKey); err != nil {
 		return Status{}, err
 	}
-	tmpConfig := filepath.Join(configDir, "model.pending.json")
+	tmpConfig := filepath.Join(configDir, "model.pending."+newID("cfg")+".json")
 	window := llm.DefaultWindowLimits(provider, request.Model)
-	config := llm.Config{Provider: provider, Model: strings.TrimSpace(request.Model), BaseURL: strings.TrimRight(strings.TrimSpace(request.BaseURL), "/"), APIKey: "file:../secrets/model.pending.key", WindowLimits: window}
+	config := llm.Config{Provider: provider, Model: strings.TrimSpace(request.Model), BaseURL: strings.TrimRight(strings.TrimSpace(request.BaseURL), "/"), APIKey: "file:../secrets/" + filepath.Base(tmpKey), WindowLimits: window}
 	data, _ := json.Marshal(config)
 	if err := os.WriteFile(tmpConfig, data, 0o600); err != nil {
 		return Status{}, err
@@ -493,5 +513,7 @@ func (a *App) ConfigureModel(ctx context.Context, request ModelConfigRequest) (S
 	a.modelInfo = ModelInfo{Provider: provider, Model: final.Model, Configured: true, Source: "config"}
 	a.modelError = ""
 	a.modelMu.Unlock()
+	a.modelConfigMu.Unlock()
+	configLockHeld = false
 	return a.Status(ctx)
 }

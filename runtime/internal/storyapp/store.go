@@ -81,6 +81,10 @@ func openWorldDB(path string) (*worldStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureWorldSchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &worldStore{path: path, db: db}, nil
 }
 
@@ -156,6 +160,9 @@ CREATE TABLE IF NOT EXISTS runs (
   input TEXT NOT NULL, addressee_id TEXT NOT NULL, attempt INTEGER NOT NULL,
   status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
   message_seq INTEGER NOT NULL DEFAULT 0, cancel_requested INTEGER NOT NULL DEFAULT 0,
+  base_turn_seq INTEGER NOT NULL DEFAULT 0, base_message_head INTEGER NOT NULL DEFAULT 0,
+  base_event_head INTEGER NOT NULL DEFAULT 0, base_context_epoch INTEGER NOT NULL DEFAULT 0,
+  base_scene_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(seq);
@@ -163,6 +170,43 @@ CREATE INDEX IF NOT EXISTS idx_events_seq ON events(seq);
 CREATE INDEX IF NOT EXISTS idx_perceptions_recipient_seq ON perceptions(recipient_id, seq);
 CREATE INDEX IF NOT EXISTS idx_memories_recipient_seq ON memories(recipient_id, seq);
 `
+
+func ensureWorldSchema(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(runs)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for name := range map[string]struct{}{
+		"base_turn_seq": {}, "base_message_head": {}, "base_event_head": {},
+		"base_context_epoch": {}, "base_scene_version": {},
+	} {
+		if columns[name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE runs ADD COLUMN ` + name + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func nowText() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
@@ -443,7 +487,7 @@ func scanRun(row interface{ Scan(...any) error }) (Run, bool, error) {
 	var r Run
 	var created, updated string
 	var foundErr error
-	foundErr = row.Scan(&r.RunID, &r.RequestKey, &r.RequestHash, &r.Input, &r.AddresseeID, &r.Attempt, &r.Status, &r.Reason, &r.Error, &r.MessageSeq, &created, &updated)
+	foundErr = row.Scan(&r.RunID, &r.RequestKey, &r.RequestHash, &r.Input, &r.AddresseeID, &r.Attempt, &r.Status, &r.Reason, &r.Error, &r.MessageSeq, &r.BaseTurnSeq, &r.BaseMessageHead, &r.BaseEventHead, &r.BaseContextEpoch, &r.BaseSceneVersion, &created, &updated)
 	if errors.Is(foundErr, sql.ErrNoRows) {
 		return Run{}, false, nil
 	}
@@ -456,11 +500,11 @@ func scanRun(row interface{ Scan(...any) error }) (Run, bool, error) {
 }
 
 func readRun(ctx context.Context, db *sql.DB, runID string) (Run, bool, error) {
-	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,created_at,updated_at FROM runs WHERE run_id=?`, runID))
+	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs WHERE run_id=?`, runID))
 }
 
 func readRunByRequest(ctx context.Context, db *sql.DB, key string) (Run, bool, error) {
-	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,created_at,updated_at FROM runs WHERE request_key=?`, key))
+	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs WHERE request_key=?`, key))
 }
 
 func updateRunStatus(ctx context.Context, db *sql.DB, runID, status, reason, errorText string) error {
@@ -480,7 +524,7 @@ func countActiveRuns(ctx context.Context, db *sql.DB) (int, error) {
 	return count, err
 }
 
-func commitTurn(ctx context.Context, store *worldStore, run Run, narrative string, events []Event, perceptions []Perception, memories []Memory, clock string) (int64, error) {
+func commitTurn(ctx context.Context, store *worldStore, run Run, narrative string, events []Event, perceptions []Perception, memories []Memory, clock, scene string, sceneVersion int64) (int64, error) {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -500,8 +544,8 @@ func commitTurn(ctx context.Context, store *worldStore, run Run, narrative strin
 	if cancelled != 0 {
 		return 0, context.Canceled
 	}
-	var messageHead, eventHead, turnSeq, sceneVersion int64
-	for key, target := range map[string]*int64{"message_head": &messageHead, "event_head": &eventHead, "turn_seq": &turnSeq, "scene_version": &sceneVersion} {
+	var messageHead, eventHead, turnSeq, currentSceneVersion, contextEpoch int64
+	for key, target := range map[string]*int64{"message_head": &messageHead, "event_head": &eventHead, "turn_seq": &turnSeq, "scene_version": &currentSceneVersion, "context_epoch": &contextEpoch} {
 		value, err := metaGetTx(ctx, tx, key)
 		if err != nil {
 			return 0, err
@@ -510,6 +554,12 @@ func commitTurn(ctx context.Context, store *worldStore, run Run, narrative strin
 		if err != nil {
 			return 0, err
 		}
+	}
+	if run.BaseMessageHead > 0 && (run.BaseTurnSeq != turnSeq || run.BaseMessageHead != messageHead || run.BaseEventHead != eventHead || run.BaseContextEpoch != contextEpoch || run.BaseSceneVersion != currentSceneVersion) {
+		return 0, ErrVersionConflict
+	}
+	if sceneVersion < currentSceneVersion {
+		return 0, ErrVersionConflict
 	}
 	for _, e := range events {
 		eventHead++
@@ -551,11 +601,27 @@ func commitTurn(ctx context.Context, store *worldStore, run Run, narrative strin
 	if err := metaSetTx(ctx, tx, "clock", clock); err != nil {
 		return 0, err
 	}
+	if scene == "" {
+		scene, _ = metaGetTx(ctx, tx, "scene")
+	}
+	if err := metaSetTx(ctx, tx, "scene", scene); err != nil {
+		return 0, err
+	}
+	if err := metaSetTx(ctx, tx, "scene_version", strconv.FormatInt(sceneVersion, 10)); err != nil {
+		return 0, err
+	}
 	if err := metaSetTx(ctx, tx, "updated_at", nowText()); err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE runs SET status='completed',reason='',error='',message_seq=?,updated_at=? WHERE run_id=? AND status='running' AND cancel_requested=0`, messageHead, nowText(), run.RunID); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE runs SET status='completed',reason='',error='',message_seq=?,updated_at=? WHERE run_id=? AND status='running' AND cancel_requested=0`, messageHead, nowText(), run.RunID)
+	if err != nil {
 		return 0, err
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return 0, err
+		}
+		return 0, ErrWorldBusy
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -570,7 +636,7 @@ func markRunInterrupted(ctx context.Context, db *sql.DB) error {
 
 func removeDir(path string) error { return os.RemoveAll(path) }
 
-func cloneWorld(ctx context.Context, source *worldStore, targetPath, targetWorldID string) error {
+func cloneWorld(ctx context.Context, source *worldStore, targetPath, targetWorldID, targetName string) error {
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return err
 	}
@@ -589,6 +655,9 @@ func cloneWorld(ctx context.Context, source *worldStore, targetPath, targetWorld
 	}
 	defer tx.Rollback()
 	if err := metaSetTx(ctx, tx, "world_id", targetWorldID); err != nil {
+		return err
+	}
+	if err := metaSetTx(ctx, tx, "name", targetName); err != nil {
 		return err
 	}
 	if err := metaSetTx(ctx, tx, "generation", "1"); err != nil {

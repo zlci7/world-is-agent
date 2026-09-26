@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -79,6 +80,17 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.hosts[strings.ToLower(strings.TrimSpace(r.Host))]; !ok {
 		writeError(w, http.StatusForbidden, "host_not_allowed", "local browser access is required")
 		return
+	}
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Scheme != "http" {
+			writeError(w, http.StatusForbidden, "origin_not_allowed", "the browser origin is not allowed")
+			return
+		}
+		if _, ok := s.hosts[strings.ToLower(parsed.Host)]; !ok {
+			writeError(w, http.StatusForbidden, "origin_not_allowed", "the browser origin is not allowed")
+			return
+		}
 	}
 	if r.URL.Path == "/api/session" {
 		s.handleSession(w, r)
@@ -354,8 +366,17 @@ func (s *Server) copyOperation(w http.ResponseWriter, r *http.Request, operation
 	writeJSON(w, 200, map[string]any{"operation": operation})
 }
 func (s *Server) runs(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method == "GET" {
+		runs, err := s.app.ListRuns(r.Context(), id)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"runs": runs})
+		return
+	}
 	if r.Method != "POST" {
-		writeError(w, 405, "method_not_allowed", "runs are created with POST")
+		writeError(w, 405, "method_not_allowed", "runs use GET or POST")
 		return
 	}
 	var request storyapp.RunRequest
@@ -528,6 +549,9 @@ func writeAppError(w http.ResponseWriter, err error) {
 	case errors.Is(err, storyapp.ErrWorldBusy):
 		status = 409
 		code = "world_busy"
+	case errors.Is(err, storyapp.ErrAppBusy):
+		status = 409
+		code = "app_busy"
 	case errors.Is(err, storyapp.ErrVersionConflict):
 		status = 409
 		code = "version_conflict"

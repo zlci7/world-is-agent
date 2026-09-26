@@ -22,6 +22,7 @@ var (
 	ErrWorldNotFound       = errors.New("world not found")
 	ErrWorldNotReady       = errors.New("world not ready")
 	ErrWorldBusy           = errors.New("world is busy")
+	ErrAppBusy             = errors.New("story app is already open for this data root")
 	ErrVersionConflict     = errors.New("version conflict")
 	ErrIdempotencyConflict = errors.New("idempotency conflict")
 	ErrModelNotConfigured  = errors.New("model not configured")
@@ -46,22 +47,25 @@ type Logger interface {
 }
 
 type App struct {
-	root         string
-	userID       string
-	appDB        *sql.DB
-	dataRoot     string
-	modelPath    string
-	modelMu      sync.RWMutex
-	generator    model.TextGenerator
-	modelInfo    ModelInfo
-	modelError   string
-	worldMu      sync.Mutex
-	worlds       map[string]*worldRuntime
-	activationMu sync.Mutex
-	runsMu       sync.Mutex
-	runs         map[string]*runRuntime
-	logger       Logger
-	closed       chan struct{}
+	root            string
+	userID          string
+	appDB           *sql.DB
+	dataRoot        string
+	processLock     *processLock
+	processLockOnce sync.Once
+	modelPath       string
+	modelMu         sync.RWMutex
+	modelConfigMu   sync.Mutex
+	generator       model.TextGenerator
+	modelInfo       ModelInfo
+	modelError      string
+	worldMu         sync.Mutex
+	worlds          map[string]*worldRuntime
+	activationMu    sync.Mutex
+	runsMu          sync.Mutex
+	runs            map[string]*runRuntime
+	logger          Logger
+	closed          chan struct{}
 }
 
 type ModelInfo struct {
@@ -188,18 +192,23 @@ type Memory struct {
 }
 
 type Run struct {
-	RunID       string    `json:"run_id"`
-	RequestKey  string    `json:"request_key"`
-	RequestHash string    `json:"request_hash"`
-	Input       string    `json:"input"`
-	AddresseeID string    `json:"addressee_id,omitempty"`
-	Attempt     int       `json:"attempt"`
-	Status      string    `json:"status"`
-	Reason      string    `json:"reason,omitempty"`
-	Error       string    `json:"error,omitempty"`
-	MessageSeq  int64     `json:"message_seq,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	RunID            string    `json:"run_id"`
+	RequestKey       string    `json:"request_key"`
+	RequestHash      string    `json:"request_hash"`
+	Input            string    `json:"input"`
+	AddresseeID      string    `json:"addressee_id,omitempty"`
+	Attempt          int       `json:"attempt"`
+	Status           string    `json:"status"`
+	Reason           string    `json:"reason,omitempty"`
+	Error            string    `json:"error,omitempty"`
+	MessageSeq       int64     `json:"message_seq,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	BaseTurnSeq      int64     `json:"-"`
+	BaseMessageHead  int64     `json:"-"`
+	BaseEventHead    int64     `json:"-"`
+	BaseContextEpoch int64     `json:"-"`
+	BaseSceneVersion int64     `json:"-"`
 }
 
 type SaveOperation struct {
@@ -231,6 +240,7 @@ type runRuntime struct {
 	WorldID        string
 	RunID          string
 	ActiveRevision int64
+	Generator      model.TextGenerator
 }
 
 type worldRuntime struct {
