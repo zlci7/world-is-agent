@@ -294,7 +294,7 @@ func (a *App) ListRuns(ctx context.Context, worldID string) ([]Run, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var runs []Run
+	runs := make([]Run, 0)
 	for rows.Next() {
 		run, found, err := scanRun(rows)
 		if err != nil {

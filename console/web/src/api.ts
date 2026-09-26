@@ -82,7 +82,7 @@ export async function fetchRun(worldID: string, runID: string): Promise<Run> {
 
 export async function fetchRuns(worldID: string): Promise<Run[]> {
   const result = await request<{ runs: Run[] }>(`/api/v1/worlds/${encodeURIComponent(worldID)}/runs`)
-  return result.runs
+  return Array.isArray(result.runs) ? result.runs : []
 }
 
 export async function cancelRun(worldID: string, runID: string): Promise<void> {

@@ -134,6 +134,10 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 	if world.WorldID == "" || world.MessageHead != 1 || world.EventHead != 1 {
 		t.Fatalf("created world = %+v", world)
 	}
+	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"/runs", nil)
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"runs":[]`) {
+		t.Fatalf("empty run list = %d, body = %s", response.StatusCode, body)
+	}
 
 	response, body = requestJSON(t, client, http.MethodPost, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"/runs", map[string]any{
 		"request_key":              "http-run-1",

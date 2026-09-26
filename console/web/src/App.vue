@@ -85,7 +85,7 @@ async function loadWorld(worldID: string) {
   currentWorld.value = result.world
   playerName.value = result.player_name
   playerProfile.value = result.player_profile
-  characters.value = result.characters
+  characters.value = result.characters.filter(character => character.in_scene)
   messages.value = result.messages
 }
 
@@ -119,7 +119,7 @@ async function refreshOnce(forceWorld = false) {
 }
 
 async function restoreRunState(worldID: string) {
-  const runs = await fetchRuns(worldID)
+  const runs = (await fetchRuns(worldID)) ?? []
   const latest = runs[0]
   if (!latest) {
     activeRun.value = null
@@ -130,9 +130,10 @@ async function restoreRunState(worldID: string) {
     activeRun.value = latest
     failedRun.value = null
   } else if (latest.status === 'failed' || latest.status === 'cancelled' || latest.status === 'interrupted') {
+    const isNewFailure = failedRun.value?.run_id !== latest.run_id
     activeRun.value = null
     failedRun.value = latest
-    if (!input.value.trim()) input.value = latest.input
+    if (isNewFailure && !input.value.trim()) input.value = latest.input
   } else {
     activeRun.value = null
     failedRun.value = null
