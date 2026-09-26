@@ -178,6 +178,37 @@ func TestListWorldsReleasesApplicationRowsBeforeLoadingWorlds(t *testing.T) {
 	}
 }
 
+func TestDeleteActiveWorldWaitsForRunThenClearsActiveSelection(t *testing.T) {
+	app := newTestApp(t, &scriptedGenerator{delay: 80 * time.Millisecond})
+	world, err := app.CreateWorld(context.Background(), "删除中的冒险", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "delete-active-run", Input: "我走进大门。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.DeleteWorld(context.Background(), world.WorldID, 1); !errors.Is(err, ErrWorldBusy) {
+		t.Fatalf("delete while run active error = %v, want %v", err, ErrWorldBusy)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+	if err := app.DeleteWorld(context.Background(), world.WorldID, 1); err != nil {
+		t.Fatal(err)
+	}
+	status, err := app.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ActiveWorld != nil || status.ActiveRevision != 2 {
+		t.Fatalf("status after delete = %+v", status)
+	}
+	if _, err := app.ReadWorld(context.Background(), world.WorldID, 20); !errors.Is(err, ErrWorldNotFound) {
+		t.Fatalf("read deleted world error = %v, want %v", err, ErrWorldNotFound)
+	}
+}
+
 func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 	generator := &scriptedGenerator{}
 	app := newTestApp(t, generator)
@@ -333,7 +364,9 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 		"当前公开人物：",
 		"使用第二人称有限视角",
 		"不得使用“没有任何人注意到”",
-		"不得替玩家编写新的对白、决定、承诺、内心感受或下一步行动",
+		"禁止为了证明仍在场而逐个点名",
+		"可以自由补充临时、低影响",
+		"不得替玩家新增台词、接受或拒绝、承诺",
 	} {
 		if !strings.Contains(hostPrompt, want) {
 			t.Fatalf("narrative prompt missing %q: %s", want, hostPrompt)
@@ -353,6 +386,40 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 	}
 	if !foundInnkeeperReply {
 		t.Fatal("expected the innkeeper to own the NPC reply event")
+	}
+}
+
+func TestUnaddressedNPCDefaultsToSilenceAndPassiveIntentIsDropped(t *testing.T) {
+	def := lanternDefinition()
+	character, ok := characterByID(def, "npc:mercenary")
+	if !ok {
+		t.Fatal("mercenary definition missing")
+	}
+	snapshot := worldSnapshot{
+		Summary:      WorldSummary{WorldID: "world-test", Scene: def.Scene, Clock: def.Clock},
+		Characters:   def.Characters,
+		Perceptions:  map[string][]Perception{},
+		Memories:     map[string][]Memory{},
+		SceneVersion: 1,
+	}
+	prompt := buildNPCPrompt(snapshot, def, character, "", "act", npcStageInput{PlayerPerception: "走进大门看看"}, "", 1)
+	for _, want := range []string{
+		"默认保持沉默且不采取新行动",
+		"普通进入、环顾和走动不要求每个在场人物都回应",
+		"继续观察",
+		"不属于 action_intent",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("NPC prompt missing %q: %s", want, prompt)
+		}
+	}
+	for _, input := range []string{"保持观察", "观察异常", "继续等待。", "提高警惕", "维持原位"} {
+		if got := normalizeNPCActionIntent(input); got != "" {
+			t.Fatalf("normalizeNPCActionIntent(%q) = %q, want empty", input, got)
+		}
+	}
+	if got := normalizeNPCActionIntent("走到门边关上门"); got != "走到门边关上门" {
+		t.Fatalf("state-changing action was dropped: %q", got)
 	}
 }
 

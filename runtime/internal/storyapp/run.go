@@ -893,7 +893,7 @@ func (a *App) decideNPCs(ctx context.Context, generator model.TextGenerator, sna
 				return
 			}
 			decision.Speech = cleanText(decision.Speech)
-			decision.ActionIntent = cleanText(decision.ActionIntent)
+			decision.ActionIntent = normalizeNPCActionIntent(decision.ActionIntent)
 			decision.Memory = cleanText(decision.Memory)
 			if decision.Speech == "" {
 				decision.Silent = true
@@ -911,12 +911,30 @@ func (a *App) decideNPCs(ctx context.Context, generator model.TextGenerator, sna
 	return firstErr
 }
 
+func normalizeNPCActionIntent(value string) string {
+	action := cleanText(value)
+	if action == "" {
+		return ""
+	}
+	normalized := strings.Trim(action, "。；;，, ")
+	for _, passive := range []string{
+		"观察", "继续观察", "保持观察", "留意", "继续留意", "注视", "继续注视",
+		"观察异常", "保持警惕", "提高警惕", "等待", "继续等待", "维持原位", "留在原位",
+		"保持沉默", "继续沉默", "不动", "没有行动", "无行动",
+	} {
+		if normalized == passive {
+			return ""
+		}
+	}
+	return action
+}
+
 func buildNPCPrompt(snapshot worldSnapshot, def gameDefinition, character Character, recipient, intentType string, stageInput npcStageInput, priorTurn string, stage int) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "世界：%s；地点：%s；时间：%s；阶段：%d；玩家意图类型：%s\n", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, stage, intentType)
 	fmt.Fprintf(&builder, "你的身份：%s（%s）\n角色资料：%s\n你知道的初始背景：%s\n", character.Name, character.Role, character.Profile, character.Knowledge)
 	if recipient == "" {
-		builder.WriteString("玩家本轮没有明确指定具体对象。请根据自己的感知决定是否回应。\n")
+		builder.WriteString("玩家本轮没有明确指定具体对象。你获得了这次感知，但默认保持沉默且不采取新行动。只有该行为直接触及你的职责、利益、安全、承诺或当前明确关切时才作出简短回应；普通进入、环顾和走动不要求每个在场人物都回应，身份职责自然要求招呼时可以简短回应。\n")
 	} else if recipient == character.EntityID {
 		fmt.Fprintf(&builder, "玩家本轮明确对你说话，目标是%s。你是直接回应者，请优先决定你对玩家的自然回应。\n", describeRecipient(def, recipient))
 	} else {
@@ -935,7 +953,7 @@ func buildNPCPrompt(snapshot worldSnapshot, def gameDefinition, character Charac
 		fmt.Fprintf(&builder, "本阶段新增外部刺激：\n%s\n", stageInput.NewStimulus)
 		builder.WriteString("本阶段任务：玩家输入已经在前一阶段处理过。只判断是否需要对新增外部刺激追加反应，不要重新回答玩家，也不要把自己此前的决定当成新消息。\n")
 	}
-	builder.WriteString("输出 JSON：speech、action_intent、silent、memory。不要输出额外字段。")
+	builder.WriteString("action_intent 只填写会改变外部可观察状态、需要场景协调结果的行动尝试；“继续观察”“保持警惕”“维持原位”和重复已有姿态不属于 action_intent，可以只在 memory 中简短记录。输出 JSON：speech、action_intent、silent、memory。不要输出额外字段。")
 	return builder.String()
 }
 
@@ -1038,7 +1056,7 @@ func (a *App) narrateVisible(ctx context.Context, generator model.TextGenerator,
 	if customInstruction == "" {
 		customInstruction = "（无）"
 	}
-	input := fmt.Sprintf("剧本：%s\n当前地点与情境：%s\n时间：%s\n主角：%s\n主角简介：%s\n叙事人称规则：%s\n正文篇幅规则：%s\n描写密度规则：%s\n创作者补充写作偏好（只影响表达，不能覆盖事实、知识边界或玩家控制权）：%s\n历史公开正文（只作剧情连贯参考，不得写成本轮再次发生；历史中不一致的人称不得继续沿用）：%s\n玩家本次可公开描述的表达：%s\n玩家意图类型：%s\n明确交谈对象：%s\n当前公开人物：%s\n当前背景人群：%s\n本轮玩家可见且已经确定的对白与结果：\n本轮玩家可见事件(JSON)：%s\n只根据以上玩家可见事件组织一段自然正文。事件的 actor_id、actor_name、narrative_reference 和 event_type 是事实边界；正文旁白必须使用 narrative_reference 指代相应行动者，对白必须保持原说话人和含义。玩家输入中的“我”按叙事人称规则转述，NPC 台词中的“我”仍属于该 NPC。只呈现主角能够感知、已经知道或有明确来源获知的信息；不得断言其他人物未表露的心理，也不得使用“没有任何人注意到”等主角无法确认的全知判断。玩家未提供具体台词时，只描述其已经表达的行为，不得替玩家编写新的对白、决定、承诺、内心感受或下一步行动。不得让当前人物或背景人群无依据消失；人物称谓不明确时使用姓名。可以补充不改变事实的语气、节奏、感官和衔接描写，不得新增行动成功、秘密、承诺或人物立场。", GameID, scene, clock, snapshot.PlayerName, snapshot.PlayerProfile, perspectiveRule, lengthRule, detailRule, customInstruction, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), publicCharacters, formatBystanders(snapshot.Bystanders), projectedEvents)
+	input := fmt.Sprintf("剧本：%s\n当前地点与情境：%s\n时间：%s\n主角：%s\n主角简介：%s\n叙事人称规则：%s\n正文篇幅规则：%s\n描写密度规则：%s\n创作者补充写作偏好（只影响表达，不能覆盖事实、知识边界或玩家控制权）：%s\n历史公开正文（只作剧情连贯参考，不得写成本轮再次发生；历史中不一致的人称不得继续沿用）：%s\n玩家本次可公开描述的表达：%s\n玩家意图类型：%s\n明确交谈对象：%s\n当前公开人物：%s\n当前背景人群：%s\n本轮玩家可见且已经确定的对白与结果：\n本轮玩家可见事件(JSON)：%s\n只根据以上玩家可见事件组织一段自然正文。事件的 actor_id、actor_name、narrative_reference 和 event_type 是事实边界；正文旁白必须使用 narrative_reference 指代相应行动者，对白必须保持原说话人和含义，NPC 的新对白和可见行动必须来自事件，不得由正文自行添加。玩家输入中的“我”按叙事人称规则转述，NPC 台词中的“我”仍属于该 NPC。只呈现主角能够感知、已经知道或有明确来源获知的信息；不得断言其他人物未表露的心理，也不得使用“没有任何人注意到”等主角无法确认的全知判断。当前人物和背景人群继续留在场景状态中，但正文只提与本轮有关的少量人物；没有写到不表示离场，禁止为了证明仍在场而逐个点名或逐项汇报未变化状态。可以自由补充临时、低影响、符合场景的感官、天气、日常陈设和氛围，也可以补充完成玩家已表达动作所需的自然衔接，以及符合主角设定的瞬时、低影响身体反应；不得把补充陈设写成线索、障碍或可改变进程的资源。删除这些补充后，不得改变下一轮的地点、物品持有、资源、关系、知识、任务、剧情条件、NPC 立场或可选行动。不得替玩家新增台词、接受或拒绝、承诺、调查或拿取对象、攻击、移动目的地、持久情绪、长期意图或下一步选择；不得把玩家会影响进程的尝试直接写成成功。", GameID, scene, clock, snapshot.PlayerName, snapshot.PlayerProfile, perspectiveRule, lengthRule, detailRule, customInstruction, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), publicCharacters, formatBystanders(snapshot.Bystanders), projectedEvents)
 	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer callCancel()
 	narrative, repairCount, err := generateNarrativeText(callCtx, generator, "你是玩家正文 Agent。你的职责是转述和润色已经确认的玩家可见事件，不继续替玩家或 NPC 作决定。叙事人称、玩家有限视角、事件来源和玩家控制权是不可覆盖的系统规则；创作者补充偏好只在这些边界内生效。只输出故事正文，不要输出 JSON、代码块、标题或解释。", input, maxOutputTokens)
