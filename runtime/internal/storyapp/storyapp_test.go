@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"gameagent/runtime/internal/llm"
 	"gameagent/runtime/internal/model"
+	"gameagent/runtime/internal/secret"
 )
 
 type scriptedGenerator struct {
@@ -541,6 +545,65 @@ func TestSaveAsWaitsForTheCurrentRunBoundary(t *testing.T) {
 	}
 }
 
+func TestSaveAsRejectsASecondPendingCopy(t *testing.T) {
+	app := newTestApp(t, &scriptedGenerator{delay: 80 * time.Millisecond})
+	world, err := app.CreateWorld(context.Background(), "单一另存预约", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "pending-copy-run", Input: "我观察柜台。"}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := app.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.SaveAs(context.Background(), world.WorldID, "第一个分支", "pending-copy-1", status.ActiveRevision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.SaveAs(context.Background(), world.WorldID, "第二个分支", "pending-copy-2", status.ActiveRevision); !errors.Is(err, ErrWorldBusy) {
+		t.Fatalf("second pending copy error = %v", err)
+	}
+}
+
+func TestCloseDrainsPendingCopyBeforeReleasingDataRoot(t *testing.T) {
+	root := t.TempDir()
+	app, err := Open(context.Background(), Options{DataRoot: root, UserID: LocalUserID, Generator: &scriptedGenerator{delay: 80 * time.Millisecond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	world, err := app.CreateWorld(context.Background(), "退出时另存", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "close-copy-run", Input: "我观察柜台。"}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := app.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := app.SaveAs(context.Background(), world.WorldID, "退出分支", "close-copy", status.ActiveRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(context.Background(), Options{DataRoot: root, UserID: LocalUserID, Generator: &scriptedGenerator{}})
+	if err != nil {
+		t.Fatalf("reopen after draining copy: %v", err)
+	}
+	defer reopened.Close()
+	stored, err := reopened.CopyOperation(context.Background(), operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "failed" {
+		t.Fatalf("copy status after close = %+v", stored)
+	}
+}
+
 func TestStrictJSONRejectsDuplicateKeys(t *testing.T) {
 	if err := validateStrictJSON([]byte(`{"speech":"x","speech":"y"}`)); err == nil {
 		t.Fatal("duplicate key accepted")
@@ -785,6 +848,48 @@ func TestOpeningTheSameDataRootIsRejected(t *testing.T) {
 	defer first.Close()
 	if _, err := Open(context.Background(), Options{DataRoot: root, UserID: LocalUserID, Generator: &scriptedGenerator{}}); !errors.Is(err, ErrAppBusy) {
 		t.Fatalf("second app open error = %v", err)
+	}
+}
+
+func TestModelConfigPublishFailureKeepsPreviousConfigAndKey(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config", "model.json")
+	secretDir := filepath.Join(root, "secrets")
+	oldKeyPath := filepath.Join(secretDir, "model.previous.key")
+	if err := secret.Write(oldKeyPath, "old-key"); err != nil {
+		t.Fatal(err)
+	}
+	oldConfig := []byte(`{"provider":"openai","model":"old-model","api_key":"file:../secrets/model.previous.key"}`)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, oldConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousWriter := writeModelConfig
+	writeModelConfig = func(string, []byte) error { return errors.New("injected config publish failure") }
+	defer func() { writeModelConfig = previousWriter }()
+
+	if _, err := publishModelConfig(configPath, secretDir, "new-key", llm.Config{Provider: "openai", Model: "new-model"}); err == nil {
+		t.Fatal("config publish failure was not returned")
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(oldConfig) {
+		t.Fatalf("previous config changed: %s", data)
+	}
+	value, err := secret.Read(oldKeyPath)
+	if err != nil || value != "old-key" {
+		t.Fatalf("previous key changed: %q / %v", value, err)
+	}
+	entries, err := os.ReadDir(secretDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(oldKeyPath) {
+		t.Fatalf("failed publication left a new key behind: %+v", entries)
 	}
 }
 

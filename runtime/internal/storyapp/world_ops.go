@@ -122,6 +122,14 @@ func (a *App) SaveAs(ctx context.Context, sourceWorldID, name, requestKey string
 	if requestKey == "" {
 		return SaveOperation{}, ErrInvalidRequest
 	}
+	a.copyMu.Lock()
+	if a.closing {
+		a.copyMu.Unlock()
+		return SaveOperation{}, ErrWorldBusy
+	}
+	a.copyWG.Add(1)
+	a.copyMu.Unlock()
+	defer a.copyWG.Done()
 	var operation SaveOperation
 	var found bool
 	var err error
@@ -153,17 +161,34 @@ func (a *App) SaveAs(ctx context.Context, sourceWorldID, name, requestKey string
 	if status != "ready" {
 		return SaveOperation{}, ErrWorldNotReady
 	}
+	world := a.worldRuntimeFor(sourceWorldID)
+	world.mu.Lock()
+	if world.savePending {
+		world.mu.Unlock()
+		return SaveOperation{}, ErrWorldBusy
+	}
 	targetID := newID("world")
 	operation = SaveOperation{OperationID: newID("copy"), RequestKey: requestKey, SourceWorldID: sourceWorldID, TargetWorldID: targetID, TargetName: name, Status: "copying", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	targetPath := a.worldPath(targetID)
-	if _, err := a.appDB.ExecContext(ctx, `INSERT INTO copy_operations(operation_id,request_key,user_id,game_id,source_world_id,target_world_id,target_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, operation.OperationID, operation.RequestKey, a.userID, GameID, sourceWorldID, targetID, name, operation.Status, operation.CreatedAt.Format(time.RFC3339Nano), operation.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
+	tx, err := a.appDB.BeginTx(ctx, nil)
+	if err != nil {
+		world.mu.Unlock()
 		return SaveOperation{}, err
 	}
-	if _, err := a.appDB.ExecContext(ctx, `INSERT INTO worlds(user_id,game_id,world_id,name,path,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, a.userID, GameID, targetID, name, targetPath, "copying", operation.CreatedAt.Format(time.RFC3339Nano), operation.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO copy_operations(operation_id,request_key,user_id,game_id,source_world_id,target_world_id,target_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, operation.OperationID, operation.RequestKey, a.userID, GameID, sourceWorldID, targetID, name, operation.Status, operation.CreatedAt.Format(time.RFC3339Nano), operation.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
+		_ = tx.Rollback()
+		world.mu.Unlock()
 		return SaveOperation{}, err
 	}
-	world := a.worldRuntimeFor(sourceWorldID)
-	world.mu.Lock()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO worlds(user_id,game_id,world_id,name,path,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, a.userID, GameID, targetID, name, targetPath, "copying", operation.CreatedAt.Format(time.RFC3339Nano), operation.UpdatedAt.Format(time.RFC3339Nano)); err != nil {
+		_ = tx.Rollback()
+		world.mu.Unlock()
+		return SaveOperation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		world.mu.Unlock()
+		return SaveOperation{}, err
+	}
 	store, openErr := openWorldDB(sourcePath)
 	if openErr != nil {
 		world.mu.Unlock()
@@ -182,7 +207,11 @@ func (a *App) SaveAs(ctx context.Context, sourceWorldID, name, requestKey string
 		_ = store.db.QueryRowContext(ctx, `SELECT run_id FROM runs WHERE status IN ('accepted','running') ORDER BY created_at LIMIT 1`).Scan(&runID)
 		store.db.Close()
 		world.mu.Unlock()
-		go a.waitAndCopy(operation, runID)
+		a.copyWG.Add(1)
+		go func() {
+			defer a.copyWG.Done()
+			a.waitAndCopy(a.copyCtx, operation, runID)
+		}()
 		return operation, nil
 	}
 	err = a.performCopyLocked(ctx, operation, store)
@@ -194,26 +223,30 @@ func (a *App) SaveAs(ctx context.Context, sourceWorldID, name, requestKey string
 	return a.CopyOperation(ctx, operation.OperationID)
 }
 
-func (a *App) waitAndCopy(operation SaveOperation, runID string) {
+func (a *App) waitAndCopy(ctx context.Context, operation SaveOperation, runID string) {
 	deadline := time.Now().Add(6 * time.Minute)
 	for time.Now().Before(deadline) {
-		ctx := context.Background()
+		if err := ctx.Err(); err != nil {
+			a.clearSavePending(operation.SourceWorldID, operation.OperationID)
+			_, _ = a.failCopy(context.Background(), operation, err)
+			return
+		}
 		path, _, err := a.worldRecord(ctx, operation.SourceWorldID)
 		if err != nil {
-			a.clearSavePending(operation.SourceWorldID)
+			a.clearSavePending(operation.SourceWorldID, operation.OperationID)
 			_, _ = a.failCopy(ctx, operation, err)
 			return
 		}
 		store, err := openWorldDB(path)
 		if err != nil {
-			a.clearSavePending(operation.SourceWorldID)
+			a.clearSavePending(operation.SourceWorldID, operation.OperationID)
 			_, _ = a.failCopy(ctx, operation, err)
 			return
 		}
 		run, found, readErr := readRun(ctx, store.db, runID)
 		store.db.Close()
 		if readErr != nil || !found {
-			a.clearSavePending(operation.SourceWorldID)
+			a.clearSavePending(operation.SourceWorldID, operation.OperationID)
 			if readErr == nil {
 				readErr = ErrRunNotFound
 			}
@@ -223,37 +256,55 @@ func (a *App) waitAndCopy(operation SaveOperation, runID string) {
 		if run.Status != "accepted" && run.Status != "running" {
 			world := a.worldRuntimeFor(operation.SourceWorldID)
 			world.mu.Lock()
+			if !world.savePending || world.pendingOperation != operation.OperationID {
+				world.mu.Unlock()
+				_, _ = a.failCopy(context.Background(), operation, ErrSaveFailed)
+				return
+			}
 			sourcePath, _, err := a.worldRecord(ctx, operation.SourceWorldID)
 			if err == nil {
 				source, openErr := openWorldDB(sourcePath)
 				if openErr == nil {
 					if run.Status == "completed" {
-						err = a.performCopyLocked(ctx, operation, source)
+						var messageHead int64
+						messageHead, err = metaInt(ctx, source.db, "message_head")
+						if err == nil && messageHead == run.MessageSeq {
+							err = a.performCopyLocked(ctx, operation, source)
+						} else if err == nil {
+							err = ErrVersionConflict
+						}
 					} else {
 						err = ErrSaveFailed
 					}
 					source.db.Close()
 				}
 			}
-			world.savePending = false
-			world.pendingOperation = ""
+			if world.pendingOperation == operation.OperationID {
+				world.savePending = false
+				world.pendingOperation = ""
+			}
 			world.mu.Unlock()
 			if err != nil {
 				_, _ = a.failCopy(ctx, operation, err)
 			}
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	a.clearSavePending(operation.SourceWorldID)
+	a.clearSavePending(operation.SourceWorldID, operation.OperationID)
 	_, _ = a.failCopy(context.Background(), operation, context.DeadlineExceeded)
 }
 
-func (a *App) clearSavePending(worldID string) {
+func (a *App) clearSavePending(worldID, operationID string) {
 	world := a.worldRuntimeFor(worldID)
 	world.mu.Lock()
-	world.savePending = false
-	world.pendingOperation = ""
+	if world.pendingOperation == operationID {
+		world.savePending = false
+		world.pendingOperation = ""
+	}
 	world.mu.Unlock()
 }
 

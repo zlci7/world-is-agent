@@ -64,6 +64,11 @@ type App struct {
 	activationMu    sync.Mutex
 	runsMu          sync.Mutex
 	runs            map[string]*runRuntime
+	copyCtx         context.Context
+	copyCancel      context.CancelFunc
+	copyMu          sync.Mutex
+	copyWG          sync.WaitGroup
+	closing         bool
 	logger          Logger
 	closed          chan struct{}
 }

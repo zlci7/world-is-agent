@@ -14,10 +14,13 @@ import (
 	"strings"
 	"time"
 
+	runtimeconfig "gameagent/runtime/config"
 	"gameagent/runtime/internal/llm"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/secret"
 )
+
+var writeModelConfig = runtimeconfig.WriteFile
 
 func Open(ctx context.Context, options Options) (*App, error) {
 	if ctx == nil {
@@ -51,7 +54,8 @@ func Open(ctx context.Context, options Options) (*App, error) {
 		_ = processLock.Release()
 		return nil, err
 	}
-	app := &App{root: appRoot, dataRoot: root, appDB: db, processLock: processLock, userID: userID, worlds: make(map[string]*worldRuntime), runs: make(map[string]*runRuntime), logger: options.Logger, closed: make(chan struct{})}
+	copyCtx, copyCancel := context.WithCancel(context.Background())
+	app := &App{root: appRoot, dataRoot: root, appDB: db, processLock: processLock, userID: userID, worlds: make(map[string]*worldRuntime), runs: make(map[string]*runRuntime), copyCtx: copyCtx, copyCancel: copyCancel, logger: options.Logger, closed: make(chan struct{})}
 	if options.ModelConfigPath != "" {
 		app.modelPath = options.ModelConfigPath
 	} else if value := strings.TrimSpace(os.Getenv("WIA_MODEL_CONFIG")); value != "" {
@@ -87,6 +91,12 @@ func (a *App) Close() error {
 	default:
 		close(a.closed)
 	}
+	a.copyMu.Lock()
+	a.closing = true
+	if a.copyCancel != nil {
+		a.copyCancel()
+	}
+	a.copyMu.Unlock()
 	a.runsMu.Lock()
 	active := make([]*runRuntime, 0, len(a.runs))
 	for _, r := range a.runs {
@@ -100,6 +110,7 @@ func (a *App) Close() error {
 		case <-time.After(5 * time.Second):
 		}
 	}
+	a.copyWG.Wait()
 	var err error
 	if a.appDB != nil {
 		err = a.appDB.Close()
@@ -467,7 +478,6 @@ func (a *App) ConfigureModel(ctx context.Context, request ModelConfigRequest) (S
 		return Status{}, err
 	}
 	secretDir := filepath.Clean(filepath.Join(configDir, "..", "secrets"))
-	secretPath := filepath.Join(secretDir, "model.key")
 	tmpKey := filepath.Join(secretDir, "model.pending."+newID("cfg")+".key")
 	if err := secret.Write(tmpKey, request.APIKey); err != nil {
 		return Status{}, err
@@ -498,12 +508,9 @@ func (a *App) ConfigureModel(ctx context.Context, request ModelConfigRequest) (S
 		_ = os.Remove(tmpKey)
 		return Status{}, fmt.Errorf("model_not_configured: provider verification failed")
 	}
-	if err := secret.Write(secretPath, request.APIKey); err != nil {
-		return Status{}, err
-	}
 	final := llm.Config{Provider: provider, Model: strings.TrimSpace(request.Model), BaseURL: strings.TrimRight(strings.TrimSpace(request.BaseURL), "/"), APIKey: "file:../secrets/model.key", WindowLimits: window}
-	finalData, _ := json.Marshal(final)
-	if err := os.WriteFile(a.modelPath, finalData, 0o600); err != nil {
+	final, err = publishModelConfig(a.modelPath, secretDir, request.APIKey, final)
+	if err != nil {
 		return Status{}, err
 	}
 	_ = os.Remove(tmpConfig)
@@ -516,4 +523,23 @@ func (a *App) ConfigureModel(ctx context.Context, request ModelConfigRequest) (S
 	a.modelConfigMu.Unlock()
 	configLockHeld = false
 	return a.Status(ctx)
+}
+
+func publishModelConfig(configPath, secretDir, apiKey string, modelConfig llm.Config) (llm.Config, error) {
+	keyName := "model." + newID("cfg") + ".key"
+	keyPath := filepath.Join(secretDir, keyName)
+	if err := secret.Write(keyPath, apiKey); err != nil {
+		return llm.Config{}, err
+	}
+	modelConfig.APIKey = "file:../secrets/" + keyName
+	data, err := json.Marshal(modelConfig)
+	if err != nil {
+		_ = os.Remove(keyPath)
+		return llm.Config{}, err
+	}
+	if err := writeModelConfig(configPath, data); err != nil {
+		_ = os.Remove(keyPath)
+		return llm.Config{}, err
+	}
+	return modelConfig, nil
 }
