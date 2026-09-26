@@ -123,7 +123,7 @@ func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequ
 		return model.TextResponse{Text: string(data)}, nil
 	}
 	if strings.Contains(req.System, "玩家正文 Agent") {
-		return model.TextResponse{Text: `{"narrative":"雨声敲打着屋檐。沈岚的回答让柜台边的空气紧了一瞬，铁杉也把视线从河面收了回来。"}`}, nil
+		return model.TextResponse{Text: "雨声敲打着屋檐。沈岚的回答让柜台边的空气紧了一瞬，铁杉也把视线从河面收了回来。"}, nil
 	}
 	g.mu.Lock()
 	scene := g.scene
@@ -630,6 +630,31 @@ func TestStrictJSONRejectsDuplicateKeys(t *testing.T) {
 		t.Fatal("unknown field accepted")
 	}
 	_ = json.Valid
+}
+
+func TestNarrativeUsesPlainTextContract(t *testing.T) {
+	plain := "雨声沿着窗棂滑下，客栈里的人都抬起头。"
+	for _, tc := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"plain text", plain, plain},
+		{"legacy wrapper", `{"narrative":"旧格式正文"}`, "旧格式正文"},
+		{"markdown fence", "```text\n" + plain + "\n```", plain},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseNarrativeText(tc.text)
+			if err != nil || got != tc.want {
+				t.Fatalf("parseNarrativeText(%q) = %q, %v", tc.text, got, err)
+			}
+		})
+	}
+	for _, text := range []string{"", `{"narrative":`, `{"other":"field"}`} {
+		if _, err := parseNarrativeText(text); !errors.Is(err, ErrGenerationFailed) {
+			t.Fatalf("invalid narrative %q error = %v", text, err)
+		}
+	}
 }
 
 func TestRunFailureRecordsStageReasonAndSafeDiagnostic(t *testing.T) {

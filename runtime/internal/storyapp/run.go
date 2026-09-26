@@ -895,18 +895,69 @@ func (a *App) narrateVisible(ctx context.Context, generator model.TextGenerator,
 	if private {
 		playerInput = "玩家进行了私下交谈；耳语原文不属于玩家可见叙述输入。"
 	}
-	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n主角简介：%s\n近期公开叙事：%s\n玩家本次可公开描述的表达：%s\n玩家意图类型：%s\n明确交谈对象：%s\n本轮玩家可见且已经确定的对白与结果：%s\n回合结束后在场人物：%s\n只根据以上玩家可见投影组织一段自然正文，不新增行动成功、秘密、承诺或人物立场。输出 JSON：narrative。", GameID, scene, clock, snapshot.PlayerName, snapshot.PlayerProfile, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), playerProjection, strings.Join(sceneCharacters, ","))
-	var result narrativeResult
+	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n主角简介：%s\n近期公开叙事：%s\n玩家本次可公开描述的表达：%s\n玩家意图类型：%s\n明确交谈对象：%s\n本轮玩家可见且已经确定的对白与结果：%s\n回合结束后在场人物：%s\n只根据以上玩家可见投影组织一段自然正文，不新增行动成功、秘密、承诺或人物立场。", GameID, scene, clock, snapshot.PlayerName, snapshot.PlayerProfile, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), playerProjection, strings.Join(sceneCharacters, ","))
 	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer callCancel()
-	if err := generateJSON(callCtx, generator, "你是玩家正文 Agent。你只能把已经投影给玩家的结果写成连贯叙事，不接触或猜测 NPC 私人记忆和隐藏结果。", input, &result, structuredTurnOutputTokens, "narrative"); err != nil {
+	narrative, err := generateNarrativeText(callCtx, generator, "你是玩家正文 Agent。你只能把已经投影给玩家的结果写成连贯叙事，不接触或猜测 NPC 私人记忆和隐藏结果。只输出故事正文，不要输出 JSON、代码块、标题或解释。", input)
+	if err != nil {
 		return narrativeResult{}, err
 	}
-	result.Narrative = cleanText(result.Narrative)
-	if result.Narrative == "" {
-		return narrativeResult{}, fmt.Errorf("%w: narrative is empty", ErrGenerationFailed)
+	return narrativeResult{Narrative: narrative}, nil
+}
+
+func generateNarrativeText(ctx context.Context, generator model.TextGenerator, system, input string) (string, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		requestSystem := system
+		if attempt > 0 {
+			requestSystem += "\n上一次响应不可用。请重新生成，只输出一段完整的故事正文。"
+		}
+		response, err := generator.GenerateText(ctx, model.TextRequest{System: requestSystem, Input: input, MaxInputTokens: 12000, MaxOutputTokens: structuredTurnOutputTokens, MaxResponseBytes: 1 << 20})
+		if err != nil {
+			if attempt == 0 && errors.Is(err, model.ErrInvalidTextResponse) {
+				continue
+			}
+			return "", err
+		}
+		narrative, err := parseNarrativeText(response.Text)
+		if err != nil {
+			if attempt == 0 {
+				continue
+			}
+			return "", err
+		}
+		return narrative, nil
 	}
-	return result, nil
+	return "", ErrGenerationFailed
+}
+
+func parseNarrativeText(text string) (string, error) {
+	text = cleanText(text)
+	if text == "" {
+		return "", fmt.Errorf("%w: narrative is empty", ErrGenerationFailed)
+	}
+	if strings.HasPrefix(text, "```") {
+		lines := strings.Split(text, "\n")
+		if len(lines) < 3 || !strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+			return "", fmt.Errorf("%w: narrative has an incomplete code fence", ErrGenerationFailed)
+		}
+		text = cleanText(strings.Join(lines[1:len(lines)-1], "\n"))
+	}
+	if strings.HasPrefix(text, "{") {
+		if err := validateStrictJSON([]byte(text)); err != nil {
+			return "", fmt.Errorf("%w: narrative JSON is invalid: %v", ErrGenerationFailed, err)
+		}
+		var legacy narrativeResult
+		decoder := json.NewDecoder(strings.NewReader(text))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&legacy); err != nil {
+			return "", fmt.Errorf("%w: narrative JSON does not match the legacy wrapper", ErrGenerationFailed)
+		}
+		text = cleanText(legacy.Narrative)
+	}
+	if text == "" {
+		return "", fmt.Errorf("%w: narrative is empty", ErrGenerationFailed)
+	}
+	return text, nil
 }
 
 func narrativeHistory(messages []Message) string {
