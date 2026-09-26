@@ -86,7 +86,7 @@ func (g *scriptedGenerator) GenerateText(ctx context.Context, req model.TextRequ
 		if strings.Contains(req.Input, "你的身份：沈岚") {
 			return model.TextResponse{Text: `{"speech":"沈岚压低声音说：先别惊动客人。","action_intent":"保护柜台下的东西","silent":false,"memory":"玩家主动向我提供了消息。"}`}, nil
 		}
-		if strings.Contains(req.Input, "新刺激") {
+		if strings.Contains(req.Input, "本阶段新增外部刺激：") && !strings.Contains(req.Input, "本阶段新增外部刺激：\n（暂无）") {
 			return model.TextResponse{Text: `{"speech":"铁杉抬眼看向柜台，手按住了刀柄。","action_intent":"观察异常","silent":false,"memory":"沈岚的公开回应让我提高警惕。"}`}, nil
 		}
 		return model.TextResponse{Text: `{"speech":"","action_intent":"保持观察","silent":true,"memory":"我看见有人在客栈里行动。"}`}, nil
@@ -224,7 +224,7 @@ func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 	if len(snapshot.Events) < 3 {
 		t.Fatalf("events = %+v", snapshot.Events)
 	}
-	var followUp, recipientKeptPrivateContext, resolvedAction, resultPerceived bool
+	var followUp, recipientRetriggeredByOwnReply, resolvedAction, resultPerceived bool
 	generator.mu.Lock()
 	requests := append([]string(nil), generator.requests...)
 	generator.mu.Unlock()
@@ -232,8 +232,8 @@ func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 		if strings.Contains(request, "你的身份：铁杉") && strings.Contains(request, "今晚有人会来搜查") {
 			t.Fatalf("private text leaked to mercenary prompt: %s", request)
 		}
-		if strings.Contains(request, "你的身份：沈岚") && strings.Contains(request, "阶段：2") && strings.Contains(request, "今晚有人会来搜查") {
-			recipientKeptPrivateContext = true
+		if strings.Contains(request, "你的身份：沈岚") && strings.Contains(request, "阶段：2") {
+			recipientRetriggeredByOwnReply = true
 		}
 		if strings.Contains(request, "剧本：") && strings.Contains(request, "今晚有人会来搜查") {
 			t.Fatalf("private text leaked to host prompt: %s", request)
@@ -258,8 +258,8 @@ func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 	if !followUp {
 		t.Fatalf("stage-two follow-up missing: %+v", snapshot.Events)
 	}
-	if !recipientKeptPrivateContext {
-		t.Fatal("stage-two recipient lost the private stage-one perception")
+	if recipientRetriggeredByOwnReply {
+		t.Fatal("private recipient was called again only because of her own public reply")
 	}
 	if !resolvedAction || !resultPerceived {
 		t.Fatalf("action result loop is incomplete: events=%+v perceptions=%+v", snapshot.Events, snapshot.Perceptions["npc:innkeeper"])
@@ -286,15 +286,31 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 	requests := append([]string(nil), generator.requests...)
 	generator.mu.Unlock()
 	var innkeeperPrompt, mercenaryPrompt, hostPrompt string
+	var innkeeperStageTwo, mercenaryStageTwo bool
 	for _, request := range requests {
 		switch {
-		case strings.Contains(request, "你的身份：沈岚"):
+		case strings.Contains(request, "你的身份：沈岚") && strings.Contains(request, "阶段：1"):
 			innkeeperPrompt = request
-		case strings.Contains(request, "你的身份：铁杉"):
+		case strings.Contains(request, "你的身份：沈岚") && strings.Contains(request, "阶段：2"):
+			innkeeperStageTwo = true
+		case strings.Contains(request, "你的身份：铁杉") && strings.Contains(request, "阶段：1"):
 			mercenaryPrompt = request
+		case strings.Contains(request, "你的身份：铁杉") && strings.Contains(request, "阶段：2"):
+			mercenaryStageTwo = true
+			if !strings.Contains(request, "本轮玩家输入中你实际获知的部分：\n跟老板打声招呼") ||
+				!strings.Contains(request, "本阶段新增外部刺激：\n沈岚（客栈老板）公开说：") ||
+				strings.Contains(request, "玩家本轮在你可见范围内的表达：公开回应的新刺激") {
+				t.Fatalf("stage-two context labels are ambiguous: %s", request)
+			}
 		case strings.Contains(request, "本轮玩家可见且已经确定的对白与结果"):
 			hostPrompt = request
 		}
+	}
+	if innkeeperStageTwo {
+		t.Fatal("the innkeeper was called again only because of her own public reply")
+	}
+	if !mercenaryStageTwo {
+		t.Fatal("the mercenary did not receive the innkeeper's public reply as a new stimulus")
 	}
 	if !strings.Contains(innkeeperPrompt, "你是直接回应者") {
 		t.Fatalf("innkeeper prompt does not identify the direct addressee: %s", innkeeperPrompt)
@@ -305,8 +321,19 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 	if !strings.Contains(hostPrompt, "明确交谈对象：沈岚（客栈老板）") {
 		t.Fatalf("host prompt does not preserve the resolved addressee: %s", hostPrompt)
 	}
-	if !strings.Contains(hostPrompt, "沈岚（客栈老板）说：") {
+	if !strings.Contains(hostPrompt, `"actor_name":"沈岚"`) || !strings.Contains(hostPrompt, `"event_type":"npc_dialogue"`) {
 		t.Fatalf("host prompt does not preserve the NPC speaker attribution: %s", hostPrompt)
+	}
+	for _, want := range []string{
+		"本轮玩家可见事件(JSON)",
+		`"actor_id":"npc:innkeeper"`,
+		"当前背景人群：卖花的老人",
+		"当前公开人物：",
+		"不得替玩家编写新的对白、决定或下一步行动",
+	} {
+		if !strings.Contains(hostPrompt, want) {
+			t.Fatalf("narrative prompt missing %q: %s", want, hostPrompt)
+		}
 	}
 
 	snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
@@ -322,6 +349,54 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 	}
 	if !foundInnkeeperReply {
 		t.Fatal("expected the innkeeper to own the NPC reply event")
+	}
+}
+
+func TestObserveIntentUsesActionPerceptionAndMemoryTypes(t *testing.T) {
+	if got := sourceTypeFor(true, "npc:innkeeper", "npc:innkeeper", "observe"); got != "observed_player_action" {
+		t.Fatalf("private observe source type = %q", got)
+	}
+	if kind, memory := playerExperienceMemory("observe", true, "npc:innkeeper", "npc:innkeeper", "查看柜台下方", lanternDefinition()); kind != "observed_player_action" || !strings.Contains(memory, "尝试观察") {
+		t.Fatalf("private observe memory = %q/%q", kind, memory)
+	}
+	generator := intentResultGenerator{base: &scriptedGenerator{}, intent: `{"intent_type":"observe","addressee_id":"","visibility":"public"}`}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "观察类型", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "observe-type", Input: "我仔细观察柜台下方。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+	snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, characterID := range []string{"npc:innkeeper", "npc:mercenary"} {
+		var foundPerception, foundMemory bool
+		for _, perception := range snapshot.Perceptions[characterID] {
+			if perception.SourceEventID == run.RunID+":input" {
+				foundPerception = perception.SourceType == "observed_player_action"
+			}
+		}
+		for _, memory := range snapshot.Memories[characterID] {
+			if memory.SourceEventID != run.RunID+":input" {
+				continue
+			}
+			if strings.Contains(memory.Content, "玩家说：") || memory.Kind == "heard_player" {
+				t.Fatalf("observe intent recorded as speech for %s: %+v", characterID, memory)
+			}
+			if memory.Kind == "observed_player_action" && strings.Contains(memory.Content, "玩家尝试观察") {
+				foundMemory = true
+			}
+		}
+		if !foundPerception || !foundMemory {
+			t.Fatalf("observe provenance missing for %s: perceptions=%+v memories=%+v", characterID, snapshot.Perceptions[characterID], snapshot.Memories[characterID])
+		}
 	}
 }
 
@@ -681,6 +756,49 @@ func TestRunFailureRecordsStageReasonAndSafeDiagnostic(t *testing.T) {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("failure log %q does not contain %q", logText, want)
 		}
+	}
+}
+
+func TestSuccessfulRunLogsStageProvenanceWithoutStoryContent(t *testing.T) {
+	logger := &recordingLogger{}
+	app, err := Open(context.Background(), Options{DataRoot: t.TempDir(), UserID: LocalUserID, Generator: &scriptedGenerator{}, Logger: logger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.Close() })
+	world, err := app.CreateWorld(context.Background(), "成功诊断", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "success-diagnostic", Input: "跟老板打声招呼"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+	logText := logger.String()
+	for _, want := range []string{
+		`run_id="` + run.RunID + `"`,
+		`stage="intent"`,
+		`resolved_addressee_id="npc:innkeeper"`,
+		`stage="npc"`,
+		`actor_id="npc:innkeeper"`,
+		`actor_id="npc:mercenary"`,
+		`stage="coordination"`,
+		`stage="narration"`,
+		`stage="commit"`,
+		`provider="test"`,
+		`model="injected"`,
+		`repair_count=`,
+		`elapsed_ms=`,
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("success log %q does not contain %q", logText, want)
+		}
+	}
+	if strings.Contains(logText, "跟老板打声招呼") || strings.Contains(logText, "染血") {
+		t.Fatalf("success log contains story content: %s", logText)
 	}
 }
 
