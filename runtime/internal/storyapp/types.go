@@ -204,6 +204,8 @@ type Run struct {
 	MessageSeq       int64     `json:"message_seq,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	InputID          string    `json:"-"`
+	InputSeq         int64     `json:"-"`
 	BaseTurnSeq      int64     `json:"-"`
 	BaseMessageHead  int64     `json:"-"`
 	BaseEventHead    int64     `json:"-"`
@@ -232,6 +234,11 @@ type RunRequest struct {
 	ExpectedEventHead      int64  `json:"expected_event_head"`
 	ExpectedContextEpoch   int64  `json:"expected_context_epoch"`
 	attempt                int
+	inputID                string
+	inputSeq               int64
+	requireBaseline        bool
+	expectedTurnSeq        int64
+	expectedSceneVersion   int64
 }
 
 type runRuntime struct {

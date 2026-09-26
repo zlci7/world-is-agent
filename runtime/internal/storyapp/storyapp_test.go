@@ -685,6 +685,59 @@ func TestRetryUsesOriginalWorldHead(t *testing.T) {
 	}
 }
 
+func TestRetryIsRejectedAfterAnyLaterAcceptedInput(t *testing.T) {
+	generator := &scriptedGenerator{fail: true}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "重试顺序", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "retry-order-1", Input: "第一个失败输入。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitRun(t, app, world.WorldID, first.RunID); result.Status != "failed" {
+		t.Fatalf("first run = %+v", result)
+	}
+	second, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "retry-order-2", Input: "第二个也失败的输入。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitRun(t, app, world.WorldID, second.RunID); result.Status != "failed" {
+		t.Fatalf("second run = %+v", result)
+	}
+	if _, err := app.RetryRun(context.Background(), world.WorldID, first.RunID, "retry-superseded"); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("superseded retry error = %v", err)
+	}
+}
+
+func TestLegacyRunWithoutInputSequenceCannotRetry(t *testing.T) {
+	generator := &scriptedGenerator{fail: true}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "旧重试迁移", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "legacy-retry", Input: "旧版本失败输入。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitRun(t, app, world.WorldID, run.RunID); result.Status != "failed" {
+		t.Fatalf("run = %+v", result)
+	}
+	store, err := openWorldDB(app.worldPath(world.WorldID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE runs SET input_id='',input_seq=0 WHERE run_id=?`, run.RunID); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.db.Close()
+	if _, err := app.RetryRun(context.Background(), world.WorldID, run.RunID, "legacy-retry-attempt"); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("legacy retry error = %v", err)
+	}
+}
+
 func TestSaveAsFailsWhenTheBoundaryRunFails(t *testing.T) {
 	generator := &scriptedGenerator{fail: true, delay: 40 * time.Millisecond}
 	app := newTestApp(t, generator)

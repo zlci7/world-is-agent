@@ -159,8 +159,9 @@ CREATE TABLE IF NOT EXISTS runs (
   run_id TEXT PRIMARY KEY, request_key TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL,
   input TEXT NOT NULL, addressee_id TEXT NOT NULL, attempt INTEGER NOT NULL,
   status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
-  message_seq INTEGER NOT NULL DEFAULT 0, cancel_requested INTEGER NOT NULL DEFAULT 0,
-  base_turn_seq INTEGER NOT NULL DEFAULT 0, base_message_head INTEGER NOT NULL DEFAULT 0,
+	  message_seq INTEGER NOT NULL DEFAULT 0, cancel_requested INTEGER NOT NULL DEFAULT 0,
+	  input_id TEXT NOT NULL DEFAULT '', input_seq INTEGER NOT NULL DEFAULT 0,
+	  base_turn_seq INTEGER NOT NULL DEFAULT 0, base_message_head INTEGER NOT NULL DEFAULT 0,
   base_event_head INTEGER NOT NULL DEFAULT 0, base_context_epoch INTEGER NOT NULL DEFAULT 0,
   base_scene_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -194,16 +195,25 @@ func ensureWorldSchema(db *sql.DB) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	for name := range map[string]struct{}{
-		"base_turn_seq": {}, "base_message_head": {}, "base_event_head": {},
-		"base_context_epoch": {}, "base_scene_version": {},
-	} {
-		if columns[name] {
+	additions := []struct{ name, definition string }{
+		{"input_id", `TEXT NOT NULL DEFAULT ''`}, {"input_seq", `INTEGER NOT NULL DEFAULT 0`},
+		{"base_turn_seq", `INTEGER NOT NULL DEFAULT 0`}, {"base_message_head", `INTEGER NOT NULL DEFAULT 0`},
+		{"base_event_head", `INTEGER NOT NULL DEFAULT 0`}, {"base_context_epoch", `INTEGER NOT NULL DEFAULT 0`},
+		{"base_scene_version", `INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, addition := range additions {
+		if columns[addition.name] {
 			continue
 		}
-		if _, err := db.Exec(`ALTER TABLE runs ADD COLUMN ` + name + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if _, err := db.Exec(`ALTER TABLE runs ADD COLUMN ` + addition.name + ` ` + addition.definition); err != nil {
 			return err
 		}
+	}
+	if _, err := db.Exec(`INSERT OR IGNORE INTO meta(key,value) SELECT 'input_seq', CAST(COALESCE(MAX(input_seq),0) AS TEXT) FROM runs`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_input_seq ON runs(input_seq); CREATE INDEX IF NOT EXISTS idx_runs_input_id ON runs(input_id);`); err != nil {
+		return err
 	}
 	return nil
 }
@@ -487,7 +497,7 @@ func scanRun(row interface{ Scan(...any) error }) (Run, bool, error) {
 	var r Run
 	var created, updated string
 	var foundErr error
-	foundErr = row.Scan(&r.RunID, &r.RequestKey, &r.RequestHash, &r.Input, &r.AddresseeID, &r.Attempt, &r.Status, &r.Reason, &r.Error, &r.MessageSeq, &r.BaseTurnSeq, &r.BaseMessageHead, &r.BaseEventHead, &r.BaseContextEpoch, &r.BaseSceneVersion, &created, &updated)
+	foundErr = row.Scan(&r.RunID, &r.RequestKey, &r.RequestHash, &r.Input, &r.AddresseeID, &r.Attempt, &r.Status, &r.Reason, &r.Error, &r.MessageSeq, &r.InputID, &r.InputSeq, &r.BaseTurnSeq, &r.BaseMessageHead, &r.BaseEventHead, &r.BaseContextEpoch, &r.BaseSceneVersion, &created, &updated)
 	if errors.Is(foundErr, sql.ErrNoRows) {
 		return Run{}, false, nil
 	}
@@ -500,11 +510,11 @@ func scanRun(row interface{ Scan(...any) error }) (Run, bool, error) {
 }
 
 func readRun(ctx context.Context, db *sql.DB, runID string) (Run, bool, error) {
-	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs WHERE run_id=?`, runID))
+	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,input_id,input_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs WHERE run_id=?`, runID))
 }
 
 func readRunByRequest(ctx context.Context, db *sql.DB, key string) (Run, bool, error) {
-	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs WHERE request_key=?`, key))
+	return scanRun(db.QueryRowContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,input_id,input_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs WHERE request_key=?`, key))
 }
 
 func updateRunStatus(ctx context.Context, db *sql.DB, runID, status, reason, errorText string) error {
@@ -555,7 +565,7 @@ func commitTurn(ctx context.Context, store *worldStore, run Run, narrative strin
 			return 0, err
 		}
 	}
-	if run.BaseMessageHead > 0 && (run.BaseTurnSeq != turnSeq || run.BaseMessageHead != messageHead || run.BaseEventHead != eventHead || run.BaseContextEpoch != contextEpoch || run.BaseSceneVersion != currentSceneVersion) {
+	if run.InputSeq > 0 && (run.BaseTurnSeq != turnSeq || run.BaseMessageHead != messageHead || run.BaseEventHead != eventHead || run.BaseContextEpoch != contextEpoch || run.BaseSceneVersion != currentSceneVersion) {
 		return 0, ErrVersionConflict
 	}
 	if sceneVersion < currentSceneVersion {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -104,13 +105,16 @@ func (a *App) SubmitRun(ctx context.Context, worldID string, request RunRequest)
 	if err != nil {
 		return Run{}, err
 	}
-	if request.ExpectedMessageHead > 0 && request.ExpectedMessageHead != snapshot.Summary.MessageHead {
+	if (request.requireBaseline || request.ExpectedMessageHead > 0) && request.ExpectedMessageHead != snapshot.Summary.MessageHead {
 		return Run{}, ErrVersionConflict
 	}
-	if request.ExpectedEventHead > 0 && request.ExpectedEventHead != snapshot.Summary.EventHead {
+	if (request.requireBaseline || request.ExpectedEventHead > 0) && request.ExpectedEventHead != snapshot.Summary.EventHead {
 		return Run{}, ErrVersionConflict
 	}
-	if request.ExpectedContextEpoch > 0 && request.ExpectedContextEpoch != snapshot.Summary.ContextEpoch {
+	if (request.requireBaseline || request.ExpectedContextEpoch > 0) && request.ExpectedContextEpoch != snapshot.Summary.ContextEpoch {
+		return Run{}, ErrVersionConflict
+	}
+	if request.requireBaseline && (request.expectedTurnSeq != snapshot.Summary.TurnSeq || request.expectedSceneVersion != snapshot.SceneVersion) {
 		return Run{}, ErrVersionConflict
 	}
 	if request.AddresseeID != "" {
@@ -128,20 +132,64 @@ func (a *App) SubmitRun(ctx context.Context, worldID string, request RunRequest)
 	if attempt < 1 {
 		attempt = 1
 	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Run{}, err
+	}
+	defer tx.Rollback()
+	inputID := cleanText(request.inputID)
+	inputSeq := request.inputSeq
+	if inputSeq > 0 {
+		if inputID == "" {
+			return Run{}, ErrVersionConflict
+		}
+		var latestInputSeq int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(input_seq),0) FROM runs`).Scan(&latestInputSeq); err != nil {
+			return Run{}, err
+		}
+		if latestInputSeq != inputSeq {
+			return Run{}, ErrVersionConflict
+		}
+		var completed int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE input_id=? AND status='completed'`, inputID).Scan(&completed); err != nil {
+			return Run{}, err
+		}
+		if completed > 0 {
+			return Run{}, ErrVersionConflict
+		}
+	} else {
+		value, err := metaGetTx(ctx, tx, "input_seq")
+		if err != nil {
+			return Run{}, err
+		}
+		inputSeq, err = strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return Run{}, err
+		}
+		inputSeq++
+		inputID = newID("input")
+		if err := metaSetTx(ctx, tx, "input_seq", strconv.FormatInt(inputSeq, 10)); err != nil {
+			return Run{}, err
+		}
+	}
 	run := Run{
 		RunID: newID("run"), RequestKey: request.RequestKey, RequestHash: a.hashRun(request),
 		Input: request.Input, AddresseeID: cleanText(request.AddresseeID), Attempt: attempt,
 		Status: "accepted", CreatedAt: now, UpdatedAt: now,
+		InputID: inputID, InputSeq: inputSeq,
 		BaseTurnSeq: snapshot.Summary.TurnSeq, BaseMessageHead: snapshot.Summary.MessageHead,
 		BaseEventHead: snapshot.Summary.EventHead, BaseContextEpoch: snapshot.Summary.ContextEpoch,
 		BaseSceneVersion: snapshot.SceneVersion,
 	}
-	_, err = store.db.ExecContext(ctx, `INSERT INTO runs(
-		run_id,request_key,request_hash,input,addressee_id,attempt,status,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.RunID, run.RequestKey, run.RequestHash, run.Input,
-		run.AddresseeID, run.Attempt, run.Status, run.BaseTurnSeq, run.BaseMessageHead, run.BaseEventHead,
+	_, err = tx.ExecContext(ctx, `INSERT INTO runs(
+		run_id,request_key,request_hash,input,addressee_id,attempt,status,input_id,input_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.RunID, run.RequestKey, run.RequestHash, run.Input,
+		run.AddresseeID, run.Attempt, run.Status, run.InputID, run.InputSeq, run.BaseTurnSeq, run.BaseMessageHead, run.BaseEventHead,
 		run.BaseContextEpoch, run.BaseSceneVersion, run.CreatedAt.Format(time.RFC3339Nano), run.UpdatedAt.Format(time.RFC3339Nano))
 	if err != nil {
+		return Run{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return Run{}, err
 	}
 	runCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -241,7 +289,7 @@ func (a *App) ListRuns(ctx context.Context, worldID string) ([]Run, error) {
 		return nil, err
 	}
 	defer store.db.Close()
-	rows, err := store.db.QueryContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs ORDER BY created_at DESC LIMIT 50`)
+	rows, err := store.db.QueryContext(ctx, `SELECT run_id,request_key,request_hash,input,addressee_id,attempt,status,reason,error,message_seq,input_id,input_seq,base_turn_seq,base_message_head,base_event_head,base_context_epoch,base_scene_version,created_at,updated_at FROM runs ORDER BY created_at DESC LIMIT 50`)
 	if err != nil {
 		return nil, err
 	}
@@ -301,13 +349,18 @@ func (a *App) RetryRun(ctx context.Context, worldID, runID, requestKey string) (
 	if run.Status != "failed" && run.Status != "cancelled" && run.Status != "interrupted" {
 		return Run{}, ErrInvalidRequest
 	}
+	if run.InputID == "" || run.InputSeq <= 0 {
+		return Run{}, ErrVersionConflict
+	}
 	if strings.TrimSpace(requestKey) == "" {
 		requestKey = newID("retry")
 	}
 	return a.SubmitRun(ctx, worldID, RunRequest{
 		RequestKey: requestKey, Input: run.Input, AddresseeID: run.AddresseeID, attempt: run.Attempt + 1,
 		ExpectedMessageHead: run.BaseMessageHead, ExpectedEventHead: run.BaseEventHead,
-		ExpectedContextEpoch: run.BaseContextEpoch,
+		ExpectedContextEpoch: run.BaseContextEpoch, requireBaseline: true,
+		expectedTurnSeq: run.BaseTurnSeq, expectedSceneVersion: run.BaseSceneVersion,
+		inputID: run.InputID, inputSeq: run.InputSeq,
 	})
 }
 
