@@ -266,13 +266,13 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 	perceptText := make(map[string]string)
 	for _, character := range snapshot.Characters {
 		if private && character.EntityID != recipient {
-			perceptText[character.EntityID] = "你看见玩家与沈岚低声交谈，但听不清内容。不要猜测耳语原文。"
+			perceptText[character.EntityID] = fmt.Sprintf("你看见玩家与%s低声交谈，但听不清内容。不要猜测耳语原文。", describeRecipient(def, recipient))
 		} else {
 			perceptText[character.EntityID] = run.Input
 		}
 		output.Perceptions = append(output.Perceptions, Perception{RecipientID: character.EntityID, SourceEventID: playerEventID, SourceType: sourceTypeFor(private, character.EntityID, recipient), Content: perceptText[character.EntityID], Stage: 1, SceneVersion: snapshot.SceneVersion, CreatedAt: now})
 	}
-	if err := a.decideNPCs(ctx, snapshot, run, def, perceptText, decisions, 1, ""); err != nil {
+	if err := a.decideNPCs(ctx, snapshot, def, recipient, perceptText, decisions, 1, ""); err != nil {
 		return turnOutput{}, err
 	}
 	for _, character := range snapshot.Characters {
@@ -303,7 +303,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 		follow := publicReplies(decisions, snapshot.Characters)
 		followDecisions := make(map[string]npcDecision)
 		followText := map[string]string{character.EntityID: "另一位人物刚才公开回应：" + follow}
-		if err := a.decideNPCs(ctx, snapshot, run, def, followText, followDecisions, 2, follow); err != nil {
+		if err := a.decideNPCs(ctx, snapshot, def, recipient, followText, followDecisions, 2, follow); err != nil {
 			return turnOutput{}, err
 		}
 		decision := followDecisions[character.EntityID]
@@ -327,7 +327,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 	if public == "" {
 		public = "没有人立刻回答。客栈里的雨声显得更清楚了。"
 	}
-	host, err := a.narrate(ctx, snapshot, run, def, public, private)
+	host, err := a.narrate(ctx, snapshot, run, def, recipient, public, private)
 	if err != nil {
 		return turnOutput{}, err
 	}
@@ -341,7 +341,7 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run) (turn
 			memory = "玩家私下告诉我：" + run.Input
 		} else if private {
 			kind = "observed"
-			memory = "我看见玩家和沈岚低声交谈，但没有听清内容。"
+			memory = "我看见玩家和" + describeRecipient(def, recipient) + "低声交谈，但没有听清内容。"
 		}
 		output.Memories = append(output.Memories, Memory{RecipientID: character.EntityID, Kind: kind, Content: memory, SourceEventID: playerEventID, CreatedAt: time.Now().UTC()})
 	}
@@ -390,13 +390,23 @@ func publicReplies(decisions map[string]npcDecision, characters []Character) str
 	for _, character := range characters {
 		decision := decisions[character.EntityID]
 		if decision.Speech != "" {
-			parts = append(parts, decision.Speech)
+			parts = append(parts, fmt.Sprintf("%s（%s）说：%s", character.Name, character.Role, decision.Speech))
 		}
 	}
 	return strings.Join(parts, "\n")
 }
 
-func (a *App) decideNPCs(ctx context.Context, snapshot worldSnapshot, run Run, def gameDefinition, perceptions map[string]string, decisions map[string]npcDecision, stage int, stimulus string) error {
+func describeRecipient(def gameDefinition, recipient string) string {
+	if recipient == "" {
+		return "未明确指定具体人物"
+	}
+	if character, ok := characterByID(def, recipient); ok {
+		return fmt.Sprintf("%s（%s）", character.Name, character.Role)
+	}
+	return "未明确指定具体人物"
+}
+
+func (a *App) decideNPCs(ctx context.Context, snapshot worldSnapshot, def gameDefinition, recipient string, perceptions map[string]string, decisions map[string]npcDecision, stage int, stimulus string) error {
 	a.modelMu.RLock()
 	generator := a.generator
 	a.modelMu.RUnlock()
@@ -418,7 +428,7 @@ func (a *App) decideNPCs(ctx context.Context, snapshot worldSnapshot, run Run, d
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			input := buildNPCPrompt(snapshot, character, run, perception, stage, stimulus)
+			input := buildNPCPrompt(snapshot, def, character, recipient, perception, stage, stimulus)
 			var decision npcDecision
 			callCtx, callCancel := context.WithTimeout(npcCtx, 60*time.Second)
 			defer callCancel()
@@ -450,10 +460,17 @@ func (a *App) decideNPCs(ctx context.Context, snapshot worldSnapshot, run Run, d
 	return firstErr
 }
 
-func buildNPCPrompt(snapshot worldSnapshot, character Character, run Run, perception string, stage int, stimulus string) string {
+func buildNPCPrompt(snapshot worldSnapshot, def gameDefinition, character Character, recipient string, perception string, stage int, stimulus string) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "世界：%s；地点：%s；时间：%s；阶段：%d\n", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, stage)
 	fmt.Fprintf(&builder, "你的身份：%s（%s）\n角色资料：%s\n你知道的初始背景：%s\n", character.Name, character.Role, character.Profile, character.Knowledge)
+	if recipient == "" {
+		builder.WriteString("玩家本轮没有明确指定具体对象。请根据自己的感知决定是否回应。\n")
+	} else if recipient == character.EntityID {
+		fmt.Fprintf(&builder, "玩家本轮明确对你说话，目标是%s。你是直接回应者，请优先决定你对玩家的自然回应。\n", describeRecipient(def, recipient))
+	} else {
+		fmt.Fprintf(&builder, "玩家本轮明确对%s说话。你不是直接回应者，不要代替目标人物回答；只有在有自然理由时才公开反应，否则保持沉默。\n", describeRecipient(def, recipient))
+	}
 	fmt.Fprintf(&builder, "你的近期个人感知：\n%s\n", joinPerceptions(snapshot.Perceptions[character.EntityID]))
 	fmt.Fprintf(&builder, "你的个人经历：\n%s\n", joinMemories(snapshot.Memories[character.EntityID]))
 	fmt.Fprintf(&builder, "本阶段新感知：%s\n", perception)
@@ -486,7 +503,7 @@ func joinMemories(items []Memory) string {
 	return strings.Join(parts, "\n")
 }
 
-func (a *App) narrate(ctx context.Context, snapshot worldSnapshot, run Run, def gameDefinition, public string, private bool) (hostResult, error) {
+func (a *App) narrate(ctx context.Context, snapshot worldSnapshot, run Run, def gameDefinition, recipient string, public string, private bool) (hostResult, error) {
 	a.modelMu.RLock()
 	generator := a.generator
 	a.modelMu.RUnlock()
@@ -497,7 +514,7 @@ func (a *App) narrate(ctx context.Context, snapshot worldSnapshot, run Run, def 
 	if private {
 		playerInput = "玩家进行了私下交谈；耳语原文不提供给场景主，只能根据已经公开的回应组织叙事。"
 	}
-	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n玩家本次表达：%s\n人物已确定的公开回应：%s\n在场重要人物：%s\n请组织一段玩家可见的自然正文。耳语原文只可在授权人物的内部经历中使用，不能把未公开秘密写给玩家。玩家的输入是行动尝试，不是已经成功的事实。输出 JSON，字段 narrative、time_minutes、scene。time_minutes 只能是 0 到 120 的非负整数。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, snapshot.PlayerName, playerInput, public, characterNames(snapshot.Characters))
+	input := fmt.Sprintf("剧本：%s\n地点：%s\n时间：%s\n主角：%s\n玩家本次表达：%s\n玩家本轮明确对谁说：%s\n人物已确定的公开回应（每条回应前的角色名就是实际发言者，不要把台词改分配给其他人物）：%s\n在场重要人物：%s\n请组织一段玩家可见的自然正文。耳语原文只可在授权人物的内部经历中使用，不能把未公开秘密写给玩家。玩家的输入是行动尝试，不是已经成功的事实。输出 JSON，字段 narrative、time_minutes、scene。time_minutes 只能是 0 到 120 的非负整数。", GameID, snapshot.Summary.Scene, snapshot.Summary.Clock, snapshot.PlayerName, playerInput, describeRecipient(def, recipient), public, characterNames(snapshot.Characters))
 	var result hostResult
 	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer callCancel()

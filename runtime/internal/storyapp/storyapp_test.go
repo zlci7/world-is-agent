@@ -163,6 +163,65 @@ func TestCoreTurnKeepsPrivatePerceptionAndCommitsAtomically(t *testing.T) {
 	}
 }
 
+func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
+	generator := &scriptedGenerator{}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "称呼测试", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "address-1", Input: "跟老板打声招呼"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := waitRun(t, app, world.WorldID, run.RunID)
+	if finished.Status != "completed" {
+		t.Fatalf("status = %s, error=%s", finished.Status, finished.Error)
+	}
+
+	generator.mu.Lock()
+	requests := append([]string(nil), generator.requests...)
+	generator.mu.Unlock()
+	var innkeeperPrompt, mercenaryPrompt, hostPrompt string
+	for _, request := range requests {
+		switch {
+		case strings.Contains(request, "你的身份：沈岚"):
+			innkeeperPrompt = request
+		case strings.Contains(request, "你的身份：铁杉"):
+			mercenaryPrompt = request
+		case strings.Contains(request, "人物已确定的公开回应"):
+			hostPrompt = request
+		}
+	}
+	if !strings.Contains(innkeeperPrompt, "你是直接回应者") {
+		t.Fatalf("innkeeper prompt does not identify the direct addressee: %s", innkeeperPrompt)
+	}
+	if !strings.Contains(mercenaryPrompt, "不是直接回应者") {
+		t.Fatalf("mercenary prompt does not identify the non-addressee: %s", mercenaryPrompt)
+	}
+	if !strings.Contains(hostPrompt, "玩家本轮明确对谁说：沈岚（客栈老板）") {
+		t.Fatalf("host prompt does not preserve the resolved addressee: %s", hostPrompt)
+	}
+	if !strings.Contains(hostPrompt, "沈岚（客栈老板）说：") {
+		t.Fatalf("host prompt does not preserve the NPC speaker attribution: %s", hostPrompt)
+	}
+
+	snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundInnkeeperReply bool
+	for _, event := range snapshot.Events {
+		if event.EventType == "npc_dialogue" && event.ActorID == "npc:innkeeper" {
+			foundInnkeeperReply = true
+			break
+		}
+	}
+	if !foundInnkeeperReply {
+		t.Fatal("expected the innkeeper to own the NPC reply event")
+	}
+}
+
 func TestWaitAdvancesWorldClockOnlyAfterCommit(t *testing.T) {
 	app := newTestApp(t, &scriptedGenerator{})
 	world, err := app.CreateWorld(context.Background(), "等待测试", "guided", "旅人", "", true)
