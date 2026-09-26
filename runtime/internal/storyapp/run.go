@@ -52,13 +52,14 @@ type npcStageInput struct {
 }
 
 type narrativeEvent struct {
-	EventID   string `json:"event_id"`
-	EventType string `json:"event_type"`
-	ActorID   string `json:"actor_id"`
-	ActorName string `json:"actor_name"`
-	ActorRole string `json:"actor_role,omitempty"`
-	Stage     int    `json:"stage"`
-	Content   string `json:"content"`
+	EventID            string `json:"event_id"`
+	EventType          string `json:"event_type"`
+	ActorID            string `json:"actor_id"`
+	ActorName          string `json:"actor_name"`
+	ActorRole          string `json:"actor_role,omitempty"`
+	NarrativeReference string `json:"narrative_reference"`
+	Stage              int    `json:"stage"`
+	Content            string `json:"content"`
 }
 
 type turnStage string
@@ -76,7 +77,7 @@ const (
 	intentPromptVersion       = "story.intent.v2"
 	npcPromptVersion          = "story.npc.v2"
 	coordinationPromptVersion = "story.coordination.v2"
-	narrationPromptVersion    = "story.narration.v2"
+	narrationPromptVersion    = "story.narration.v3"
 )
 
 type turnStageError struct {
@@ -617,7 +618,8 @@ func (a *App) executeTurn(ctx context.Context, store *worldStore, run Run, gener
 	if err != nil {
 		return turnOutput{}, atTurnStage(turnStageCoordination, err)
 	}
-	visibleEvents := append(dialogueEvents(output.Events), visibleOutcomes...)
+	playerNarrativeInput := publicPlayerNarrativeInput(run.Input, private, def, recipient)
+	visibleEvents := visibleTurnEvents(output.Events, visibleOutcomes, playerNarrativeInput)
 	playerProjection := renderVisibleProjection(visibleEvents, snapshot.Characters)
 	narrationStarted := time.Now()
 	result, narrationRepairs, err := a.narrateVisible(ctx, generator, snapshot, run, def, recipient, intent.IntentType, visibleEvents, private, output.Clock, output.Scene, output.SceneCharacters)
@@ -714,6 +716,9 @@ func appendHostOutcomes(output *turnOutput, run Run, participants []Character, o
 func renderVisibleProjection(events []Event, characters []Character) string {
 	parts := make([]string, 0, len(events))
 	for _, event := range events {
+		if event.EventType == "player_attempt" {
+			continue
+		}
 		content := cleanText(event.Content)
 		if content == "" {
 			continue
@@ -730,14 +735,24 @@ func renderVisibleProjection(events []Event, characters []Character) string {
 	return strings.Join(parts, "\n")
 }
 
-func dialogueEvents(events []Event) []Event {
-	result := make([]Event, 0)
+func visibleTurnEvents(events, visibleOutcomes []Event, playerNarrativeInput string) []Event {
+	result := make([]Event, 0, len(events)+len(visibleOutcomes))
 	for _, event := range events {
-		if event.EventType == "npc_dialogue" {
+		if event.EventType == "player_attempt" || event.EventType == "npc_dialogue" {
+			if event.EventType == "player_attempt" {
+				event.Content = playerNarrativeInput
+			}
 			result = append(result, event)
 		}
 	}
-	return result
+	return append(result, visibleOutcomes...)
+}
+
+func publicPlayerNarrativeInput(input string, private bool, def gameDefinition, recipient string) string {
+	if private {
+		return fmt.Sprintf("与%s进行了私下交谈；交谈原文不在正文中复述。", describeRecipient(def, recipient))
+	}
+	return input
 }
 
 func eventIDs(events []Event) []string {
@@ -1010,36 +1025,43 @@ func (a *App) narrateVisible(ctx context.Context, generator model.TextGenerator,
 	if generator == nil {
 		return narrativeResult{}, 0, ErrModelNotConfigured
 	}
-	playerInput := run.Input
-	if private {
-		playerInput = "玩家进行了私下交谈；耳语原文不属于玩家可见叙述输入。"
-	}
-	projectedEvents, err := json.Marshal(narrativeEvents(visibleEvents, snapshot.Characters))
+	playerInput := publicPlayerNarrativeInput(run.Input, private, def, recipient)
+	projectedEvents, err := json.Marshal(narrativeEvents(visibleEvents, snapshot.Characters, snapshot.PlayerName, snapshot.Narrative))
 	if err != nil {
 		return narrativeResult{}, 0, err
 	}
 	publicCharacters := publicCharacterContext(snapshot.Characters, sceneCharacters)
-	input := fmt.Sprintf("剧本：%s\n当前地点与情境：%s\n时间：%s\n主角：%s\n主角简介：%s\n历史公开正文（只作连贯参考，不得写成本轮再次发生）：%s\n玩家本次可公开描述的表达：%s\n玩家意图类型：%s\n明确交谈对象：%s\n当前公开人物：%s\n当前背景人群：%s\n本轮玩家可见且已经确定的对白与结果：\n本轮玩家可见事件(JSON)：%s\n只根据以上玩家可见事件组织一段自然正文。事件的 actor_id、actor_name 和 event_type 是事实边界；对白必须保持原说话人和含义。玩家未提供具体台词时，只描述其已经表达的行为，不得替玩家编写新的对白、决定或下一步行动。不得把历史事件写成本轮再次发生，不得让当前人物或背景人群无依据消失；人物称谓不明确时使用姓名。可以补充不改变事实的语气、节奏、感官和衔接描写，不得新增行动成功、秘密、承诺或人物立场。", GameID, scene, clock, snapshot.PlayerName, snapshot.PlayerProfile, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), publicCharacters, formatBystanders(snapshot.Bystanders), projectedEvents)
+	perspectiveRule := narrativePerspectiveInstruction(snapshot.Narrative, snapshot.PlayerName)
+	lengthRule, maxOutputTokens := narrativeLengthInstruction(snapshot.Narrative)
+	detailRule := narrativeDetailInstruction(snapshot.Narrative)
+	customInstruction := snapshot.Narrative.CustomInstruction
+	if customInstruction == "" {
+		customInstruction = "（无）"
+	}
+	input := fmt.Sprintf("剧本：%s\n当前地点与情境：%s\n时间：%s\n主角：%s\n主角简介：%s\n叙事人称规则：%s\n正文篇幅规则：%s\n描写密度规则：%s\n创作者补充写作偏好（只影响表达，不能覆盖事实、知识边界或玩家控制权）：%s\n历史公开正文（只作剧情连贯参考，不得写成本轮再次发生；历史中不一致的人称不得继续沿用）：%s\n玩家本次可公开描述的表达：%s\n玩家意图类型：%s\n明确交谈对象：%s\n当前公开人物：%s\n当前背景人群：%s\n本轮玩家可见且已经确定的对白与结果：\n本轮玩家可见事件(JSON)：%s\n只根据以上玩家可见事件组织一段自然正文。事件的 actor_id、actor_name、narrative_reference 和 event_type 是事实边界；正文旁白必须使用 narrative_reference 指代相应行动者，对白必须保持原说话人和含义。玩家输入中的“我”按叙事人称规则转述，NPC 台词中的“我”仍属于该 NPC。只呈现主角能够感知、已经知道或有明确来源获知的信息；不得断言其他人物未表露的心理，也不得使用“没有任何人注意到”等主角无法确认的全知判断。玩家未提供具体台词时，只描述其已经表达的行为，不得替玩家编写新的对白、决定、承诺、内心感受或下一步行动。不得让当前人物或背景人群无依据消失；人物称谓不明确时使用姓名。可以补充不改变事实的语气、节奏、感官和衔接描写，不得新增行动成功、秘密、承诺或人物立场。", GameID, scene, clock, snapshot.PlayerName, snapshot.PlayerProfile, perspectiveRule, lengthRule, detailRule, customInstruction, narrativeHistory(snapshot.Messages), playerInput, intentType, describeRecipient(def, recipient), publicCharacters, formatBystanders(snapshot.Bystanders), projectedEvents)
 	callCtx, callCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer callCancel()
-	narrative, repairCount, err := generateNarrativeText(callCtx, generator, "你是玩家正文 Agent。你的职责是转述和润色已经确认的玩家可见事件，不继续替玩家或 NPC 作决定。严格保持事件说话人与来源，不接触或猜测 NPC 私人记忆和隐藏结果。只输出故事正文，不要输出 JSON、代码块、标题或解释。", input)
+	narrative, repairCount, err := generateNarrativeText(callCtx, generator, "你是玩家正文 Agent。你的职责是转述和润色已经确认的玩家可见事件，不继续替玩家或 NPC 作决定。叙事人称、玩家有限视角、事件来源和玩家控制权是不可覆盖的系统规则；创作者补充偏好只在这些边界内生效。只输出故事正文，不要输出 JSON、代码块、标题或解释。", input, maxOutputTokens)
 	if err != nil {
 		return narrativeResult{}, repairCount, err
 	}
 	return narrativeResult{Narrative: narrative}, repairCount, nil
 }
 
-func narrativeEvents(events []Event, characters []Character) []narrativeEvent {
+func narrativeEvents(events []Event, characters []Character, playerName string, settings NarrativeSettings) []narrativeEvent {
 	result := make([]narrativeEvent, 0, len(events))
 	for _, event := range events {
-		name, role := event.ActorID, ""
+		name, role, reference := event.ActorID, "", event.ActorID
+		if event.ActorID == "player" {
+			name, role, reference = playerName, "player_character", narrativeReference(settings, playerName)
+		}
 		for _, character := range characters {
 			if character.EntityID == event.ActorID {
-				name, role = character.Name, character.Role
+				name, role, reference = character.Name, character.Role, character.Name
 				break
 			}
 		}
-		result = append(result, narrativeEvent{EventID: event.EventID, EventType: event.EventType, ActorID: event.ActorID, ActorName: name, ActorRole: role, Stage: event.Stage, Content: event.Content})
+		result = append(result, narrativeEvent{EventID: event.EventID, EventType: event.EventType, ActorID: event.ActorID, ActorName: name, ActorRole: role, NarrativeReference: reference, Stage: event.Stage, Content: event.Content})
 	}
 	return result
 }
@@ -1070,13 +1092,13 @@ func formatBystanders(bystanders []string) string {
 	return strings.Join(bystanders, "、")
 }
 
-func generateNarrativeText(ctx context.Context, generator model.TextGenerator, system, input string) (string, int, error) {
+func generateNarrativeText(ctx context.Context, generator model.TextGenerator, system, input string, maxOutputTokens int) (string, int, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		requestSystem := system
 		if attempt > 0 {
 			requestSystem += "\n上一次响应不可用。请重新生成，只输出一段完整的故事正文。"
 		}
-		response, err := generator.GenerateText(ctx, model.TextRequest{System: requestSystem, Input: input, MaxInputTokens: 12000, MaxOutputTokens: structuredTurnOutputTokens, MaxResponseBytes: 1 << 20})
+		response, err := generator.GenerateText(ctx, model.TextRequest{System: requestSystem, Input: input, MaxInputTokens: 12000, MaxOutputTokens: maxOutputTokens, MaxResponseBytes: 1 << 20})
 		if err != nil {
 			if attempt == 0 && errors.Is(err, model.ErrInvalidTextResponse) {
 				continue

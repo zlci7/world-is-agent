@@ -111,6 +111,8 @@ PlotCoordinator 是 StoryService 内的程序职责，负责时间、条件引�
 
 主 Agent 的编排调用与最终叙述调用分开组装上下文。编排可以使用获准的作者隐情、事件和 NPC 意图；叙述仅使用玩家允许获知的投影及公开叙事约束。一个逻辑主体不共享无边界的模型会话记录。
 
+最终叙述调用接收带 `actor_id`、人物名称、事件类型和叙事代称的玩家可见事件。玩家行动与 NPC 对白保持各自来源；私聊行动只投影交谈事实，不把耳语原文送入正文调用。正文人称、篇幅、描写密度和补充写作偏好按世界存档保存，默认分别为第二人称、标准篇幅和平衡描写。有限视角、玩家控制权、NPC 私密信息隔离和事件来源是不可覆盖的系统约束。
+
 ### 3.2 NPC Agent
 
 重要 NPC 通过 `game_id + world_id + entity_id` 定位，拥有 `definition_id` 与定义版本、个人经历、信念与关系判断、当前关切和未完成约定。从模板新开一局不继承其他世界经历；手动另存复制当前世界截至保存时的完整经历。
@@ -331,7 +333,7 @@ User、Session、UserPlayState、ActivationRequest、ModelProfileRevision、Worl
 | --- | --- |
 | host_orchestrate | 剧本模式、固定事实、相关世界剧情及条件、当前世界时间、作者授权的隐情、场景、相关事件和 NPC 意图，不默认全量读取所有私有记忆 |
 | npc_decide | 本人定义与初始知识、本人感知、本人有效记忆/关切、本阶段新感知、对本人可见的场景 |
-| host_narrate | 玩家可见的事件投影、主角、公开叙事约束、玩家回顾与有效剧情正文尾部；不读取失败或取消输入作为历史 |
+| host_narrate | 带行动者来源与叙事代称的玩家可见事件投影、主角、当前存档的正文表达设置、公开叙事约束、玩家回顾与有效剧情正文尾部；不读取失败或取消输入作为历史，私聊原文只保留为脱敏行动事实 |
 | player_digest | 玩家可见的已提交内容、对应纠正及连续覆盖范围 |
 | character_maintain | 本人已提交感知、本人状态、适用纠正与来源 |
 | suggestions | 已提交玩家可见正文、主角、公开背景和有效玩家回顾 |
@@ -594,6 +596,7 @@ Electron 开启隔离与沙箱，禁用页面 Node 能力，限制导航与 IPC�
 | `/api/v1/active-world` | 只读当前账户的 active_world_id、active_revision 和切换状态，供同账户设备同步 |
 | `/api/v1/worlds/{world}/entities` | entity_id 对应的角色实例、可见资料、定义引用、作者修订与路人提升 |
 | `/api/v1/worlds/{world}/messages` | 玩家正文游标分页，历史阅读不提供历史恢复能力 |
+| `/api/v1/worlds/{world}/agent-settings` | 更新当前世界的正文人称、篇幅、描写密度和补充写作偏好；携带 expected_context_epoch，当前回合运行时拒绝修改 |
 | `/api/v1/worlds/{world}/runs` | 输入、可选交谈对象 entity_id、幂等键、expected_active_revision 及 expected heads/epoch/运行版本；返回 202/run_id |
 | `/api/v1/worlds/{world}/runs/{run}` | 状态与非剧透阶段；取消/重试使用显式写接口 |
 | `/api/v1/worlds/{world}/corrections` | 纠正对象、范围、版本与重建进度 |

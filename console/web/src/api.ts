@@ -5,6 +5,7 @@ import {
   type ModelCandidate,
   type ModelInfo,
   type Message,
+  type NarrativeSettings,
   type Run,
   type SaveOperation,
   type Status,
@@ -57,8 +58,15 @@ export async function createWorld(input: { name: string; mode: string; player_na
   return result.world
 }
 
-export async function fetchWorld(worldID: string): Promise<{ world: WorldSummary; player_name: string; player_profile: string; messages: Message[]; characters: Character[] }> {
+export async function fetchWorld(worldID: string): Promise<{ world: WorldSummary; player_name: string; player_profile: string; narrative_settings: NarrativeSettings; messages: Message[]; characters: Character[] }> {
   return request(`/api/v1/worlds/${encodeURIComponent(worldID)}`)
+}
+
+export async function saveAgentSettings(worldID: string, settings: NarrativeSettings, expectedContextEpoch: number): Promise<{ settings: NarrativeSettings; world: WorldSummary }> {
+  return request(`/api/v1/worlds/${encodeURIComponent(worldID)}/agent-settings`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...settings, expected_context_epoch: expectedContextEpoch }),
+  })
 }
 
 export async function activateWorld(worldID: string, expectedRevision: number, requestKey = crypto.randomUUID()): Promise<Status> {

@@ -234,6 +234,10 @@ func (s *Server) handleWorldRoute(w http.ResponseWriter, r *http.Request) {
 		s.messages(w, r, worldID)
 		return
 	}
+	if len(parts) == 5 && parts[4] == "agent-settings" {
+		s.agentSettings(w, r, worldID)
+		return
+	}
 	if len(parts) == 5 && parts[4] == "entities" {
 		s.entities(w, r, worldID)
 		return
@@ -272,7 +276,7 @@ func (s *Server) world(w http.ResponseWriter, r *http.Request, id string) {
 			writeAppError(w, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"world": snapshot.Summary, "player_name": snapshot.PlayerName, "player_profile": snapshot.PlayerProfile, "messages": snapshot.Messages, "characters": storyapp.PublicCharacterViews(snapshot.Characters), "bystanders": snapshot.Bystanders})
+		writeJSON(w, 200, map[string]any{"world": snapshot.Summary, "player_name": snapshot.PlayerName, "player_profile": snapshot.PlayerProfile, "narrative_settings": snapshot.Narrative, "messages": snapshot.Messages, "characters": storyapp.PublicCharacterViews(snapshot.Characters), "bystanders": snapshot.Bystanders})
 	case "DELETE":
 		if err := s.app.DeleteWorld(r.Context(), id); err != nil {
 			writeAppError(w, err)
@@ -283,6 +287,24 @@ func (s *Server) world(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, 405, "method_not_allowed", "world uses GET or DELETE")
 	}
 }
+
+func (s *Server) agentSettings(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != "PUT" {
+		writeError(w, 405, "method_not_allowed", "agent settings use PUT")
+		return
+	}
+	var request storyapp.UpdateNarrativeSettingsRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	settings, world, err := s.app.UpdateNarrativeSettings(r.Context(), id, request)
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"settings": settings, "world": world})
+}
+
 func (s *Server) messages(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "GET" {
 		writeError(w, 405, "method_not_allowed", "messages are read with GET")

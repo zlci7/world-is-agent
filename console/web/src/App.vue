@@ -2,9 +2,9 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   activateWorld, cancelRun, createWorld, exchangeBootstrapToken, fetchCopyOperation, fetchGames,
-  fetchModel, fetchRun, fetchRuns, fetchStatus, fetchWorld, fetchWorlds, retryRun, saveAs, saveModel, submitRun,
+  fetchModel, fetchRun, fetchRuns, fetchStatus, fetchWorld, fetchWorlds, retryRun, saveAgentSettings, saveAs, saveModel, submitRun,
 } from './api'
-import { ApiError, type Character, type GameSummary, type Message, type ModelInfo, type Run, type SaveOperation, type Status, type WorldSummary } from './types'
+import { ApiError, type Character, type GameSummary, type Message, type ModelInfo, type NarrativeSettings, type Run, type SaveOperation, type Status, type WorldSummary } from './types'
 
 const status = ref<Status | null>(null)
 const games = ref<GameSummary[]>([])
@@ -26,12 +26,32 @@ const saveBusy = ref(false)
 const showNewWorld = ref(false)
 const showSaves = ref(false)
 const showModel = ref(false)
+const showAgentSettings = ref(false)
+const settingsTab = ref<'basic' | 'advanced'>('basic')
 const modelBusy = ref(false)
+const settingsBusy = ref(false)
 const copyOperation = ref<SaveOperation | null>(null)
 const newWorldKind = ref<'new' | 'save'>('new')
 const newWorld = reactive({ name: '', mode: 'guided' })
 const modelForm = reactive({ provider: 'deepseek', model: 'deepseek-v4-flash', base_url: '', api_key: '' })
+const narrativeSettings = ref<NarrativeSettings>({ perspective: 'second_person', length: 'standard', detail: 'balanced', custom_instruction: '' })
+const settingsForm = reactive<NarrativeSettings>({ perspective: 'second_person', length: 'standard', detail: 'balanced', custom_instruction: '' })
 const providerOptions = ref<{ provider: string; model: string }[]>([])
+const perspectiveOptions = [
+  { value: 'second_person', label: '第二人称', note: '正文称主角为“你”，默认沉浸式体验' },
+  { value: 'first_person', label: '第一人称', note: '正文由主角以“我”的有限视角呈现' },
+  { value: 'third_person', label: '第三人称', note: '正文使用主角姓名，不使用“来客”等泛称' },
+] as const
+const lengthOptions = [
+  { value: 'concise', label: '简短', note: '约 120–300 字' },
+  { value: 'standard', label: '标准', note: '约 300–600 字' },
+  { value: 'detailed', label: '细致', note: '约 600–1200 字' },
+] as const
+const detailOptions = [
+  { value: 'restrained', label: '克制', note: '聚焦必要动作与对白' },
+  { value: 'balanced', label: '平衡', note: '少量环境与感官细节' },
+  { value: 'rich', label: '丰富', note: '更多氛围与动作描写' },
+] as const
 
 let pollTimer: number | undefined
 let refreshPromise: Promise<void> | undefined
@@ -44,6 +64,11 @@ const hasWorld = computed(() => Boolean(currentWorld.value && activeWorldID.valu
 const canSubmit = computed(() => Boolean(input.value.trim()) && !activeRun.value && !busy.value && hasWorld.value && status.value?.ready)
 const modelStatusText = computed(() => model.value.configured ? `${model.value.provider ?? '模型'} · ${model.value.model ?? ''}` : '尚未连接模型')
 const currentGame = computed(() => games.value[0])
+const narrativeSummary = computed(() => {
+  const perspective = { first_person: '第一人称', second_person: '第二人称', third_person: '第三人称' }[narrativeSettings.value.perspective]
+  const length = { concise: '简短', standard: '标准', detailed: '细致' }[narrativeSettings.value.length]
+  return `${perspective} · ${length}正文`
+})
 
 function describe(error: unknown): string {
   if (error instanceof ApiError) {
@@ -93,6 +118,7 @@ async function loadWorld(worldID: string) {
     currentWorld.value = null
     characters.value = []
     messages.value = []
+    narrativeSettings.value = { perspective: 'second_person', length: 'standard', detail: 'balanced', custom_instruction: '' }
     return
   }
   const result = await fetchWorld(worldID)
@@ -100,8 +126,32 @@ async function loadWorld(worldID: string) {
   currentWorld.value = result.world
   playerName.value = result.player_name
   playerProfile.value = result.player_profile
+  narrativeSettings.value = result.narrative_settings
   characters.value = result.characters.filter(character => character.in_scene)
   messages.value = result.messages
+}
+
+function openAgentSettings(tab: 'basic' | 'advanced' = 'basic') {
+  Object.assign(settingsForm, narrativeSettings.value)
+  settingsTab.value = tab
+  showAgentSettings.value = true
+}
+
+async function configureAgentSettings() {
+  if (!currentWorld.value || activeRun.value) return
+  settingsBusy.value = true
+  errorMessage.value = ''
+  try {
+    const result = await saveAgentSettings(currentWorld.value.world_id, { ...settingsForm }, currentWorld.value.context_epoch)
+    narrativeSettings.value = result.settings
+    currentWorld.value = result.world
+    showAgentSettings.value = false
+    await refresh(true)
+  } catch (error) {
+    errorMessage.value = describe(error)
+  } finally {
+    settingsBusy.value = false
+  }
 }
 
 async function refreshOnce(forceWorld = false) {
@@ -120,6 +170,7 @@ async function refreshOnce(forceWorld = false) {
       nextSummary.message_head !== currentWorld.value.message_head ||
       nextSummary.event_head !== currentWorld.value.event_head ||
       nextSummary.turn_seq !== currentWorld.value.turn_seq ||
+      nextSummary.context_epoch !== currentWorld.value.context_epoch ||
       nextSummary.clock !== currentWorld.value.clock ||
       nextSummary.scene !== currentWorld.value.scene
     )
@@ -372,6 +423,7 @@ onUnmounted(() => {
       </div>
       <div class="topbar-actions">
         <span v-if="status" class="model-pill" :class="{ connected: status.ready }"><span class="status-dot"></span>{{ modelStatusText }}</span>
+        <button v-if="currentWorld" class="quiet-button" type="button" @click="openAgentSettings()">故事设置</button>
         <button v-if="status?.ready" class="quiet-button" type="button" @click="showModel = true">模型设置</button>
       </div>
     </header>
@@ -440,12 +492,34 @@ onUnmounted(() => {
         <aside class="side-column">
           <section class="side-panel character-panel"><div class="side-title"><span>眼前的人</span><span class="side-count">{{ characters.length }}</span></div><div v-for="character in characters" :key="character.entity_id" class="character-row"><div class="avatar" :class="character.entity_id.includes('mercenary') ? 'avatar-iron' : 'avatar-rose'">{{ character.name.slice(0, 1) }}</div><div><strong>{{ character.name }}</strong><span>{{ character.role }}</span></div><span class="presence"></span></div><p class="side-note">普通客人只作为场景的一部分出现。故事会记住真正与你产生经历的人。</p></section>
           <section class="side-panel"><div class="side-title"><span>当前剧本</span></div><p class="plot-copy">一封没有寄出的信、一枚染血的信蜡，还有两个人并不相同的沉默。</p><div class="mode-tag">{{ currentWorld.mode === 'guided' ? '流程型' : '开放型' }}剧本</div></section>
+          <section class="side-panel compact-panel"><div class="side-title"><span>叙事方式</span><button class="inline-action" type="button" @click="openAgentSettings()">调整</button></div><strong class="setting-summary">{{ narrativeSummary }}</strong><p class="side-note">正文始终只使用主角能够获知的内容。</p></section>
           <section class="side-panel compact-panel"><div class="side-title"><span>世界时间</span></div><strong class="clock-value">{{ currentWorld.clock }}</strong><p class="side-note">阅读、设置和等待模型不会让时间自动流逝。</p></section>
         </aside>
       </div>
     </template>
 
     <div v-if="showModel" class="modal-backdrop" @click.self="showModel = false"><form class="modal model-modal" @submit.prevent="configureModel"><div class="modal-header"><div><span class="section-kicker">模型设置</span><h2>更新连接</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showModel = false">×</button></div><p class="modal-note">新连接验证通过后才会用于下一轮故事。正在进行的回合继续使用原连接。</p><label>服务商<select v-model="modelForm.provider" @change="changeProvider"><option v-for="option in providerOptions" :key="option.provider" :value="option.provider">{{ option.provider }}</option></select></label><label>模型<input v-model="modelForm.model" autocomplete="off" /></label><label>API Key<input v-model="modelForm.api_key" type="password" autocomplete="off" placeholder="输入新的 Key；不会显示在故事里" /></label><label>自定义地址 <span class="optional">可选</span><input v-model="modelForm.base_url" autocomplete="off" placeholder="留空使用服务商默认地址" /></label><div class="modal-actions"><button class="secondary-button" type="button" @click="showModel = false">取消</button><button class="primary-button" type="submit" :disabled="modelBusy || !modelForm.api_key.trim()">{{ modelBusy ? '正在验证连接…' : '验证并保存' }}</button></div></form></div>
+
+    <div v-if="showAgentSettings" class="modal-backdrop" @click.self="showAgentSettings = false">
+      <form class="modal agent-settings-modal" @submit.prevent="configureAgentSettings">
+        <div class="modal-header"><div><span class="section-kicker">故事设置</span><h2>调整叙事 Agent</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showAgentSettings = false">×</button></div>
+        <p class="modal-note">设置只属于当前存档，并从下一轮开始生效。另存会继承当前设置。</p>
+        <div class="settings-tabs" role="tablist"><button type="button" :class="{ active: settingsTab === 'basic' }" @click="settingsTab = 'basic'">基础体验</button><button type="button" :class="{ active: settingsTab === 'advanced' }" @click="settingsTab = 'advanced'">Agent 配置</button></div>
+        <div v-if="settingsTab === 'basic'" class="settings-section">
+          <div><span class="field-label">叙事人称</span><div class="setting-options"><button v-for="option in perspectiveOptions" :key="option.value" type="button" :class="['setting-option', { selected: settingsForm.perspective === option.value }]" @click="settingsForm.perspective = option.value"><strong>{{ option.label }}</strong><span>{{ option.note }}</span></button></div></div>
+          <div><span class="field-label">正文长度</span><div class="setting-options three"><button v-for="option in lengthOptions" :key="option.value" type="button" :class="['setting-option', { selected: settingsForm.length === option.value }]" @click="settingsForm.length = option.value"><strong>{{ option.label }}</strong><span>{{ option.note }}</span></button></div></div>
+          <div><span class="field-label">描写密度</span><div class="setting-options three"><button v-for="option in detailOptions" :key="option.value" type="button" :class="['setting-option', { selected: settingsForm.detail === option.value }]" @click="settingsForm.detail = option.value"><strong>{{ option.label }}</strong><span>{{ option.note }}</span></button></div></div>
+          <div class="guardrail-note"><strong>固定为主角有限视角</strong><span>正文只呈现主角能够感知、已经知道或有明确来源获知的信息。</span></div>
+        </div>
+        <div v-else class="settings-section agent-list">
+          <article class="agent-card"><div><span class="agent-status editable">可配置</span><h3>正文 Agent</h3></div><p>把已经确定的玩家可见事件写成故事正文。人称、篇幅和描写密度由“基础体验”控制。</p><label>补充写作偏好 <span class="optional">可选</span><textarea v-model="settingsForm.custom_instruction" rows="4" maxlength="1000" placeholder="例如：对白简洁，环境描写偏冷峻。不能用来覆盖事实与角色知识边界。"></textarea><small>{{ settingsForm.custom_instruction.length }} / 1000</small></label></article>
+          <article class="agent-card"><div><span class="agent-status locked">系统约束</span><h3>场景协调 Agent</h3></div><p>裁定行动结果、时间与在场人物。它只确定事实，不直接写玩家正文。</p></article>
+          <article class="agent-card"><div><span class="agent-status locked">系统约束</span><h3>NPC Agent</h3></div><p>每名重要人物只根据自己的角色资料、感知和个人经历作出决定。</p></article>
+          <div class="guardrail-note"><strong>这些边界不能被自定义覆盖</strong><span>玩家控制权、NPC 私密信息隔离、事件来源和主角有限视角始终由系统保证。</span></div>
+        </div>
+        <div class="modal-actions"><button class="secondary-button" type="button" @click="showAgentSettings = false">取消</button><button class="primary-button" type="submit" :disabled="settingsBusy || Boolean(activeRun)">{{ activeRun ? '请等待当前回合完成' : settingsBusy ? '正在保存…' : '保存设置' }}</button></div>
+      </form>
+    </div>
 
     <div v-if="showSaves" class="modal-backdrop" @click.self="showSaves = false"><section class="modal saves-modal"><div class="modal-header"><div><span class="section-kicker">世界存档</span><h2>你的故事</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="showSaves = false">×</button></div><p class="modal-note">读取一个存档后，后续游玩会继续更新那个世界。另存不会离开当前存档。</p><div class="save-list"><button v-for="world in worlds" :key="world.world_id" class="save-item" :class="{ active: world.world_id === activeWorldID }" type="button" @click="switchWorld(world)"><span><strong>{{ world.name }}</strong><small>{{ world.clock }} · {{ world.turn_seq }} 轮 · {{ world.mode === 'guided' ? '流程型' : '开放型' }}</small></span><span>{{ world.world_id === activeWorldID ? '当前' : '读取' }}</span></button></div><div class="save-actions"><button class="secondary-button" type="button" @click="openNewWorld">新开一局</button><button v-if="currentWorld" class="primary-button" type="button" @click="openSaveAs">另存当前进度</button></div></section></div>
 
@@ -524,6 +598,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); box-shado
 .composer { padding: 16px; border-radius: 12px; }.composer-tools { justify-content: space-between; gap: 15px; }.address-label { display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 6px; margin: 0; }.address-label select { width: auto; height: 28px; padding: 0 7px; border: 0; background: transparent; color: var(--ink); font-size: 12px; }.composer-hint, .composer-footer { color: var(--muted); font-size: 11px; }.composer textarea { min-height: 80px; margin: 10px 0; border: 0; background: transparent; box-shadow: none; font-size: 15px; }.composer textarea:focus { box-shadow: none; }.composer-footer { justify-content: space-between; gap: 12px; }.composer-footer .primary-button { display: flex; gap: 8px; align-items: center; padding: 8px 13px; }
 .side-column { display: grid; align-content: start; gap: 16px; padding-top: 6px; }.side-panel { padding: 18px; border-radius: 10px; box-shadow: none; }.side-title { justify-content: space-between; margin-bottom: 15px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }.side-count { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: var(--paper-deep); color: var(--ink); font-size: 10px; }.character-row { gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }.character-row > div:nth-child(2) { display: grid; gap: 1px; }.character-row strong { font-size: 13px; }.character-row span { color: var(--muted); font-size: 11px; }.avatar { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: white; font: 15px Georgia, serif; }.avatar-rose { background: #ae6659; }.avatar-iron { background: #536b79; }.presence { width: 5px; height: 5px; margin-left: auto; color: #78a482; }.side-note { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }.plot-copy { margin: 0; font: 16px/1.55 Georgia, serif; }.mode-tag { display: inline-block; margin-top: 15px; padding: 3px 8px; border-radius: 99px; background: var(--paper-deep); color: var(--muted); font-size: 11px; }.clock-value { font: 27px Georgia, serif; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(37, 34, 30, .34); }.modal { width: min(100%, 560px); max-height: calc(100vh - 40px); overflow: auto; padding: 28px; border-radius: 14px; }.modal-header { justify-content: space-between; gap: 20px; }.modal-header h2 { margin: 6px 0 0; font-size: 30px; }.save-list { display: grid; gap: 7px; }.save-item { display: flex; align-items: center; justify-content: space-between; gap: 15px; width: 100%; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }.save-item:hover, .save-item.active { border-color: var(--gold); background: #fffbf1; }.save-item span:first-child { display: grid; gap: 2px; }.save-item small { color: var(--muted); }.save-item > span:last-child { color: var(--accent); font-size: 11px; }.save-actions, .modal-actions { justify-content: flex-end; gap: 10px; margin-top: 24px; }.mode-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.field-label { display: block; margin: 15px 0 6px; color: var(--muted); font-size: 12px; }.mode-option { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); text-align: left; }.mode-option span { color: var(--muted); font-size: 11px; line-height: 1.45; }.mode-option.selected { border-color: var(--accent); background: #fff4ef; }.mode-option.selected strong { color: var(--accent); }
+.inline-action { padding: 0; border: 0; background: transparent; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: none; }.inline-action:hover { color: var(--accent-dark); }.setting-summary { display: block; font: 18px/1.35 Georgia, serif; }.agent-settings-modal { width: min(100%, 760px); }.settings-tabs { display: flex; gap: 22px; margin: 0 0 22px; border-bottom: 1px solid var(--line); }.settings-tabs button { margin-bottom: -1px; padding: 10px 1px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-weight: 700; }.settings-tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }.settings-section { display: grid; gap: 20px; }.settings-section .field-label { margin-top: 0; }.setting-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }.setting-option { display: grid; align-content: start; gap: 5px; min-height: 88px; padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--ink); text-align: left; }.setting-option span { color: var(--muted); font-size: 11px; line-height: 1.5; }.setting-option:hover { border-color: #c8b59b; }.setting-option.selected { border-color: var(--accent); background: #fff4ef; }.setting-option.selected strong { color: var(--accent); }.guardrail-note { display: grid; gap: 3px; padding: 13px 15px; border-left: 3px solid var(--gold); background: #faf5ea; }.guardrail-note strong { font-size: 12px; }.guardrail-note span { color: var(--muted); font-size: 11px; }.agent-list { gap: 10px; }.agent-card { padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: #fffefa; }.agent-card > div { display: flex; align-items: center; gap: 9px; }.agent-card h3 { margin: 0; font: 600 17px/1.3 Georgia, serif; }.agent-card p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }.agent-card label small { justify-self: end; color: #aaa095; }.agent-status { padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 750; }.agent-status.editable { background: #f4e4dd; color: var(--accent-dark); }.agent-status.locked { background: var(--paper-deep); color: var(--muted); }
 @media (max-width: 860px) { .shell { width: min(100% - 28px, 680px); padding-top: 18px; }.welcome-grid, .game-layout { grid-template-columns: 1fr; gap: 28px; }.welcome-grid { min-height: auto; padding: 45px 0; }.welcome-copy h1 { font-size: 52px; }.side-column { grid-template-columns: 1fr 1fr; }.compact-panel { grid-column: span 2; }.story-heading h1 { font-size: 30px; } }
-@media (max-width: 520px) { .topbar { align-items: flex-start; }.topbar-actions { display: grid; justify-items: end; gap: 4px; }.brand-subtitle { display: none; }.welcome-copy h1 { font-size: 43px; }.side-column { grid-template-columns: 1fr; }.compact-panel { grid-column: auto; }.message { max-width: 94%; }.mode-options { grid-template-columns: 1fr; }.modal { padding: 21px; } }
+@media (max-width: 520px) { .topbar { align-items: flex-start; }.topbar-actions { display: grid; justify-items: end; gap: 4px; }.brand-subtitle { display: none; }.welcome-copy h1 { font-size: 43px; }.side-column { grid-template-columns: 1fr; }.compact-panel { grid-column: auto; }.message { max-width: 94%; }.mode-options, .setting-options { grid-template-columns: 1fr; }.modal { padding: 21px; }.setting-option { min-height: auto; }.settings-tabs { gap: 16px; } }
 </style>

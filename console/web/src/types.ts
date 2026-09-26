@@ -46,6 +46,17 @@ export interface Character {
   in_scene: boolean
 }
 
+export type NarrativePerspective = 'first_person' | 'second_person' | 'third_person'
+export type NarrativeLength = 'concise' | 'standard' | 'detailed'
+export type NarrativeDetail = 'restrained' | 'balanced' | 'rich'
+
+export interface NarrativeSettings {
+  perspective: NarrativePerspective
+  length: NarrativeLength
+  detail: NarrativeDetail
+  custom_instruction: string
+}
+
 export interface Message {
   seq: number
   message_id: string

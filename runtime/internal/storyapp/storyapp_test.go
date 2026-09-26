@@ -326,10 +326,14 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 	}
 	for _, want := range []string{
 		"本轮玩家可见事件(JSON)",
+		`"actor_id":"player"`,
+		`"narrative_reference":"你"`,
 		`"actor_id":"npc:innkeeper"`,
 		"当前背景人群：卖花的老人",
 		"当前公开人物：",
-		"不得替玩家编写新的对白、决定或下一步行动",
+		"使用第二人称有限视角",
+		"不得使用“没有任何人注意到”",
+		"不得替玩家编写新的对白、决定、承诺、内心感受或下一步行动",
 	} {
 		if !strings.Contains(hostPrompt, want) {
 			t.Fatalf("narrative prompt missing %q: %s", want, hostPrompt)
@@ -349,6 +353,140 @@ func TestPublicAddressKeepsNPCAttribution(t *testing.T) {
 	}
 	if !foundInnkeeperReply {
 		t.Fatal("expected the innkeeper to own the NPC reply event")
+	}
+}
+
+func TestNarrativeSettingsPersistAndShapeNarratorPrompt(t *testing.T) {
+	generator := &scriptedGenerator{}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "叙事设置", "guided", "岚舟", "寻找答案", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := app.ReadWorld(context.Background(), world.WorldID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Narrative != defaultNarrativeSettings() {
+		t.Fatalf("default narrative settings = %+v", snapshot.Narrative)
+	}
+
+	settings, summary, err := app.UpdateNarrativeSettings(context.Background(), world.WorldID, UpdateNarrativeSettingsRequest{
+		Perspective:          PerspectiveFirstPerson,
+		Length:               NarrativeLengthConcise,
+		Detail:               NarrativeDetailRich,
+		CustomInstruction:    "对白简洁，环境偏冷峻。",
+		ExpectedContextEpoch: world.ContextEpoch,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Perspective != PerspectiveFirstPerson || summary.ContextEpoch != world.ContextEpoch+1 {
+		t.Fatalf("updated settings/summary = %+v/%+v", settings, summary)
+	}
+
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "settings-turn", Input: "跟老板打声招呼", ExpectedContextEpoch: summary.ContextEpoch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+
+	generator.mu.Lock()
+	requests := append([]string(nil), generator.requests...)
+	generator.mu.Unlock()
+	var narratorPrompt string
+	for _, request := range requests {
+		if strings.Contains(request, "本轮玩家可见且已经确定的对白与结果") {
+			narratorPrompt = request
+		}
+	}
+	for _, want := range []string{
+		"使用第一人称有限视角",
+		"通常为 120 至 300 个汉字",
+		"较丰富的感官、环境和动作细节",
+		"对白简洁，环境偏冷峻。",
+		`"actor_id":"player"`,
+		`"actor_name":"岚舟"`,
+		`"narrative_reference":"我"`,
+	} {
+		if !strings.Contains(narratorPrompt, want) {
+			t.Fatalf("narrator prompt missing %q: %s", want, narratorPrompt)
+		}
+	}
+
+	reloaded, err := app.ReadWorld(context.Background(), world.WorldID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Narrative != settings {
+		t.Fatalf("persisted settings = %+v, want %+v", reloaded.Narrative, settings)
+	}
+}
+
+func TestNarrativeSettingsValidateEpochAndBusyWorld(t *testing.T) {
+	generator := &scriptedGenerator{delay: 80 * time.Millisecond}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "叙事设置冲突", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := UpdateNarrativeSettingsRequest{
+		Perspective: PerspectiveSecondPerson,
+		Length:      NarrativeLengthStandard,
+		Detail:      NarrativeDetailBalanced,
+	}
+	invalid := valid
+	invalid.Perspective = "omniscient"
+	if _, _, err := app.UpdateNarrativeSettings(context.Background(), world.WorldID, invalid); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("invalid perspective error = %v", err)
+	}
+	stale := valid
+	stale.ExpectedContextEpoch = world.ContextEpoch + 1
+	if _, _, err := app.UpdateNarrativeSettings(context.Background(), world.WorldID, stale); !errors.Is(err, ErrVersionConflict) {
+		t.Fatalf("stale settings error = %v", err)
+	}
+
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "settings-busy", Input: "我观察柜台。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := app.UpdateNarrativeSettings(context.Background(), world.WorldID, valid); !errors.Is(err, ErrWorldBusy) {
+		t.Fatalf("active-run settings error = %v", err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+}
+
+func TestPrivatePlayerTextIsRedactedFromNarratorEvents(t *testing.T) {
+	generator := &scriptedGenerator{}
+	app := newTestApp(t, generator)
+	world, err := app.CreateWorld(context.Background(), "私聊叙事边界", "guided", "旅人", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := app.SubmitRun(context.Background(), world.WorldID, RunRequest{RequestKey: "private-narration", Input: "我私下对老板说：今晚有人会来搜查。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished := waitRun(t, app, world.WorldID, run.RunID); finished.Status != "completed" {
+		t.Fatalf("run = %+v", finished)
+	}
+	generator.mu.Lock()
+	requests := append([]string(nil), generator.requests...)
+	generator.mu.Unlock()
+	for _, request := range requests {
+		if !strings.Contains(request, "本轮玩家可见且已经确定的对白与结果") {
+			continue
+		}
+		if strings.Contains(request, "今晚有人会来搜查") {
+			t.Fatalf("private player text leaked to narrator: %s", request)
+		}
+		if !strings.Contains(request, "与沈岚（客栈老板）进行了私下交谈") {
+			t.Fatalf("redacted player event missing: %s", request)
+		}
 	}
 }
 
@@ -534,6 +672,13 @@ func TestSaveAsAndReadContinueIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wantedSettings := NarrativeSettings{Perspective: PerspectiveThirdPerson, Length: NarrativeLengthDetailed, Detail: NarrativeDetailRestrained, CustomInstruction: "对白留白。"}
+	if _, _, err := app.UpdateNarrativeSettings(context.Background(), original.WorldID, UpdateNarrativeSettingsRequest{
+		Perspective: wantedSettings.Perspective, Length: wantedSettings.Length, Detail: wantedSettings.Detail,
+		CustomInstruction: wantedSettings.CustomInstruction, ExpectedContextEpoch: original.ContextEpoch,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	run, err := app.SubmitRun(context.Background(), original.WorldID, RunRequest{RequestKey: "save-input", Input: "我观察窗边。"})
 	if err != nil {
 		t.Fatal(err)
@@ -590,6 +735,9 @@ func TestSaveAsAndReadContinueIsolated(t *testing.T) {
 	}
 	if originalSnapshot.Summary.TurnSeq != 1 || branchSnapshot.Summary.TurnSeq != 2 {
 		t.Fatalf("turns = %d/%d", originalSnapshot.Summary.TurnSeq, branchSnapshot.Summary.TurnSeq)
+	}
+	if branchSnapshot.Narrative != wantedSettings {
+		t.Fatalf("branch narrative settings = %+v, want %+v", branchSnapshot.Narrative, wantedSettings)
 	}
 }
 

@@ -134,6 +134,34 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 	if world.WorldID == "" || world.MessageHead != 1 || world.EventHead != 1 {
 		t.Fatalf("created world = %+v", world)
 	}
+	response, body = requestJSON(t, client, http.MethodPut, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"/agent-settings", map[string]any{
+		"perspective":            "omniscient",
+		"length":                 "standard",
+		"detail":                 "balanced",
+		"expected_context_epoch": world.ContextEpoch,
+	})
+	if response.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "invalid_request") {
+		t.Fatalf("invalid agent settings = %d, body = %s", response.StatusCode, body)
+	}
+	response, body = requestJSON(t, client, http.MethodPut, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"/agent-settings", map[string]any{
+		"perspective":            "third_person",
+		"length":                 "concise",
+		"detail":                 "restrained",
+		"custom_instruction":     "对白留白。",
+		"expected_context_epoch": world.ContextEpoch,
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("agent settings = %d, body = %s", response.StatusCode, body)
+	}
+	var settingsEnvelope struct {
+		Settings storyapp.NarrativeSettings `json:"settings"`
+		World    storyapp.WorldSummary      `json:"world"`
+	}
+	decodeJSONBody(t, body, &settingsEnvelope)
+	if settingsEnvelope.Settings.Perspective != storyapp.PerspectiveThirdPerson || settingsEnvelope.World.ContextEpoch != world.ContextEpoch+1 {
+		t.Fatalf("agent settings response = %+v", settingsEnvelope)
+	}
+	world = settingsEnvelope.World
 	response, body = requestJSON(t, client, http.MethodGet, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"/runs", nil)
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"runs":[]`) {
 		t.Fatalf("empty run list = %d, body = %s", response.StatusCode, body)
@@ -145,7 +173,7 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 		"expected_active_revision": 1,
 		"expected_message_head":    1,
 		"expected_event_head":      1,
-		"expected_context_epoch":   1,
+		"expected_context_epoch":   world.ContextEpoch,
 	})
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("submit run = %d, body = %s", response.StatusCode, body)
@@ -189,9 +217,10 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 		t.Fatalf("read world = %d, body = %s", response.StatusCode, body)
 	}
 	var readEnvelope struct {
-		Messages   []storyapp.Message         `json:"messages"`
-		Bystanders []string                   `json:"bystanders"`
-		Characters []storyapp.PublicCharacter `json:"characters"`
+		Messages          []storyapp.Message         `json:"messages"`
+		Bystanders        []string                   `json:"bystanders"`
+		Characters        []storyapp.PublicCharacter `json:"characters"`
+		NarrativeSettings storyapp.NarrativeSettings `json:"narrative_settings"`
 	}
 	decodeJSONBody(t, body, &readEnvelope)
 	if len(readEnvelope.Messages) != 3 || readEnvelope.Messages[1].Kind != "player" || readEnvelope.Messages[2].Kind != "narrative" {
@@ -199,6 +228,9 @@ func TestLocalSessionAndStoryRoutes(t *testing.T) {
 	}
 	if len(readEnvelope.Bystanders) != 10 || len(readEnvelope.Characters) != 2 || strings.Contains(string(body), "染血的信蜡") || strings.Contains(string(body), "知道失踪信使曾在今晚来过") {
 		t.Fatalf("player projection leaked or is incomplete: %s", body)
+	}
+	if readEnvelope.NarrativeSettings != settingsEnvelope.Settings {
+		t.Fatalf("narrative settings = %+v, want %+v", readEnvelope.NarrativeSettings, settingsEnvelope.Settings)
 	}
 
 	response, body = requestJSON(t, client, http.MethodPost, server.URL()+"/api/v1/worlds/"+url.PathEscape(world.WorldID)+"/save-as", map[string]any{

@@ -20,6 +20,7 @@ type worldSnapshot struct {
 	Summary       WorldSummary
 	PlayerName    string
 	PlayerProfile string
+	Narrative     NarrativeSettings
 	Bystanders    []string
 	SceneVersion  int64
 	Characters    []Character
@@ -266,6 +267,8 @@ func initializeWorld(ctx context.Context, store *worldStore, userID, worldID str
 		"scene_version": "1", "scene": def.Scene, "clock": def.Clock,
 		"player_name": playerName, "player_profile": playerProfile, "status": "ready",
 		"generation": "1", "plot_status": "active", "bystanders": marshalJSON(def.Bystanders),
+		"narrative_perspective": PerspectiveSecondPerson, "narrative_length": NarrativeLengthStandard,
+		"narrative_detail": NarrativeDetailBalanced, "narrative_custom_instruction": "",
 	}
 	for key, value := range values {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES(?,?)`, key, value); err != nil {
@@ -338,6 +341,7 @@ func loadWorldSnapshot(ctx context.Context, store *worldStore, limit int) (world
 	if err != nil {
 		return out, err
 	}
+	out.Narrative = loadNarrativeSettings(ctx, store.db)
 	for key, target := range map[string]*int64{"turn_seq": &out.Summary.TurnSeq, "message_head": &out.Summary.MessageHead, "event_head": &out.Summary.EventHead, "context_epoch": &out.Summary.ContextEpoch, "scene_version": &out.SceneVersion} {
 		*target, err = metaInt(ctx, store.db, key)
 		if err != nil {
