@@ -9,15 +9,17 @@ World Is Agent 是一个本机运行的 AI 叙事游戏。玩家在浏览器中�
 运行环境：Windows、Go 1.25+；首次从源码构建工作台还需要 Node.js 20+。
 
 ```powershell
-cd D:\data\project\game-agent\world-is-agent\console\web
-npm ci
-npm run build
-
-cd ..\..
-go run ./runtime/cmd/server
+cd D:\data\project\game-agent\world-is-agent
+.\scripts\start-phase12.ps1 -Rebuild
 ```
 
-Runtime 会打开本地浏览器并打印带会话令牌的工作台地址。若没有自动打开，复制日志中的 `local client` 地址到浏览器即可。
+日常启动已经构建好的工作台：
+
+```powershell
+.\scripts\start-phase12.ps1
+```
+
+需要重新安装前端依赖并构建工作台时使用 `-Rebuild`，也可以使用 `-True`。Runtime 会打开本地浏览器并打印带会话令牌的工作台地址。若没有自动打开，复制日志中的 `local client` 地址到浏览器即可。
 
 首次进入时，在工作台填写 DeepSeek 或 OpenAI 的 API Key。Runtime 会先验证连接，再将凭据保存在本机数据目录的 secrets 文件中；普通配置、页面响应和故事存档都不包含 API Key。
 
