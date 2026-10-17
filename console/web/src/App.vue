@@ -1,480 +1,146 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ApiError, StateReconfiguring, type Status, type Turn } from './types'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { ApiError, type Status, type Turn } from './types'
 import { exchangeBootstrapToken, fetchStatus, fetchTurns } from './api'
-import {
-  createContextResponseGate,
-  createLatestResponseGate,
-  disconnectedConsoleState,
-} from './latest-response'
+import { createContextResponseGate, createLatestResponseGate } from './latest-response'
+import { errorText, gameName, localTime } from './i18n/zh-CN'
 import Setup from './Setup.vue'
 import GameSetup from './GameSetup.vue'
+import Tasks from './tasks/Tasks.vue'
+import UiIcon from './UiIcon.vue'
+import './style.css'
 
+const views = { overview:'运行概览', tasks:'预约任务', settings:'游戏与模型', logs:'运行记录' }
+type View = keyof typeof views
+const view = ref<View>('tasks')
+const descriptions = { overview:'游戏、模型与角色任务，都在这里。', tasks:'查看已经登记的约定，以及真实的执行结果。', settings:'让游戏与模型保持连接。', logs:'查看当前游戏最近发生的角色回合。' }
+const menuIcons = { overview:'home', tasks:'book', settings:'settings', logs:'history' }
 const status = ref<Status | null>(null)
 const turns = ref<Turn[]>([])
-const statusProblem = ref<string | null>(null)
-const turnsProblem = ref<string | null>(null)
-const unauthorized = ref(false)
 const loaded = ref(false)
+const statusProblem = ref('')
+const turnsProblem = ref('')
+const unauthorized = ref(false)
+const statusLoading = ref(false)
 const turnsLoading = ref(false)
-const turnsGameID = ref('')
 const statusMutationActive = ref(false)
-const modelSettingsOpen = ref(false)
+const modelSettingsOpen = ref(true)
+const lastGame = ref('')
+const lastRead = ref('')
+const tasksRef = ref<InstanceType<typeof Tasks> | null>(null)
 const statusGate = createLatestResponseGate()
 const turnsGate = createContextResponseGate()
-
+let statusController: AbortController | undefined
+let turnsController: AbortController | undefined
 let timer: number | undefined
-
-const recoverableGameReasons = new Set([
-  'game_not_selected', 'invalid_game', 'game_selection_invalid', 'profile_assets_missing',
-  'profile_invalid', 'initialization_failed', 'model_configuration_required',
-])
-const showGameSetup = computed(() => loaded.value && status.value !== null && (
-  status.value.state === 'ready' ||
-  (status.value.state === 'needs_configuration' && recoverableGameReasons.has(status.value.reason_code ?? ''))
-))
-const showModelSetup = computed(() => {
-  const current = status.value
-  if (!loaded.value || current === null) return false
-  if (modelSettingsOpen.value && current.ready) return true
-  return current.state === 'needs_configuration' && current.configured_game !== null &&
-    (current.reason_code === 'model_configuration_required' ||
-      (current.reason_code === 'initialization_failed' &&
-        (current.model === undefined || current.model_error !== undefined)))
-})
-const setupMode = computed(() => showGameSetup.value || showModelSetup.value)
-const configurationBusy = computed(() =>
-  statusMutationActive.value || status.value?.state === StateReconfiguring,
-)
 const currentGameID = computed(() => status.value?.loaded_game?.id ?? '')
-const currentGameTitle = computed(() =>
-  status.value?.loaded_game?.title || status.value?.loaded_game?.id || 'No game selected',
-)
-const runtimeLabel = computed(() => {
-  if (!status.value) return loaded.value ? 'Disconnected' : 'Connecting'
-  if (status.value.state === StateReconfiguring) return 'Applying settings'
-  return status.value.ready ? 'Ready' : status.value.state.replaceAll('_', ' ')
-})
-const adapterLabel = computed(() => {
-  const count = status.value?.adapters.length ?? 0
-  return count === 0 ? 'Waiting for adapter' : `${count} connected`
-})
-const modelLabel = computed(() => {
-  const model = status.value?.model
-  if (!model) return status.value?.model_error || 'Not configured'
-  return `${model.provider || 'default'} / ${model.model || 'default'}`
-})
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function noteUnauthorized(error: unknown) {
-  if (error instanceof ApiError && error.status === 401) unauthorized.value = true
-}
-
-function clearTurnContext(gameID = '') {
-  turnsGate.invalidate()
-  turns.value = []
-  turnsProblem.value = null
-  turnsLoading.value = false
-  turnsGameID.value = gameID
-}
-
-async function refreshStatus(): Promise<Status | null | undefined> {
-  if (statusMutationActive.value) return undefined
-  const request = statusGate.begin()
-  try {
-    const updated = await fetchStatus()
-    if (!statusGate.isLatest(request)) return undefined
-    status.value = updated
-    statusProblem.value = null
-    return updated
-  } catch (error) {
-    if (!statusGate.isLatest(request)) return undefined
-    noteUnauthorized(error)
-    statusProblem.value = describe(error)
-    const disconnected = disconnectedConsoleState<Turn>()
-    status.value = disconnected.status
-    turns.value = disconnected.turns
-    turnsGate.invalidate()
-    turnsLoading.value = false
-    turnsGameID.value = ''
-    modelSettingsOpen.value = false
-    return null
-  }
-}
-
-function beginStatusMutation(): number {
-  statusMutationActive.value = true
-  return statusGate.beginMutation()
-}
-
-function acceptStatus(updated: Status, request: number) {
-  if (!statusGate.finishMutation(request)) return
-  const previousGameID = currentGameID.value
-  status.value = updated
-  statusProblem.value = null
-  statusMutationActive.value = false
-  const nextGameID = updated.loaded_game?.id ?? ''
-  if (nextGameID !== previousGameID) clearTurnContext(nextGameID)
-  if (nextGameID) void refreshTurns(nextGameID)
-}
-
-function closeModelSettings() {
-  modelSettingsOpen.value = false
-}
+const currentScope = computed(() => JSON.stringify([currentGameID.value,status.value?.instance_id ?? '']))
+const theme = computed(() => ({'stardew-valley':'farm',rimworld:'colony'} as Record<string,string>)[currentGameID.value || lastGame.value] || 'neutral')
+const configurationBusy = computed(() => statusMutationActive.value || status.value?.state === 'reconfiguring')
+const runtimeLabel = computed(() => !status.value ? loaded.value ? '运行服务已断开' : '正在连接运行服务' : configurationBusy.value ? '正在应用配置' : status.value.ready ? '运行服务已就绪' : status.value.state==='blocked' ? '运行服务需要处理' : '等待完成配置')
+const modelLabel = computed(() => status.value?.model ? `${status.value.model.provider || '默认服务'} · ${status.value.model.model || '默认模型'}` : '尚未配置')
+const recoverableReasons = new Set(['game_not_selected','invalid_game','game_selection_invalid','profile_assets_missing','profile_invalid','initialization_failed','model_configuration_required'])
+const showGameSetup = computed(() => status.value && (status.value.ready || (status.value.state==='needs_configuration' && recoverableReasons.has(status.value.reason_code ?? ''))))
+const showModelSetup = computed(() => status.value && ((status.value.ready && modelSettingsOpen.value) || (status.value.state==='needs_configuration' && status.value.configured_game && (status.value.reason_code==='model_configuration_required' || (status.value.reason_code==='initialization_failed' && (!status.value.model || status.value.model_error))))))
 
 function noteReadFailure(error: unknown) {
-  noteUnauthorized(error)
+  if (error instanceof ApiError && error.status===401) { unauthorized.value=true; status.value=null; clearTurns() }
 }
-
-async function recoverAfterMutationFailure(error: unknown, request: number) {
-  noteUnauthorized(error)
+function clearTurns() { turnsController?.abort(); turnsGate.invalidate(); turns.value=[]; turnsProblem.value=''; turnsLoading.value=false }
+function installStatus(updated: Status) {
+  const old=currentScope.value
+  status.value=updated
+  if (updated.loaded_game?.id) lastGame.value=updated.loaded_game.id
+  if (old!==currentScope.value) clearTurns()
+  statusProblem.value=''; lastRead.value=new Date().toISOString()
+  if (!loaded.value && !updated.ready) view.value='settings'
+}
+async function refreshStatus(): Promise<Status | undefined> {
+  if (statusMutationActive.value || statusLoading.value || document.hidden) return
+  const request=statusGate.begin()
+  const controller=new AbortController(); statusController=controller; statusLoading.value=true
+  try {
+    const updated=await fetchStatus(controller.signal)
+    if (!statusGate.isLatest(request)) return
+    installStatus(updated); return updated
+  } catch (error) {
+    if (controller.signal.aborted || !statusGate.isLatest(request)) return
+    noteReadFailure(error); statusProblem.value=errorText(error); status.value=null; clearTurns()
+  } finally { if (statusController===controller) statusLoading.value=false }
+}
+function beginStatusMutation(): number {
+  statusController?.abort(); statusLoading.value=false; clearTurns(); statusMutationActive.value=true
+  return statusGate.beginMutation()
+}
+function acceptStatus(updated: Status,request: number) {
   if (!statusGate.finishMutation(request)) return
-  statusMutationActive.value = false
-  const updated = await refreshStatus()
-  if (updated?.loaded_game?.id) await refreshTurns(updated.loaded_game.id)
+  statusMutationActive.value=false; installStatus(updated)
+  if (view.value!=='settings') void refreshTurns()
 }
-
-async function refreshTurns(gameID: string) {
-  if (!gameID) {
-    clearTurnContext()
-    return
-  }
-  if (turnsGameID.value !== gameID) {
-    turns.value = []
-    turnsProblem.value = null
-    turnsGameID.value = gameID
-  }
-  const request = turnsGate.begin(gameID)
-  turnsLoading.value = true
+async function recoverAfterMutationFailure(error: unknown,request: number) {
+  noteReadFailure(error)
+  if (!statusGate.finishMutation(request)) return
+  statusMutationActive.value=false; await refreshStatus()
+}
+async function refreshTurns() {
+  if (!status.value?.ready || !currentGameID.value || turnsLoading.value || document.hidden) return
+  const request=turnsGate.begin(currentScope.value)
+  const controller=new AbortController(); turnsController=controller; turnsLoading.value=true
   try {
-    const response = await fetchTurns(gameID)
-    if (!turnsGate.accept(request, currentGameID.value)) return
-    turns.value = response.turns
-    turnsProblem.value = null
+    const response=await fetchTurns(currentGameID.value,50,controller.signal)
+    if (!turnsGate.accept(request,currentScope.value)) return
+    turns.value=response.turns; turnsProblem.value=''
   } catch (error) {
-    if (!turnsGate.accept(request, currentGameID.value)) return
-    noteUnauthorized(error)
-    turnsProblem.value = describe(error)
-  } finally {
-    if (turnsGate.accept(request, currentGameID.value)) turnsLoading.value = false
-  }
+    if (controller.signal.aborted || !turnsGate.accept(request,currentScope.value)) return
+    noteReadFailure(error); turnsProblem.value=errorText(error)
+  } finally { if (turnsController===controller) turnsLoading.value=false }
 }
-
 async function refresh() {
-  const updated = await refreshStatus()
-  if (updated?.loaded_game?.id) await refreshTurns(updated.loaded_game.id)
-  loaded.value = true
+  await refreshStatus(); loaded.value=true
+  if (view.value==='overview' || view.value==='logs') await refreshTurns()
 }
-
-onMounted(async () => {
-  try {
-    await exchangeBootstrapToken()
-  } catch (error) {
-    noteUnauthorized(error)
-    statusProblem.value = describe(error)
-  }
-  await refresh()
-  timer = window.setInterval(refresh, 2000)
+function manualRefresh() { void refresh(); void tasksRef.value?.refresh(true) }
+watch(view,next=>{ if (next==='settings') modelSettingsOpen.value=true; if (next==='overview' || next==='logs') void refreshTurns() })
+function visibilityChanged() { if (document.hidden) { statusController?.abort(); clearTurns() } else void refresh() }
+onMounted(async()=>{
+  try { await exchangeBootstrapToken() } catch(error) { noteReadFailure(error); statusProblem.value=errorText(error) }
+  await refresh(); timer=window.setInterval(()=>void refresh(),2000)
+  document.addEventListener('visibilitychange',visibilityChanged)
 })
-
-onUnmounted(() => {
-  if (timer !== undefined) window.clearInterval(timer)
-})
-
-function formatTime(value: string): string {
-  if (!value) return '—'
-  const time = new Date(value)
-  return Number.isNaN(time.getTime()) ? value : time.toLocaleTimeString()
-}
-
-function formatDuration(milliseconds: number): string {
-  if (!milliseconds) return '—'
-  return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`
-}
-
-function statusLabel(turn: Turn): string {
-  if (turn.status === 'completed') return 'settled'
-  if (turn.status === 'failed') return turn.reason || 'failed'
-  return 'unfinished'
-}
+onUnmounted(()=>{ window.clearInterval(timer); statusController?.abort(); clearTurns(); document.removeEventListener('visibilitychange',visibilityChanged) })
+function duration(value: number) { return value<1000 ? `${value} 毫秒` : `${(value/1000).toFixed(1)} 秒` }
+const turnLabel = (turn: Turn) => ({completed:'已结束',failed:'未完成',unfinished:'尚未结束'})[turn.status]
 </script>
 
 <template>
-  <main>
-    <header class="app-header">
-      <div>
-        <h1>World Is Agent</h1>
-        <p class="tagline">Game-native Agent Runtime</p>
-      </div>
-      <span class="runtime-state" :class="{ ready: status?.ready, offline: loaded && !status }">
-        <span class="state-dot"></span>{{ runtimeLabel }}
-      </span>
-    </header>
-
-    <p v-if="unauthorized" class="banner banner-error">
-      This browser has no Runtime session. Reopen the URL printed by the Runtime to reconnect.
-    </p>
-
-    <section v-if="!status" class="card disconnected-card">
-      <div>
-        <h2>{{ loaded ? 'Runtime disconnected' : 'Connecting to Runtime' }}</h2>
-        <p>{{ statusProblem || 'Reading the local Runtime status…' }}</p>
-      </div>
-      <button v-if="loaded" type="button" class="secondary" @click="refresh">Retry</button>
-    </section>
-
-    <template v-else>
-      <section class="overview card">
-        <div class="overview-item">
-          <span class="eyebrow">Current game</span>
-          <strong>{{ currentGameTitle }}</strong>
-        </div>
-        <div class="overview-item">
-          <span class="eyebrow">Adapter</span>
-          <strong :class="{ muted: status.adapters.length === 0 }">{{ adapterLabel }}</strong>
-        </div>
-        <div class="overview-item overview-model">
-          <span class="eyebrow">Model</span>
-          <strong>{{ modelLabel }}</strong>
-        </div>
-        <button
-          v-if="status.ready"
-          type="button"
-          class="secondary settings-button"
-          :disabled="configurationBusy"
-          @click="modelSettingsOpen = !modelSettingsOpen"
-        >
-          {{ modelSettingsOpen ? 'Close settings' : 'Model settings' }}
-        </button>
-        <p v-if="status.reason && !status.ready" class="overview-reason">{{ status.reason }}</p>
-      </section>
-
-      <div class="workspace" :class="{ 'workspace-setup': setupMode && !status.ready }">
-        <aside class="control-column">
-          <GameSetup
-            v-if="showGameSetup"
-            :status="status"
-            :busy="configurationBusy"
-            :begin-status-mutation="beginStatusMutation"
-            :accept-status="acceptStatus"
-            @mutation-failed="recoverAfterMutationFailure"
-            @read-failed="noteReadFailure"
-          />
-
-          <Setup
-            v-if="showModelSetup"
-            :status="status"
-            :mode="modelSettingsOpen ? 'settings' : 'initial'"
-            :busy="configurationBusy"
-            :begin-status-mutation="beginStatusMutation"
-            :accept-status="acceptStatus"
-            @mutation-failed="recoverAfterMutationFailure"
-            @read-failed="noteReadFailure"
-            @saved="closeModelSettings"
-            @cancelled="closeModelSettings"
-          />
-
-          <p v-if="status.last_connection_error" class="banner banner-error connection-error">
-            {{ status.last_connection_error.message }}
-          </p>
-
-          <details class="card advanced">
-            <summary>Advanced details</summary>
-            <dl class="details-list">
-              <div><dt>Adapter endpoint</dt><dd>{{ status.grpc_addr || '—' }}</dd></div>
-              <div><dt>Data root</dt><dd class="path">{{ status.data_root }}</dd></div>
-              <div><dt>Runtime trace</dt><dd class="path">{{ status.trace_path }}</dd></div>
-              <div><dt>Version</dt><dd>{{ status.version || 'development' }}</dd></div>
-            </dl>
-            <div v-if="status.adapters.length" class="connections">
-              <h3>Connections</h3>
-              <div v-for="adapter in status.adapters" :key="adapter.connection_id" class="connection">
-                <strong>{{ adapter.adapter_id }} · {{ adapter.game_id }}</strong>
-                <span>Adapter {{ adapter.adapter_version }} · game {{ adapter.game_version }}</span>
-                <span class="path">Session {{ adapter.session_id }}</span>
-                <span class="path">Connection {{ adapter.connection_id }}</span>
-              </div>
-            </div>
-          </details>
-        </aside>
-
-        <section class="card turns-card">
-          <div class="turns-heading">
-            <div>
-              <span class="eyebrow">Activity</span>
-              <h2>{{ currentGameTitle }} · Recent turns</h2>
-            </div>
-            <span v-if="turnsLoading" class="muted">Refreshing…</span>
-          </div>
-
-          <p v-if="turnsProblem" class="banner banner-error">
-            Unable to read {{ currentGameTitle }} turns: {{ turnsProblem }}
-          </p>
-          <p v-else-if="loaded && !turnsLoading && turns.length === 0" class="empty">
-            No turns recorded for {{ currentGameTitle }} yet. Talk to an NPC in this game and the turn will appear here.
-          </p>
-          <div v-else-if="turns.length > 0" class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th><th>Agent</th><th>Trigger</th><th>Steps</th>
-                  <th>Tools</th><th>Outcome</th><th>Duration</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="turn in turns" :key="turn.turn_id">
-                  <td class="time" data-label="Time">{{ formatTime(turn.started_at) }}</td>
-                  <td data-label="Agent">{{ turn.entity_id || '—' }}</td>
-                  <td class="muted" data-label="Trigger">{{ turn.event_type || '—' }}</td>
-                  <td class="number" data-label="Steps">{{ turn.steps }}</td>
-                  <td data-label="Tools">
-                    <span v-for="tool in turn.tools" :key="tool" class="tool">{{ tool }}</span>
-                    <span v-if="!turn.tools?.length" class="muted">—</span>
-                  </td>
-                  <td data-label="Outcome">
-                    <span class="outcome" :class="`outcome-${turn.status}`">{{ statusLabel(turn) }}</span>
-                    <span v-if="turn.settled_by" class="muted"> · {{ turn.settled_by }}</span>
-                  </td>
-                  <td class="number" data-label="Duration">{{ formatDuration(turn.elapsed_ms) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-    </template>
-  </main>
+  <div class="wia-app" :class="theme">
+    <div class="scenery" aria-hidden="true" />
+    <header class="world-masthead"><div class="world-name"><span class="world-emblem"><UiIcon :name="theme==='colony' ? 'world' : 'leaf'" /></span><div><strong>{{ gameName(currentGameID || lastGame) }}</strong><small>World Is Agent · 本地控制台</small></div></div><span class="game-tag">{{ currentGameID ? '当前加载游戏' : '本机运行服务' }}</span></header>
+    <div class="shell">
+      <aside class="sidebar"><div class="brand"><span class="brand-mark"><UiIcon name="compass" /></span><div><strong>World Is Agent</strong><small>本地控制台</small></div></div><nav aria-label="主导航"><button v-for="(label,id) in views" :key="id" :aria-current="view===id ? 'page' : undefined" :class="{ active:view===id }" :disabled="configurationBusy" @click="view=id"><UiIcon :name="menuIcons[id]" /><span>{{ label }}</span></button></nav><div class="sidebar-bottom"><span><i class="state-dot" :class="{ offline:!status }" />本机运行服务</span><p>角色的约定，随游戏时钟继续。</p><div class="sidebar-version"><span>{{ status?.version || 'World Is Agent' }}</span><span>本地运行</span></div></div></aside>
+      <main class="workspace">
+        <header class="app-topbar"><div class="breadcrumbs">控制台 <UiIcon name="chevron" />{{ views[view] }}</div><span class="runtime-pill"><i class="state-dot" :class="{ offline:!status, pending:status && !status.ready }" />{{ runtimeLabel }}</span></header>
+        <div class="page-heading"><div><h1>{{ views[view] }}</h1><p>{{ descriptions[view] }}</p></div><button v-if="view!=='settings'" class="secondary" :disabled="statusLoading || configurationBusy" @click="manualRefresh"><UiIcon name="refresh" />刷新状态</button></div>
+        <p v-if="unauthorized" class="notice problem" role="alert">网页会话无效。请重新打开 Runtime 启动时提供的控制台链接。</p>
+        <section v-if="!status" class="surface empty-state" role="status"><UiIcon name="world" /><h2>{{ loaded ? '运行服务已断开' : '正在连接本机运行服务' }}</h2><p>{{ statusProblem || '正在读取当前运行状态。' }}</p><p v-if="lastRead">最后成功读取于 {{ localTime(lastRead) }}</p><button class="secondary" :disabled="statusLoading" @click="refresh">重新连接</button></section>
+        <template v-else>
+          <div v-if="configurationBusy" class="notice" role="status">正在应用游戏或模型配置，等待运行服务确认。</div>
+          <template v-if="view==='settings'">
+            <div class="settings-grid"><section v-if="!configurationBusy && !showGameSetup && !showModelSetup" class="surface settings-panel"><h2>运行服务需要处理</h2><p>请查看连接与高级详情中的原因码，修正本机配置后重新启动运行服务。</p></section><GameSetup v-if="showGameSetup" :status="status" :busy="configurationBusy" :begin-status-mutation="beginStatusMutation" :accept-status="acceptStatus" @mutation-failed="recoverAfterMutationFailure" @read-failed="noteReadFailure" /><Setup v-if="showModelSetup" :status="status" :mode="status.ready ? 'settings' : 'initial'" :busy="configurationBusy" :begin-status-mutation="beginStatusMutation" :accept-status="acceptStatus" @mutation-failed="recoverAfterMutationFailure" @read-failed="noteReadFailure" @saved="modelSettingsOpen=false" @cancelled="modelSettingsOpen=false" /><section v-else-if="status.ready" class="surface settings-panel"><h2>当前模型</h2><p>{{ modelLabel }}</p><p class="muted">接口密钥已配置，网页不显示已保存的密钥。</p><button @click="modelSettingsOpen=true">修改模型设置</button></section></div>
+          </template>
+          <section v-else-if="!status.ready && !configurationBusy" class="surface empty-state"><UiIcon name="settings" /><h2>{{ status.state==='blocked' ? '运行服务需要处理' : '先完成游戏与模型配置' }}</h2><p>游戏和模型就绪后，可以查看角色回合与预约记录。</p><button v-if="showGameSetup || showModelSetup" @click="view='settings'">打开游戏与模型</button></section>
+          <template v-else-if="!configurationBusy">
+            <Tasks v-if="view==='tasks'" ref="tasksRef" :key="status.instance_id" :status="status" @read-failed="noteReadFailure" />
+            <template v-else-if="view==='overview'">
+              <section class="overview-band surface"><div><small>当前加载游戏</small><strong>{{ gameName(currentGameID) }}</strong><p>{{ status.connection_count ? `已连接 ${status.connection_count} 个适配器` : '等待游戏适配器连接' }}</p></div><div><small>当前模型</small><strong>{{ modelLabel }}</strong><p>{{ status.model?.api_key_configured ? '接口密钥已配置' : '尚未配置接口密钥' }}</p></div><div><small>任务执行条件</small><strong>以当前世界确认为准</strong><p>适配器连接数不代表存档已就绪</p></div></section>
+              <div class="overview-grid"><section class="surface overview-panel"><Tasks ref="tasksRef" :key="status.instance_id" :status="status" compact @open-tasks="view='tasks'" @read-failed="noteReadFailure" /></section><section class="surface overview-panel"><div class="section-heading"><h2>近期回合</h2><button class="text-link" @click="view='logs'">运行记录 <UiIcon name="chevron" /></button></div><p v-if="turnsProblem" class="notice problem">{{ turnsProblem }}</p><div v-for="turn in turns.slice(0,4)" :key="turn.turn_id" class="compact-item"><span class="avatar"><UiIcon name="history" /></span><div><strong>{{ turn.entity_id || '角色' }}</strong><p>{{ localTime(turn.started_at) }}</p></div><span class="task-status">{{ turnLabel(turn) }}</span></div><div v-if="!turns.length" class="empty-state"><h3>{{ turnsLoading ? '正在读取回合' : '还没有运行记录' }}</h3><p>在游戏中与角色交流后即可查看。</p></div></section></div>
+            </template>
+            <template v-else-if="view==='logs'"><p v-if="turnsProblem" class="notice problem" role="status">{{ turnsProblem }} · 现有记录尚未同步。</p><section class="surface log-list"><table><thead><tr><th>本机时间</th><th>角色</th><th>回合状态</th><th>步骤</th><th>耗时</th></tr></thead><tbody><tr v-for="turn in turns" :key="turn.turn_id"><td>{{ localTime(turn.started_at) }}</td><td>{{ turn.entity_id || '—' }}</td><td>{{ turnLabel(turn) }}</td><td>{{ turn.steps }}</td><td>{{ duration(turn.elapsed_ms) }}</td></tr></tbody></table><div v-if="!turns.length" class="empty-state"><UiIcon name="history" /><h2>{{ turnsLoading ? '正在读取运行记录' : '当前游戏还没有运行记录' }}</h2></div></section><p class="log-note">回合结束表示本轮处理已收口，预约的最终结果请查看任务详情。</p><details v-for="turn in turns" :key="turn.turn_id" class="technical"><summary>{{ localTime(turn.started_at) }} · 回合高级详情</summary><dl><div><dt>回合标识</dt><dd>{{ turn.turn_id }}</dd></div><div><dt>事件类型</dt><dd>{{ turn.event_type }}</dd></div><div><dt>结束原因</dt><dd>{{ turn.reason || '—' }}</dd></div><div><dt>工具</dt><dd>{{ turn.tools?.join('、') || '—' }}</dd></div><div v-if="turn.error"><dt>错误详情</dt><dd>{{ turn.error }}</dd></div></dl></details></template>
+          </template>
+          <details class="technical runtime-details"><summary>连接与高级详情</summary><dl><div><dt>实例标识</dt><dd>{{ status.instance_id || '尚未发布' }}</dd></div><div><dt>运行状态</dt><dd>{{ status.state }}</dd></div><div><dt>原因码</dt><dd>{{ status.reason_code || '—' }}</dd></div><div v-if="status.reason"><dt>原始说明</dt><dd>{{ status.reason }}</dd></div><div><dt>数据目录</dt><dd>{{ status.data_root }}</dd></div><div><dt>执行记录</dt><dd>{{ status.trace_path }}</dd></div><div><dt>连接地址</dt><dd>{{ status.grpc_addr }}</dd></div><div><dt>模型配置</dt><dd>{{ status.model_config_path }}</dd></div><div><dt>游戏配置</dt><dd>{{ status.agent_config_path }}</dd></div><div v-if="status.last_connection_error"><dt>连接错误</dt><dd>{{ status.last_connection_error.code }} · {{ status.last_connection_error.message }}</dd></div><div v-for="adapter in status.adapters" :key="adapter.connection_id"><dt>适配器</dt><dd>{{ adapter.adapter_id }} · {{ adapter.adapter_version }} · {{ adapter.game_version }}</dd></div></dl></details>
+        </template>
+        <footer class="page-footer"><span><UiIcon name="shield" />数据保存在本机</span><span>任务随游戏时间推进</span></footer>
+      </main>
+    </div>
+  </div>
 </template>
-
-<style>
-:root {
-  color-scheme: light dark;
-  --bg: #f4f5f7;
-  --panel: #ffffff;
-  --surface-subtle: #f8f9fb;
-  --ink: #1c2430;
-  --muted: #677181;
-  --line: #dfe3e8;
-  --accent: #2f6fae;
-  --accent-hover: #245d94;
-  --ok: #277a4b;
-  --ok-soft: #e4f3ea;
-  --warn: #9b5b19;
-  --warn-soft: #f8ecdd;
-  --bad: #a33a3a;
-  --bad-soft: #fae8e8;
-  --shadow: 0 1px 2px rgb(20 32 50 / 5%), 0 8px 24px rgb(20 32 50 / 4%);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #15171a;
-    --panel: #1e2125;
-    --surface-subtle: #25292e;
-    --ink: #edf0f3;
-    --muted: #a2a9b3;
-    --line: #343a42;
-    --accent: #78a9dc;
-    --accent-hover: #94bbe2;
-    --ok: #72c291;
-    --ok-soft: #203d2d;
-    --warn: #dda566;
-    --warn-soft: #46331f;
-    --bad: #eb9292;
-    --bad-soft: #482626;
-    --shadow: none;
-  }
-}
-
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-button, select, input { font: inherit; }
-button { padding: 8px 14px; border: 1px solid transparent; border-radius: 6px; background: var(--accent); color: #fff; font-weight: 650; cursor: pointer; }
-button:hover:not(:disabled) { background: var(--accent-hover); }
-button:disabled { cursor: not-allowed; opacity: .5; }
-button.secondary { border-color: var(--line); background: var(--panel); color: var(--ink); }
-button.secondary:hover:not(:disabled) { border-color: var(--accent); background: var(--surface-subtle); color: var(--accent); }
-
-main { max-width: 1280px; margin: 0 auto; padding: 30px 24px 64px; }
-.app-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
-.app-header h1 { margin: 0; font-size: 23px; letter-spacing: -.02em; }
-.tagline { margin: 2px 0 0; color: var(--muted); }
-.runtime-state { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--warn); background: var(--warn-soft); font-size: 12px; font-weight: 700; text-transform: capitalize; }
-.runtime-state.ready { color: var(--ok); background: var(--ok-soft); }
-.runtime-state.offline { color: var(--bad); background: var(--bad-soft); }
-.state-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-
-.card { margin-bottom: 18px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); }
-.card h2 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
-.overview { position: relative; display: grid; grid-template-columns: minmax(170px, .8fr) minmax(170px, .8fr) minmax(240px, 1.4fr) auto; align-items: center; gap: 18px 28px; }
-.overview-item { display: grid; min-width: 0; gap: 2px; }
-.overview-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.eyebrow, .details-list dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-.overview-reason { grid-column: 1 / -1; margin: -4px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); }
-.settings-button { justify-self: end; }
-
-.workspace { display: grid; grid-template-columns: minmax(290px, 340px) minmax(0, 1fr); gap: 18px; align-items: start; }
-.workspace-setup { grid-template-columns: minmax(0, 620px); }
-.control-column { min-width: 0; }
-.turns-card { min-width: 0; min-height: 220px; }
-.turns-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-.turns-heading h2 { margin-top: 2px; }
-.table-wrap { overflow-x: auto; }
-
-.banner { margin: 0 0 16px; padding: 11px 13px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 7px; background: var(--panel); overflow-wrap: anywhere; }
-.banner-error { border-left-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
-.connection-error { font-size: 13px; }
-.problem { color: var(--bad); overflow-wrap: anywhere; }
-.muted, .empty { color: var(--muted); }
-.empty { margin: 0; padding: 22px 0; text-align: center; }
-.disconnected-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.disconnected-card h2 { margin-bottom: 4px; }
-.disconnected-card p { margin: 0; color: var(--muted); }
-
-.advanced { padding: 0; overflow: hidden; box-shadow: none; }
-.advanced summary { padding: 14px 16px; cursor: pointer; font-weight: 650; }
-.advanced[open] summary { border-bottom: 1px solid var(--line); }
-.details-list { display: grid; gap: 13px; margin: 0; padding: 16px; }
-.details-list div { min-width: 0; }
-.details-list dd { margin: 2px 0 0; overflow-wrap: anywhere; }
-.path { font: 12px/1.45 ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace; }
-.connections { padding: 0 16px 16px; }
-.connections h3 { margin: 0 0 8px; font-size: 13px; }
-.connection { display: grid; gap: 2px; padding: 10px 0; border-top: 1px solid var(--line); }
-.connection span { color: var(--muted); }
-
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; text-align: left; text-transform: uppercase; letter-spacing: .05em; }
-td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-tr:last-child td { border-bottom: none; }
-.time, .number { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tool { display: inline-block; margin: 0 4px 2px 0; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; font: 12px ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace; }
-.outcome { font-weight: 700; }
-.outcome-completed { color: var(--ok); }
-.outcome-failed { color: var(--bad); }
-.outcome-unfinished { color: var(--warn); }
-
-@media (max-width: 900px) {
-  .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .settings-button { justify-self: start; }
-  .workspace { grid-template-columns: minmax(0, 1fr); }
-}
-
-@media (max-width: 640px) {
-  main { padding: 22px 14px 48px; }
-  .app-header { align-items: flex-start; }
-  .overview { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .card { padding: 16px; }
-  .advanced { padding: 0; }
-  .table-wrap { overflow: visible; }
-  table, tbody { display: block; }
-  thead { display: none; }
-  tr { display: grid; gap: 7px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-  tr:last-child { border-bottom: 0; }
-  td { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; padding: 0; border: 0; white-space: normal; }
-  td::before { content: attr(data-label); color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-}
-</style>

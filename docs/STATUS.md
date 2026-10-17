@@ -6,7 +6,7 @@ MVP0 is now frozen for release: the current version is stabilized and documented
 
 This document is the public source of truth for current repository capabilities, validation scope, and known limits.
 
-Last updated: 2026-09-20.
+Last updated: 2026-10-17.
 
 ## Validation Scope
 
@@ -42,9 +42,11 @@ and a per-instance observation.
 | AgentTurn | Bounded multi-step turns with model/tool feedback. |
 | Tools | EnvironmentSession-scoped dynamic capabilities with immutable Turn Tool View snapshots used by model exposure and Scheduler lookup. |
 | Tool policy | Capability metadata for exclusive-per-step and settle-after-success behavior. |
-| Actions | Sync action result handling and async action status/result handling. |
+| Actions | Sync action result handling and async action status/result handling. Ordinary action continuation is process-local. |
+| Persistent appointments | SQLite Tasks, game-clock wakes, registered operations, authoritative evidence and results, bounded reconciliation, and exact save checkpoints. Same-run restarts recover the working head; new game runs restore the save reference. Stardew enables this integration; RimWorld does not. |
+| Task console | Authenticated read-only world, list and detail APIs use the current instance and bounded SQLite snapshots. The Chinese pixel console offers world selection, active/terminal filters, facts and cleanup status. World readiness and Task state are separate. |
 | Turn completion | Runtime can send best-effort `TurnCompletion` to the adapter. |
-| Memory | SQLite-backed Recent Memory, physically separated by game/world and scoped by entity, with metadata validation, idempotent transactions, and game-time filtering. Defaults: 100 retained records and 400 projection credentials per entity; context takes at most 5 records within 4096 estimated tokens. |
+| Memory | SQLite-backed terminal history and Task results, separated by game/world and scoped by entity. Bounded summaries, literal source retrieval, source-coverage checks and game-time filtering are implemented. Retention cleanup is disabled by default. |
 | Definitions | Optional static Runtime catalog for Game Definitions and Agent Definitions scoped by `game_id + definition_id`. |
 | Context | Runtime Context Engine builds stable Context Projection from event, ContextFacts, observation, recent memory, current-turn transcript, definitions, Agent Instance Descriptor, runtime policy, and Turn Tool View snapshot. |
 | Context budget | Deterministic provider-neutral estimated-token budget selection, section cropping, tool size admission, and final request hard gates. |
@@ -59,6 +61,8 @@ and a per-instance observation.
 | Packaged release | `scripts/release-runtime.ps1` builds a portable package: `world-is-agent-v<version>-windows-amd64.zip` containing `wia-runtime.exe`, a README and the license. The executable embeds the local client and the shipped agent configuration, so it runs with no arguments from any directory and needs no installer, no administrator rights, and neither Node.js nor Go on the path. The version comes from the repository `VERSION` file and is written into the binary at link time. The package carries no game adapter: adapters compile against a local game installation and are installed separately as mods. |
 
 Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and real dialogue persistence/readback are covered. Real Runtime process-restart recovery, the specified cross-version end-to-end path, and race validation remain open; see the [acceptance record](phase08/GameAgent MVP0 Phase8.1 技术开发与验收方案.md#验收结论). SQLite is independent of the game save: future comparable GameTime is filtered, but abandoned-branch history may become visible when game time catches up.
+
+Task console validation passed with full Go regression, Vue type/order/build checks, authenticated real-HTTP browser flows, and an extracted Windows Runtime process using a fake provider. A child process exited without closing SQLite, and restart plus exact rollback retained the expected working set. The Stardew recovery matrix still needs focused live-game acceptance; this is not a guarantee of unattended execution. Race validation remains pending because this environment has no configured C toolchain. See [appointment testing](development/testing.md#appointment-recovery-and-console).
 
 ## Experimental
 
@@ -85,8 +89,8 @@ Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and
 | Area | Current limit |
 | --- | --- |
 | Profile storage | The data root must support hard links for atomic creation of missing profile assets. A filesystem without hard-link support returns `storage_unavailable` during preparation and cannot complete game selection. |
-| Full terminal history and compaction | Phase8.2 is a design draft for complete agreed terminal-turn sources, synchronous summaries, and a bounded recent-history tail; current Recent records are not a full conversation archive. |
-| History retrieval and retention | Phase8.3 is a design draft for literal source retrieval and optional cleanup, disabled by default. |
+| Summary accuracy | Source-coverage validation does not prove that natural-language summaries are semantically accurate. |
+| History branches | Memory is independent of save checkpoints and has no complete abandoned-branch isolation. |
 | Long-term semantic memory | No Semantic extraction/correction pipeline, vector store, or embedding index. |
 | Provider-specific token sizing | Context budget uses deterministic estimated tokens, not exact provider tokenizer or automatic model window detection. |
 | Durable async continuation | Async action waiting is process-local. |

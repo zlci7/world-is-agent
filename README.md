@@ -11,7 +11,7 @@ World Is Agent（WIA）在本机运行，通过游戏 Adapter 接收实时状态
 ## 你可以用它做什么
 
 - 让游戏角色结合身份、当前环境和历史记忆进行对话与决策。
-- 在 Web 控制台中选择游戏、配置模型并查看最近的 Agent 回合。
+- Use the Chinese pixel console to configure games and models, inspect recent turns, and browse saved appointment tasks by world and status.
 - 在同一个 Runtime 进程中切换游戏，保留各游戏已经记录的历史。
 - 使用 DeepSeek 或 OpenAI，也可以配置兼容接口的 Base URL。
 
@@ -37,7 +37,7 @@ Runtime 和游戏 Adapter 分开发布。安装 WIA 时需要一个 Runtime，�
 2. 从 [官方 Adapter 仓库](https://github.com/zlci7/world-is-agent-adapters) 安装对应游戏的 Adapter。
 3. 运行 `wia-runtime.exe`，浏览器会自动打开本地控制台。
 4. 在页面中选择游戏，填写模型服务商、模型和 API Key。
-5. 等待状态变为 **Ready**，然后启动游戏并加载存档。
+5. 等待状态变为 **运行服务已就绪**，然后启动游戏并加载存档。
 
 如果 Releases 页面中还没有对应版本，说明该版本尚未正式发布。不要混用不匹配的 Runtime 和 Adapter 版本。
 
@@ -47,7 +47,7 @@ Runtime 和游戏 Adapter 分开发布。安装 WIA 时需要一个 Runtime，�
 
 建议先启动 Runtime、选择游戏并等待 **Ready**，再启动游戏。连接暂时中断时，当前版本的 Stardew Valley 和 RimWorld Adapter 会自动重试。
 
-在 Web 控制台中使用 **Switch game（切换游戏）** 会取消正在执行的回合、保留已经写入的历史，并等待新游戏的 Adapter 连接。使用 **Model settings（模型设置）** 可以更换模型服务商、模型、API Key 和 Base URL；新配置通过检查后才会生效。
+In **游戏与模型 (Game & Model)**, applying a game selection cancels the current turn, retains recorded history, and waits for the matching Adapter. Model changes take effect after a successful probe. **预约任务 (Appointments)** shows saved tasks, world readiness, results and cleanup status; the page is read-only and closing it does not stop saved tasks. Stardew enables appointments; RimWorld currently does not. The [testing guide](docs/development/testing.md#appointment-recovery-and-console) records the live-game recovery checks still required.
 
 ## 本地数据与 API Key
 

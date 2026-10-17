@@ -173,6 +173,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleStatus(w, r)
 	case "/api/turns":
 		s.handleTurns(w, r)
+	case "/api/task-worlds", "/api/tasks", "/api/tasks/detail":
+		s.handleTasks(w, r)
 	case "/api/setup/options":
 		s.handleSetupOptions(w, r)
 	case "/api/setup/model":
@@ -187,6 +189,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
+	InstanceID          string                     `json:"instance_id,omitempty"`
 	State               string                     `json:"state"`
 	Ready               bool                       `json:"ready"`
 	Reason              string                     `json:"reason,omitempty"`
@@ -218,6 +221,7 @@ func (s *Server) statusPayload() statusResponse {
 	layout := runtime.Layout()
 	snapshot := runtime.Snapshot()
 	response := statusResponse{
+		InstanceID:          snapshot.InstanceID,
 		State:               string(snapshot.State),
 		Ready:               snapshot.Ready,
 		Reason:              snapshot.Reason,

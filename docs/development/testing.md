@@ -134,6 +134,34 @@ The user reported the Phase10.4/10.5 real-game baseline passed. The following ch
 
 Automatic retry repeats the Protocol bootstrap and world binding; it does not replay an interrupted ordinary turn. Actual game dialogue and action reset require these focused real-game checks in addition to automated lifecycle tests.
 
+## Appointment Recovery and Console
+
+The Chinese **预约任务** page reads the current Runtime Task database. It cannot create, cancel, retry, complete or reset tasks. An offline world retains its saved records; a connected stream alone does not prove world readiness. RimWorld currently reports appointments as disabled.
+
+Automated coverage uses real SQLite, fake game/model capabilities, the Protocol stream, and an independently exiting test process. Run:
+
+```powershell
+go test ./runtime/internal/task ./runtime/internal/gateway ./runtime/internal/bootstrap ./runtime/internal/httpapi -count=1
+npm --prefix console/web run type-check
+npm --prefix console/web run test:ordering
+npm --prefix console/web run build
+```
+
+The read-only routes are `GET /api/task-worlds`, `GET /api/tasks` and `GET /api/tasks/detail`. Every request requires the existing local session plus the current `instance_id` and `game_id` from `/api/status`. Lists also require `world_id` and `collection=active|terminal`; details require `world_id`, `entity_id` and `task_id`. A list accepts an optional state, cursor and limit (default 20, maximum 50). Revisions, generations and ticks are decimal strings. Old instance and checkpoint cursors return conflicts; query failure is not an empty success. Task head, counts and page share a read transaction. Live world readiness is independently corroborated and conservatively unconfirmed while the execution lock is busy.
+
+For focused live-game acceptance, use a copied test save and an isolated data root with Runtime 0.2.0 and Stardew Adapter 0.1.1:
+
+1. Make an appointment on a validated route. Confirm one Task appears and remains after refreshing or closing the browser.
+2. Save normally, leave the game, and load the save. Confirm the same appointment resumes from that exact checkpoint after world binding.
+3. Restart the Runtime while the game remains open, first while waiting and then during travel. Confirm reconnection and evidence reconciliation, or an explicit pause when execution cannot be confirmed.
+4. Save and reconnect after arrival while waiting for the player. Confirm a single meeting result. Repeat without the player and confirm a single expiry result.
+5. Load a save from before Task creation, then one from before execution. Confirm absent future tasks and results in the page, current Task Context and subsequent dialogue. Memory's independent branch-isolation limit still applies.
+6. Exercise a lost checkpoint Finish, invalid reference and old callback. Confirm bounded saving, explicit recovery blocking, and no duplicate valid wake or stale control release. Never edit a production save or database to run a failure probe.
+7. Inspect NPC position, control release or legal handoff, and resumed native schedule alongside Task state. Completion alone does not prove cleanup.
+8. In the console, test both game-switch directions, same-game model replacement, offline/empty/paused states, status filtering, mobile details/back, and keyboard focus. Check 1440px, 1024px and 390px widths. Old requests must not populate the new scope.
+
+If recovery cannot be established, preserve the isolated save, database and logs. Keep the world unready or the Task paused; do not reset the task collection, invent success, or replay uncertain game effects. See the [Phase11.1 acceptance record](../phase11/phase11.1-acceptance.md) for current evidence. Automated and browser checks do not replace these game checks.
+
 ## Architecture Check
 
 ```powershell

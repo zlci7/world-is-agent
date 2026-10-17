@@ -5,6 +5,8 @@ import {
   type SetupOptions,
   type Status,
   type TurnsResponse,
+  type TaskWorlds,
+  type TaskPage,
 } from './types'
 
 /** The Runtime hands over its session credential in the URL fragment, which a
@@ -30,16 +32,16 @@ export async function exchangeBootstrapToken(): Promise<void> {
   }
 }
 
-async function get<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: 'application/json' } })
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { headers: { Accept: 'application/json' }, signal, cache: 'no-store' })
   if (!response.ok) {
     throw await toApiError(response)
   }
   return (await response.json()) as T
 }
 
-export function fetchStatus(): Promise<Status> {
-  return get<Status>('/api/status')
+export function fetchStatus(signal?: AbortSignal): Promise<Status> {
+  return get<Status>('/api/status', signal)
 }
 
 export function fetchGames(): Promise<GamesResponse> {
@@ -58,9 +60,16 @@ export async function saveGameSetup(gameId: string): Promise<Status> {
   return (await response.json()) as Status
 }
 
-export function fetchTurns(gameId: string, limit = 50): Promise<TurnsResponse> {
+export function fetchTurns(gameId: string, limit = 50, signal?: AbortSignal): Promise<TurnsResponse> {
   const query = new URLSearchParams({ game_id: gameId, limit: String(limit) })
-  return get<TurnsResponse>(`/api/turns?${query}`)
+  return get<TurnsResponse>(`/api/turns?${query}`, signal)
+}
+
+export function fetchTaskWorlds(query: Record<string,string>, signal: AbortSignal): Promise<TaskWorlds> {
+  return get<TaskWorlds>(`/api/task-worlds?${new URLSearchParams(query)}`, signal)
+}
+export function fetchTaskPage(query: Record<string,string>, signal: AbortSignal, detail = false): Promise<TaskPage> {
+  return get<TaskPage>(`/api/tasks${detail ? '/detail' : ''}?${new URLSearchParams(query)}`, signal)
 }
 
 /** The providers the first-run form may offer, with each one's default model.

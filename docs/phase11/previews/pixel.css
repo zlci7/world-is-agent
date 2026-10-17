@@ -1,0 +1,240 @@
+.theme-pixel {
+  --bg:#f7e5bd; --rail:#e7be81; --surface:#fff0ca; --surface-alt:#f6dfac;
+  --ink:#482f20; --muted:#62442d; --line:#b88a53; --accent:#80532a; --accent-ink:#fff4d7;
+  --accent-soft:#edce8f; --good:#285638; --warning:#873d1b; --danger:#8b2e2c;
+  --radius:0px; --sidebar:192px; --pixel-edge:#80532f; --pixel-shadow:#543923; --pixel-highlight:#fff5d2;
+  --window-fill:rgb(247 229 189 / 82%); --rail-fill:rgb(231 190 129 / 88%);
+  --panel-fill:rgb(255 240 202 / 96%); --panel-alt-fill:rgb(246 223 172 / 96%);
+  background:#b8d2a3; color-scheme:light; position:relative; isolation:isolate;
+}
+.theme-pixel[data-game=rimworld] {
+  --bg:#20313b; --rail:#293c45; --surface:#293f49; --surface-alt:#344e55;
+  --ink:#f0f0df; --muted:#cdd8cf; --line:#77919a; --accent:#edc27f; --accent-ink:#24333b;
+  --accent-soft:#4c5c55; --good:#b4dfb8; --warning:#f2c482; --danger:#ffc0b5;
+  --pixel-edge:#15252e; --pixel-shadow:#0a1720; --pixel-highlight:#526a72;
+  --window-fill:rgb(32 49 59 / 84%); --rail-fill:rgb(41 60 69 / 90%);
+  --panel-fill:rgb(41 63 73 / 97%); --panel-alt-fill:rgb(52 78 85 / 97%);
+  background:#182c38; color-scheme:dark;
+}
+.pixel-scenery {position:fixed;inset:0;z-index:-2;pointer-events:none;overflow:hidden}
+.pixel-scene {position:absolute;inset:0;opacity:0;background-position:center top;background-size:cover;background-repeat:no-repeat;image-rendering:pixelated}
+.pixel-scene.farm {background-color:#b8d2a3;background-image:url('assets/farm-pixel.png')}
+.pixel-scene.colony {background-color:#182c38;background-image:url('assets/colony-pixel.png')}
+.pixel-scene.visible {opacity:1}
+.theme-pixel:after {content:"";position:fixed;inset:0;background:#283b2910;z-index:-1;pointer-events:none}
+.theme-pixel[data-game=rimworld]:after {background:#07192520}
+.theme-pixel ::selection {background:var(--accent);color:var(--accent-ink)}
+.theme-pixel :focus-visible {outline:3px solid var(--accent);outline-offset:4px}
+.theme-pixel input {caret-color:var(--accent)}
+.theme-pixel button:disabled,.theme-pixel select:disabled {cursor:wait;opacity:.65}
+.theme-pixel .preview-bar {background:#3e3425;color:#fff2d0;border-color:#765735;min-height:40px;padding:6px 24px;gap:20px}
+.theme-pixel .preview-bar label {font-size:11px;white-space:nowrap;gap:8px;margin-left:0}
+.theme-pixel .preview-bar label[for=preview-game] {margin-left:auto}
+.theme-pixel .preview-bar label[for=scenario] {margin-left:0}
+.theme-pixel .preview-bar select {background:#5a482d;color:#fff2d0;border:1px solid #96734c;min-height:28px;padding-left:8px;max-width:160px;font-size:11px}
+.theme-pixel[data-game=rimworld] .preview-bar {background:#142630;color:#e1e8d7;border-color:#607581}
+.theme-pixel[data-game=rimworld] .preview-bar select {background:#293f49;color:#f0e4c7;border-color:#8297a0}
+.pixel-masthead {max-width:1248px;margin:0 auto;min-height:128px;padding:24px 20px;display:flex;align-items:center;justify-content:space-between;gap:24px;color:#342b1e}
+.pixel-world-name {display:flex;align-items:center;gap:16px}
+.pixel-world-emblem {width:48px;height:48px;background:#fff0c9;border:3px solid #80532f;box-shadow:3px 3px 0 #543923;display:grid;place-items:center;color:#416536}
+.pixel-world-emblem .icon {width:26px;height:26px;stroke-width:2}
+.pixel-world-name strong {display:block;font-size:26px;letter-spacing:.04em;line-height:1.4;text-shadow:1px 1px 0 #ffefc9}
+.pixel-world-name small {display:block;margin-top:4px;font-size:12px;color:#342b1e;text-shadow:1px 1px 0 #fff4d8}
+.pixel-game-tag {background:#fff0c9;border:2px solid #80532f;color:#5b4029;padding:8px 12px;font-size:12px;box-shadow:2px 2px 0 #80532f66}
+.theme-pixel[data-game=rimworld] .pixel-world-name strong {color:#fff2c9;text-shadow:2px 2px 0 #162735}
+.theme-pixel[data-game=rimworld] .pixel-world-name small {color:#edf0dc;text-shadow:1px 1px 0 #162735}
+.theme-pixel[data-game=rimworld] .pixel-world-emblem {background:#2c424c;border-color:#a7b5aa;box-shadow:3px 3px 0 #142630;color:#edc27f}
+.theme-pixel[data-game=rimworld] .pixel-game-tag {background:#293f49;color:#edc27f;border-color:#8fa49f;box-shadow:2px 2px 0 #142630}
+.theme-pixel .shell {max-width:1248px;min-height:800px;margin:0 auto 48px;border:4px solid var(--pixel-edge);box-shadow:0 6px 0 var(--pixel-shadow),0 18px 35px #16312435;background:var(--window-fill)}
+.theme-pixel .sidebar {background:var(--rail-fill);border-right:3px solid var(--pixel-edge);padding:24px 16px;box-shadow:inset 0 0 0 2px var(--pixel-highlight)}
+.theme-pixel .brand {padding:0;gap:10px}
+.theme-pixel .brand-mark {border:2px solid var(--pixel-edge);width:32px;height:32px;transform:none;border-radius:0;background:var(--surface);color:var(--accent)}
+.theme-pixel .brand strong {font-size:13px}
+.theme-pixel .brand small {font-size:11px;letter-spacing:.02em}
+.theme-pixel .side-nav {margin-top:32px;gap:8px}
+.theme-pixel .nav-button {padding:10px 12px;border:2px solid transparent;border-radius:0;min-height:48px;color:var(--ink);font-size:13px;gap:10px}
+.theme-pixel .nav-button:hover {background:var(--accent-soft)}
+.theme-pixel .nav-button.active {background:var(--surface);border-color:var(--pixel-edge);box-shadow:2px 2px 0 var(--pixel-shadow)}
+.theme-pixel .nav-count {border-color:var(--line);border-radius:0;background:var(--accent-soft);font-size:11px}
+.theme-pixel .workspace {padding:24px;background:transparent;box-shadow:inset 0 0 0 2px var(--pixel-highlight)}
+.theme-pixel .app-topbar {min-height:24px}
+.theme-pixel .breadcrumbs,.theme-pixel .runtime-pill {font-size:12px}
+.theme-pixel .page-heading {min-height:64px;margin:24px 0;align-items:center}
+.theme-pixel .page-heading h1 {font-size:28px;font-weight:700;color:var(--ink);text-shadow:1px 1px 0 var(--pixel-highlight);letter-spacing:.04em;line-height:1.4}
+.theme-pixel .page-heading p {font-size:13px;margin-top:8px;line-height:1.8}
+.theme-pixel .button {border-radius:0;border:2px solid var(--pixel-edge);padding:8px 16px;font-size:13px;min-height:40px;box-shadow:2px 2px 0 var(--pixel-shadow);background:var(--surface);gap:8px}
+.theme-pixel .button.primary {background:var(--accent);color:var(--accent-ink)}
+.theme-pixel .button:hover {filter:none;background:var(--accent-soft);color:var(--ink)}
+.theme-pixel .button:active {translate:1px 1px;box-shadow:1px 1px 0 var(--pixel-shadow)}
+.theme-pixel[data-game=rimworld] .button {border-color:#8aa0a4}
+.theme-pixel[data-game=rimworld] .button.primary {border-color:#c9ae7a}
+.theme-pixel .context-strip {padding:16px 24px;margin-bottom:24px;gap:24px;background:var(--panel-alt-fill);border:2px solid var(--pixel-edge);border-radius:0;box-shadow:inset 0 0 0 2px var(--pixel-highlight);min-height:80px}
+.theme-pixel .game-emblem {border-radius:0;border:1px solid var(--line);background:var(--surface);color:var(--good);width:32px;height:32px}
+.theme-pixel .current-game {gap:12px}
+.theme-pixel .current-game strong {font-size:14px}
+.theme-pixel .current-game small {font-size:12px}
+.theme-pixel .world-picker {gap:12px;font-size:12px}
+.theme-pixel .world-picker select,.theme-pixel .form-field input,.theme-pixel .form-field select {border:2px solid var(--line);background:var(--surface);border-radius:0;min-height:40px}
+.theme-pixel .world-state {font-size:12px;white-space:nowrap}
+.theme-pixel .surface {border:2px solid var(--pixel-edge);border-radius:0;box-shadow:inset 0 0 0 2px var(--pixel-highlight),0 3px 0 var(--pixel-shadow);background:var(--panel-fill)}
+.theme-pixel .task-workbench {grid-template-columns:minmax(280px,.95fr) minmax(0,1.2fr);gap:24px}
+.theme-pixel .collection-tabs {border-color:var(--line);padding:0 24px;gap:24px;background:var(--panel-alt-fill)}
+.theme-pixel .collection-tab {font-size:14px;min-height:48px}
+.theme-pixel .collection-tab.active:after {height:3px;bottom:-2px}
+.theme-pixel .collection-tab span {border-radius:0;background:var(--surface);font-size:11px}
+.theme-pixel .list-tools {font-size:12px;padding:16px 24px 12px}
+.theme-pixel .list-tools select {font-size:12px;background:var(--surface);min-height:32px}
+.theme-pixel .task-rows {padding:0 12px 12px}
+.theme-pixel .task-row {border-radius:0;padding:16px 12px;min-height:136px}
+.theme-pixel .task-row.selected {border:1px solid var(--pixel-edge);background:var(--panel-alt-fill);box-shadow:inset 0 0 0 1px var(--pixel-highlight)}
+.theme-pixel .avatar {width:32px;height:32px;border-radius:0;border:2px solid var(--line);background:#ddd7a5;color:#3d4b28;box-shadow:1px 1px 0 var(--pixel-shadow);font-weight:600}
+.theme-pixel .detail-top .avatar {width:36px;height:36px;border-radius:0}
+.theme-pixel .avatar.penny {background:#edc29b;color:#6b3b21}
+.theme-pixel .avatar.robin {background:#c4d4d9;color:#304854}
+.theme-pixel .avatar.leah {background:#c9d7a2;color:#38532c}
+.theme-pixel .avatar.haley {background:#f0d989;color:#634815}
+.theme-pixel[data-game=rimworld] .avatar {background:#56695f;color:#f3e9c7;border-color:#8a9a8c}
+.theme-pixel .row-person {gap:12px}
+.theme-pixel .row-person strong {font-size:14px}
+.theme-pixel .row-instruction {font-size:14px;line-height:1.9;margin:12px 0 0}
+.theme-pixel .row-meta {font-size:12px;margin-top:12px}
+.theme-pixel .status {font-size:12px;font-weight:500;white-space:nowrap}
+.theme-pixel .list-footnote {font-size:12px;padding:16px 24px;line-height:1.8}
+.theme-pixel .task-detail {padding:24px}
+.theme-pixel .detail-title {font-size:24px;font-weight:600;margin:24px 0 16px}
+.theme-pixel .detail-top .row-person strong {font-size:16px}
+.theme-pixel .detail-top .status {border:1px solid var(--line);border-radius:0;background:var(--surface-alt);padding:6px 10px}
+.theme-pixel .detail-context,.theme-pixel .agreement-label {font-size:12px}
+.theme-pixel .agreement {font-size:14px;line-height:1.9;margin-bottom:24px}
+.theme-pixel .detail-meta {padding-bottom:24px;gap:24px}
+.theme-pixel .detail-meta dt {font-size:12px}
+.theme-pixel .detail-meta dd {font-size:14px;margin-top:6px}
+.theme-pixel .section-heading {margin-top:24px;gap:16px;align-items:baseline}
+.theme-pixel .section-heading h3 {font-size:14px}
+.theme-pixel .section-heading span {font-size:12px}
+.theme-pixel .evidence-node {border-radius:0;box-shadow:1px 1px 0 var(--line);background:var(--surface);margin-top:4px}
+.theme-pixel .evidence-node.current {border-color:var(--accent)}
+.theme-pixel .evidence-copy strong {font-size:14px}
+.theme-pixel .evidence-copy p {font-size:12px;line-height:1.8}
+.theme-pixel .evidence-list li {padding-bottom:16px}
+.theme-pixel .evidence-list li:not(:last-child):after {left:8px}
+.theme-pixel .detail-bottom {margin-top:16px;padding-top:16px}
+.theme-pixel .detail-bottom small,.theme-pixel .technical {font-size:12px}
+.theme-pixel .technical {margin-top:16px}
+.theme-pixel .technical summary {min-height:32px}
+.theme-pixel .page-footer {font-size:11px;padding-top:24px;line-height:1.8}
+.theme-pixel .notice {border:2px solid var(--line);border-radius:0;background:var(--panel-alt-fill);padding:16px;gap:12px;font-size:12px}
+.theme-pixel .sidebar-bottom {padding-left:8px;padding-right:8px}
+.theme-pixel .sidebar-bottom p,.theme-pixel .sidebar-version,.theme-pixel .connection-mini {font-size:11px;line-height:1.9}
+.theme-pixel .settings-grid,.theme-pixel .overview-grid {gap:24px}
+.theme-pixel .settings-panel {padding:24px}
+.theme-pixel .panel-title {font-size:16px;margin-bottom:8px}
+.theme-pixel .panel-description {font-size:12px;margin-bottom:24px;line-height:1.9}
+.theme-pixel .game-choice {border:2px solid var(--line);border-radius:0;background:var(--surface);padding:16px;margin-bottom:16px}
+.theme-pixel .game-choice.chosen {border-color:var(--pixel-edge);background:var(--surface-alt)}
+.theme-pixel .form-field {margin-bottom:16px;gap:8px}
+.theme-pixel .form-field label,.theme-pixel .form-field small {font-size:12px}
+.theme-pixel .form-actions {margin-top:24px;gap:12px}
+.theme-pixel .preview-disclaimer {margin-top:24px;font-size:12px}
+.theme-pixel .overview-band {border:2px solid var(--pixel-edge);border-radius:0;box-shadow:inset 0 0 0 2px var(--pixel-highlight);padding:24px;background:var(--panel-fill);margin-bottom:24px}
+.theme-pixel .overview-panel {padding:24px}
+.theme-pixel .toast {border:2px solid var(--pixel-edge);border-radius:0;box-shadow:3px 3px 0 var(--pixel-shadow)}
+.theme-pixel .log-row {border-color:var(--line)}
+@media(min-width:1550px) {
+  .theme-pixel .shell,.pixel-masthead {max-width:1328px}
+  .theme-pixel .workspace {padding:32px}
+}
+@media(max-width:1420px) {
+  .theme-pixel .shell {margin-left:24px;margin-right:24px}
+  .pixel-masthead {margin-left:24px;margin-right:24px;padding-left:20px;padding-right:20px}
+}
+@media(max-width:1150px) {
+  .theme-pixel {--sidebar:168px}
+  .theme-pixel .shell {margin-left:20px;margin-right:20px}
+  .pixel-masthead {margin:0 20px;min-height:112px}
+  .theme-pixel .sidebar {padding-left:12px;padding-right:12px}
+  .theme-pixel .brand strong {font-size:11px}
+  .theme-pixel .brand small {font-size:10px}
+  .theme-pixel .nav-button {font-size:12px;padding-left:10px;padding-right:10px;gap:8px}
+  .theme-pixel .workspace {padding:24px}
+  .theme-pixel .task-workbench {grid-template-columns:minmax(244px,1fr) minmax(0,1.15fr);gap:16px}
+  .theme-pixel .task-detail {padding:20px}
+  .theme-pixel .context-strip {padding:16px;gap:16px;flex-wrap:wrap}
+  .theme-pixel .world-state {margin-left:auto}
+  .theme-pixel .preview-bar {flex-wrap:wrap;gap:8px 16px;padding:8px 20px}
+  .theme-pixel .preview-bar>span {display:none}
+}
+@media(max-width:820px) {
+  .theme-pixel .shell {grid-template-columns:1fr;min-height:800px}
+  .theme-pixel .sidebar {border-right:0;border-bottom:3px solid var(--pixel-edge);padding:16px 20px;gap:16px}
+  .theme-pixel .side-nav {margin:0 0 0 auto;gap:8px}
+  .theme-pixel .brand strong {font-size:12px}
+  .theme-pixel .sidebar-bottom {display:none}
+  .theme-pixel .nav-button {min-height:40px;padding:8px;font-size:12px;gap:6px}
+  .theme-pixel .nav-button .icon {display:none}
+  .theme-pixel .workspace {padding:24px}
+  .theme-pixel .task-workbench {grid-template-columns:minmax(244px,.9fr) minmax(0,1.15fr);gap:16px}
+  .theme-pixel .task-detail,.theme-pixel .settings-panel {padding:20px}
+  .theme-pixel .settings-grid {gap:16px}
+  .pixel-masthead {min-height:112px}
+  .pixel-world-name strong {font-size:24px}
+  .theme-pixel .preview-bar>a {width:100%}
+  .theme-pixel .preview-bar label[for=preview-game] {margin-left:0}
+  .theme-pixel .preview-bar label {font-size:11px;gap:6px}
+}
+@media(max-width:620px) {
+  .theme-pixel {--window-fill:rgb(247 229 189 / 90%);--rail-fill:rgb(231 190 129 / 94%)}
+  .theme-pixel[data-game=rimworld] {--window-fill:rgb(32 49 59 / 92%);--rail-fill:rgb(41 60 69 / 96%)}
+  .theme-pixel .preview-bar {display:grid;grid-template-columns:1.3fr 1fr;gap:8px 12px;padding:12px 16px}
+  .theme-pixel .preview-bar>a {grid-column:1/-1;font-size:11px}
+  .theme-pixel .preview-bar label {font-size:11px;gap:4px;display:grid}
+  .theme-pixel .preview-bar select {font-size:11px;max-width:none;min-width:0;min-height:32px;width:100%}
+  .pixel-masthead {margin:0 12px;min-height:104px;padding:20px 8px;gap:12px}
+  .pixel-world-name {gap:12px}
+  .pixel-world-name strong {font-size:22px}
+  .pixel-world-name small {font-size:11px}
+  .pixel-world-emblem {width:40px;height:40px;box-shadow:2px 2px 0 #543923}
+  .pixel-world-emblem .icon {width:24px;height:24px}
+  .pixel-game-tag {display:none}
+  .theme-pixel .shell {margin:0 12px 32px;border-width:3px;min-height:800px}
+  .theme-pixel .sidebar {padding:16px 12px;gap:16px}
+  .theme-pixel .side-nav {width:100%;margin:0;padding-top:12px;border-top:1px solid var(--pixel-edge);gap:8px}
+  .theme-pixel .nav-button {font-size:12px;padding:8px 2px;min-height:40px;gap:0;border-width:1px}
+  .theme-pixel .brand strong {font-size:14px}
+  .theme-pixel .workspace {padding:20px 16px}
+  .theme-pixel .breadcrumbs,.theme-pixel .runtime-pill {font-size:11px}
+  .theme-pixel .page-heading {margin:24px 0;min-height:72px;gap:12px}
+  .theme-pixel .page-heading h1 {font-size:24px}
+  .theme-pixel .page-heading p {font-size:12px;max-width:180px}
+  .theme-pixel .button {padding:8px 10px;min-height:40px;font-size:12px;gap:6px}
+  .theme-pixel .button .icon {width:14px;height:14px}
+  .theme-pixel .context-strip {padding:16px;margin-bottom:24px;gap:16px}
+  .theme-pixel .current-game strong {font-size:13px}
+  .theme-pixel .current-game small {font-size:11px}
+  .theme-pixel .world-picker {width:100%;margin:0;font-size:11px;gap:8px}
+  .theme-pixel .world-picker label {display:block;white-space:nowrap}
+  .theme-pixel .world-picker select {margin-left:auto;max-width:190px;font-size:11px}
+  .theme-pixel .world-state {padding-top:12px;font-size:11px;margin:0}
+  .theme-pixel .task-workbench {display:block}
+  .theme-pixel .task-detail {padding:20px}
+  .theme-pixel .detail-title {font-size:22px}
+  .theme-pixel .row-person strong,.theme-pixel .detail-top .row-person strong {font-size:14px}
+  .theme-pixel .row-instruction {font-size:14px}
+  .theme-pixel .row-meta {font-size:12px}
+  .theme-pixel .task-row {padding:16px 8px}
+  .theme-pixel .task-rows {padding:0 8px 8px}
+  .theme-pixel .collection-tabs {padding:0 16px;gap:24px}
+  .theme-pixel .collection-tab {font-size:13px}
+  .theme-pixel .list-tools {font-size:11px;padding:12px 16px}
+  .theme-pixel .list-footnote {font-size:11px;padding:12px 16px}
+  .theme-pixel .page-footer {font-size:10px;padding-top:24px}
+  .theme-pixel .settings-panel {padding:20px}
+  .theme-pixel .form-two-col {grid-template-columns:1fr}
+  .theme-pixel .settings-grid,.theme-pixel .overview-grid {display:block}
+  .theme-pixel .overview-band {padding:4px 20px}
+  .theme-pixel .overview-panel {padding:20px}
+  .theme-pixel .notice {padding:12px}
+  .theme-pixel .form-actions {gap:12px}
+  .theme-pixel .section-heading {gap:8px}
+  .theme-pixel .section-heading span {font-size:11px}
+}

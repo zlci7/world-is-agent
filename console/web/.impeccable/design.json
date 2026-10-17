@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-17T16:07:19+08:00",
+  "title": "Design System: World Is Agent Console",
+  "extensions": {
+    "colorMeta": {
+      "farm-accent": { "role": "primary", "displayName": "Farm Brown" },
+      "colony-accent": { "role": "primary", "displayName": "Colony Amber" },
+      "farm-ink": { "role": "neutral", "displayName": "Farm Ink" },
+      "colony-ink": { "role": "neutral", "displayName": "Colony Ink" },
+      "farm-window": { "role": "neutral", "displayName": "Farm Window" },
+      "colony-window": { "role": "neutral", "displayName": "Colony Window" },
+      "farm-panel": { "role": "neutral", "displayName": "Farm Panel" },
+      "colony-panel": { "role": "neutral", "displayName": "Colony Panel" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Game Masthead", "purpose": "Loaded game name above the shell." },
+      "headline": { "displayName": "Page Heading", "purpose": "Current console page." },
+      "title": { "displayName": "Task Detail Title", "purpose": "Selected appointment agreement." },
+      "panel-title": { "displayName": "Panel Title", "purpose": "Game and model settings panels." },
+      "body": { "displayName": "Body", "purpose": "General Chinese interface text." },
+      "task-body": { "displayName": "Task Instruction", "purpose": "Appointment text with preserved line breaks." },
+      "label": { "displayName": "Supporting Label", "purpose": "Field labels, state labels, and metadata." },
+      "technical": { "displayName": "Technical Identifier", "purpose": "Wrapping identifiers inside advanced disclosures." }
+    },
+    "shadows": [
+      { "name": "shell", "value": "0 6px 0 var(--shade), 0 18px 35px #16312435", "purpose": "Outer application window." },
+      { "name": "panel", "value": "inset 0 0 0 2px var(--highlight), 0 3px 0 var(--shade)", "purpose": "Framed content panels." },
+      { "name": "control", "value": "2px 2px 0 var(--shade)", "purpose": "Buttons and active navigation." },
+      { "name": "control-pressed", "value": "1px 1px 0 var(--shade)", "purpose": "Pressed buttons with a one-pixel translation." },
+      { "name": "task-selected", "value": "inset 0 0 0 1px var(--highlight)", "purpose": "Selected task row." }
+    ],
+    "motion": [],
+    "breakpoints": [
+      { "name": "wide-min", "value": "1550px" },
+      { "name": "outer-margin-max", "value": "1420px" },
+      { "name": "compact-max", "value": "1150px" },
+      { "name": "horizontal-navigation-max", "value": "820px" },
+      { "name": "single-pane-max", "value": "620px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Apply game selection or check and save model settings.",
+      "html": "<button class=\"ds-button-primary\">检查并保存<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m5 12 4 4L19 6\"/></svg></button>",
+      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:2px solid var(--edge,#80532f);border-radius:0;padding:8px 16px;min-height:40px;background:var(--accent,#80532a);color:var(--accent-ink,#fff4d7);box-shadow:2px 2px 0 var(--shade,#543923);font:inherit;font-size:13px;line-height:1.5;cursor:pointer}.ds-button-primary svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}.ds-button-primary:hover{background:var(--accent-soft,#edce8f);color:var(--ink,#482f20)}.ds-button-primary:active{translate:1px 1px;box-shadow:1px 1px 0 var(--shade,#543923)}.ds-button-primary:focus-visible{outline:3px solid var(--accent,#80532a);outline-offset:4px}.ds-button-primary:disabled{cursor:not-allowed;opacity:.6}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Refresh state, retry a read, or cancel a settings edit.",
+      "html": "<button class=\"ds-button-secondary\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M20 7v5h-5 M4 17v-5h5 M5.5 8a7 7 0 0 1 11.6-3L20 8 M4 16l2.9 3A7 7 0 0 0 18.5 16\"/></svg>刷新状态</button>",
+      "css": ".ds-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:2px solid var(--edge,#80532f);border-radius:0;padding:8px 16px;min-height:40px;background:var(--surface,#fff0ca);color:var(--ink,#482f20);box-shadow:2px 2px 0 var(--shade,#543923);font:inherit;font-size:13px;line-height:1.5;cursor:pointer}.ds-button-secondary svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}.ds-button-secondary:hover{background:var(--accent-soft,#edce8f);color:var(--ink,#482f20)}.ds-button-secondary:active{translate:1px 1px;box-shadow:1px 1px 0 var(--shade,#543923)}.ds-button-secondary:focus-visible{outline:3px solid var(--accent,#80532a);outline-offset:4px}.ds-button-secondary:disabled{cursor:not-allowed;opacity:.6}"
+    },
+    {
+      "name": "Labeled Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A visible label, native field, and adjacent helper text.",
+      "html": "<label class=\"ds-field\"><span>模型名称</span><input value=\"deepseek-v4-flash\" spellcheck=\"false\"/></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;min-width:0;color:var(--muted,#62442d);font:inherit;font-size:12px;line-height:1.8}.ds-field input{border:2px solid var(--line,#b88a53);background:var(--surface,#fff0ca);color:var(--ink,#482f20);border-radius:0;padding:8px 12px;min-height:40px;min-width:0;width:100%;font:inherit;font-size:14px;caret-color:var(--accent,#80532a)}.ds-field input:focus-visible{outline:3px solid var(--accent,#80532a);outline-offset:4px}.ds-field input:disabled{cursor:not-allowed;opacity:.6}"
+    },
+    {
+      "name": "Active Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "Current page in the desktop rail or responsive header.",
+      "html": "<nav class=\"ds-navigation\" aria-label=\"主导航\"><button aria-current=\"page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 4h12a3 3 0 0 1 3 3v14H7a3 3 0 0 1-3-3V4Z M4 17h15 M8 8h7 M8 11h5\"/></svg><span>预约任务</span></button></nav>",
+      "css": ".ds-navigation button{display:inline-flex;align-items:center;justify-content:flex-start;gap:10px;min-height:48px;padding:10px 12px;border:2px solid var(--edge,#80532f);border-radius:0;background:var(--surface,#fff0ca);color:var(--ink,#482f20);box-shadow:2px 2px 0 var(--shade,#543923);font:inherit;font-size:13px;line-height:1.5;cursor:pointer}.ds-navigation svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}.ds-navigation button:hover{background:var(--accent-soft,#edce8f)}.ds-navigation button:active{translate:1px 1px;box-shadow:1px 1px 0 var(--shade,#543923)}.ds-navigation button:focus-visible{outline:3px solid var(--accent,#80532a);outline-offset:4px}.ds-navigation button:disabled{cursor:not-allowed;opacity:.6}"
+    },
+    {
+      "name": "Task State Badge",
+      "kind": "chip",
+      "refersTo": "status-detail",
+      "description": "Noninteractive task state with a readable label and icon.",
+      "html": "<span class=\"ds-status\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z M12 7v5l3 2\"/></svg>等待中</span>",
+      "css": ".ds-status{display:inline-flex;align-items:center;gap:5px;font:inherit;font-size:12px;line-height:1.8;white-space:nowrap;color:var(--muted,#62442d);border:1px solid var(--line,#b88a53);padding:6px 10px;background:var(--surface-alt,#f6dfac)}.ds-status svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}"
+    },
+    {
+      "name": "Settings Panel",
+      "kind": "card",
+      "refersTo": "surface",
+      "description": "A framed content surface for game and model configuration.",
+      "html": "<section class=\"ds-panel\"><h2>模型设置</h2><p>新配置通过连接检查后生效，检查失败时保留当前运行模型。接口密钥保存在本机。</p></section>",
+      "css": ".ds-panel{border:2px solid var(--edge,#80532f);background:var(--panel,rgb(255 240 202 / 96%));color:var(--ink,#482f20);box-shadow:inset 0 0 0 2px var(--highlight,#fff5d2),0 3px 0 var(--shade,#543923);padding:24px;min-width:0;font:inherit}.ds-panel h2{font-size:16px;line-height:1.5;margin:0 0 8px}.ds-panel p{font-size:12px;line-height:1.9;color:var(--muted,#62442d);margin:0 0 24px}"
+    },
+    {
+      "name": "Selected Task Row",
+      "kind": "custom",
+      "refersTo": "task-selected",
+      "description": "Appointment selection with actor, status, instruction, and timestamp.",
+      "html": "<button class=\"ds-task-row\" aria-pressed=\"true\"><span class=\"ds-task-person\"><span class=\"ds-task-avatar\">角</span><strong>角色</strong><span class=\"ds-task-state\">等待中</span></span><p>明天下午到湖边见面，抵达后再确认约定。</p><span class=\"ds-task-meta\">登记于 2026/10/17 15:57:27</span></button>",
+      "css": ".ds-task-row{display:block;width:100%;text-align:left;min-height:136px;padding:16px 12px;border:1px solid var(--edge,#80532f);border-radius:0;background:var(--panel-alt,rgb(246 223 172 / 96%));color:var(--ink,#482f20);box-shadow:inset 0 0 0 1px var(--highlight,#fff5d2);font:inherit;line-height:1.5;cursor:pointer}.ds-task-person{display:flex;gap:12px;align-items:center;min-width:0}.ds-task-person strong{font-size:14px;overflow-wrap:anywhere;min-width:0}.ds-task-avatar{width:32px;height:32px;flex-shrink:0;display:grid;place-items:center;background:#ddd7a5;color:#3d4b28;border:2px solid var(--line,#b88a53);box-shadow:1px 1px 0 var(--shade,#543923);font-weight:600}.ds-task-state{margin-left:auto;font-size:12px;white-space:nowrap;color:var(--muted,#62442d);flex-shrink:0}.ds-task-row p{font-size:14px;line-height:1.9;margin:12px 0 0;white-space:pre-wrap}.ds-task-meta{display:flex;margin-top:12px;font-size:12px;color:var(--muted,#62442d)}.ds-task-row:hover{background:var(--panel-alt,rgb(246 223 172 / 96%))}.ds-task-row:active{translate:none}.ds-task-row:focus-visible{outline:3px solid var(--accent,#80532a);outline-offset:4px}"
+    },
+    {
+      "name": "Game Choice",
+      "kind": "input",
+      "description": "Selected game configuration with a native radio control.",
+      "html": "<label class=\"ds-game-choice\"><span class=\"ds-game-copy\"><strong>星露谷物语</strong><small>当前加载游戏</small></span><input type=\"radio\" name=\"ds-game\" checked/></label>",
+      "css": ".ds-game-choice{display:flex;align-items:center;gap:12px;padding:16px;border:2px solid var(--edge,#80532f);background:var(--surface-alt,#f6dfac);color:var(--ink,#482f20);margin-bottom:16px;cursor:pointer;font:inherit;line-height:1.8}.ds-game-copy{min-width:0}.ds-game-copy strong{display:block;font-size:14px}.ds-game-copy small{display:block;font-size:12px;color:var(--muted,#62442d)}.ds-game-choice input{width:16px;min-height:16px;margin-left:auto;flex-shrink:0;accent-color:var(--accent,#80532a)}.ds-game-choice input:focus-visible{outline:3px solid var(--accent,#80532a);outline-offset:4px}.ds-game-choice input:disabled{cursor:not-allowed;opacity:.6}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Pixel Game Windows",
+    "overview": "Pixel landscapes sit behind framed, translucent windows. Warm farmland accompanies Stardew Valley; a cool colony landscape accompanies RimWorld. Chinese system typography, aligned information, and compact controls keep appointments and configuration readable.\n\nThe Vue console uses the same layout and components in both themes. The loaded game determines the palette and scenery. Theme replacement is immediate; configuration progress and errors appear beside the controls.",
+    "keyCharacteristics": [
+      "Square frames, inset highlights, and short hard shadows.",
+      "Layered background alpha with fully opaque reading text.",
+      "A list-and-detail workbench that becomes a single-pane mobile view.",
+      "Text and icons distinguish task states and world availability."
+    ],
+    "rules": [
+      { "name": "The Layered Fill Rule", "body": "Apply transparency to background colors. Keep normal text and controls fully opaque; disabled controls use the implemented reduced opacity.", "section": "colors" },
+      { "name": "The Loaded Game Rule", "body": "Update scenery and palette when the Runtime reports the loaded game. A radio selection alone does not change the theme. Retain the last loaded theme during a connection interruption.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reuse the paired theme roles and the existing square frames.",
+      "Do preserve aligned insets and readable Chinese system typography.",
+      "Do keep world availability, task state, and configuration progress explicit in text.",
+      "Do retain keyboard focus when mobile readers move between list and detail."
+    ],
+    "donts": [
+      "Don't lower normal text opacity to create translucent windows.",
+      "Don't preview a theme from an unapplied game selection.",
+      "Don't add theme-transition overlays, animations, or decorative UI."
+    ]
+  }
+}

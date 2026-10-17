@@ -12,6 +12,7 @@ export interface ModelSummary {
 }
 
 export interface Status {
+	instance_id?: string
   state: string
   ready: boolean
   reason?: string
@@ -117,6 +118,34 @@ export interface TurnsResponse {
 
 export interface ErrorBody {
   error: { code: string; message: string }
+}
+
+export type TaskState = 'waiting' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled'
+export interface WorkingSet { run_id: string; generation: string; checkpoint_id: string }
+export interface TaskWorld {
+  world_id: string
+  working_set: WorkingSet
+  availability: 'ready' | 'waiting_for_world' | 'saving' | 'recovery_blocked'
+  reason_code?: string
+}
+export interface TaskWorlds {
+  instance_id: string; game_id: string; supported: boolean; observed_at: string
+  worlds: TaskWorld[]; next_cursor?: string
+}
+export interface TaskRecord {
+  task_id: string; entity_id: string; entity_display_name?: string; instruction: string
+  state: TaskState; needs_reconcile: boolean; revision: string; created_at: string
+  pause_reason_code?: string
+  result?: { state: TaskState; reason: string; occurred_at: string }
+  cleanup_status: 'not_required' | 'pending' | 'confirmed' | 'unconfirmed'
+  cleanup_reasons?: string[]
+  facts?: { operation_count: number; progress_evidence_count: number; outcome?: string }
+  advanced?: { clock_id: string; wake_tick: string; deadline_tick: string; next_wake_tick?: string }
+}
+export interface TaskPage {
+  instance_id: string; game_id: string; world_id: string; supported: boolean; observed_at: string
+  working_set: WorkingSet; world: TaskWorld; counts: Record<TaskState, number>
+  items: TaskRecord[]; next_cursor?: string
 }
 
 export class ApiError extends Error {

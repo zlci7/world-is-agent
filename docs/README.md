@@ -14,6 +14,8 @@ Start here when you want the current repository state:
 
 The Runtime embeds Stardew Valley and RimWorld Game Profiles. Phase 10.4 selection and switching and the Phase 10.5 repository split have completed automated validation. Official adapters now live in the independent local `world-is-agent-adapters` Git repository. User code review and joint real-game acceptance remain pending.
 
+The local Chinese pixel console includes read-only appointment lists and details. Automated recovery and query checks pass; focused live-game recovery acceptance remains pending. See [appointment recovery and console](development/testing.md#appointment-recovery-and-console).
+
 ## Architecture And Decisions
 
 - [Runtime Architecture Baseline](<summary/GameAgent Runtime 整体架构设计规范.md>)

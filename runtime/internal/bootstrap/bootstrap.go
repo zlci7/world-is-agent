@@ -73,6 +73,7 @@ type Game struct {
 }
 
 type Snapshot struct {
+	InstanceID          string                   `json:"instance_id,omitempty"`
 	State               State                    `json:"state"`
 	Ready               bool                     `json:"ready"`
 	Reason              string                   `json:"reason,omitempty"`
@@ -89,13 +90,16 @@ type Snapshot struct {
 }
 
 type runtimeBundle struct {
-	config    agent.Config
-	catalog   definition.Catalog
-	provider  model.Provider
-	loop      *agent.Loop
-	history   memory.HistoryStore
-	gateway   *gateway.Server
-	taskStore *task.SQLiteStore
+	id          string
+	readContext context.Context
+	cancelReads context.CancelFunc
+	config      agent.Config
+	catalog     definition.Catalog
+	provider    model.Provider
+	loop        *agent.Loop
+	history     memory.HistoryStore
+	gateway     *gateway.Server
+	taskStore   *task.SQLiteStore
 }
 
 // setupMu owns all slow preparation and commits. mu protects only the published
@@ -154,6 +158,7 @@ func (r *Runtime) Snapshot() Snapshot {
 	}
 	result.Adapters = []gateway.ConnectionInfo{}
 	if result.Ready && r.bundle != nil {
+		result.InstanceID = r.bundle.id
 		result.Adapters = r.bundle.gateway.Connections()
 	}
 	result.ConnectionCount = len(result.Adapters)
@@ -355,7 +360,8 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 		MaxRecordsPerEntity:           cfg.MemoryStore.MaxRecordsPerEntity,
 		MaxProjectionBatchesPerEntity: cfg.MemoryStore.MaxProjectionBatchesPerEntity,
 	}, cfg.History, memory.WithHistoryIndexLimits(cfg.HistoryIndex))
-	candidate := &runtimeBundle{config: cfg, catalog: catalog, provider: provider, history: history}
+	readContext, cancelReads := context.WithCancel(context.Background())
+	candidate := &runtimeBundle{id: idgen.New("instance"), readContext: readContext, cancelReads: cancelReads, config: cfg, catalog: catalog, provider: provider, history: history}
 	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history))
 	options := []gateway.ServerOption{gateway.WithConnectionReady(func() { r.mu.Lock(); r.lastConnectionError = nil; r.mu.Unlock() })}
 	if cfg.Task.Enabled {
@@ -363,6 +369,7 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 		storeOptions.Path = cfg.Task.DBPath
 		store, err := task.OpenSQLiteStore(context.Background(), storeOptions)
 		if err != nil {
+			cancelReads()
 			return nil, err
 		}
 		candidate.taskStore = store
@@ -716,6 +723,9 @@ func modelReason(path string, err error) string {
 	return fmt.Sprintf("model configuration at %s is unusable: %v", path, err)
 }
 func closeBundle(bundle *runtimeBundle) error {
+	if bundle.cancelReads != nil {
+		bundle.cancelReads()
+	}
 	var result error
 	if bundle.gateway != nil {
 		result = bundle.gateway.Close(context.Background())

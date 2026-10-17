@@ -67,6 +67,21 @@ await simulate('model POST')
   assert.equal(gate.accept(rimworld, 'stardew-valley'), false)
 }
 
+{
+  const gate = createContextResponseGate()
+  const scope = (instance, world, filter) => JSON.stringify([instance,'stardew-valley',world,'active',filter,'',''])
+  const oldInstance = gate.begin(scope('instance-a','world-a',''))
+  assert.equal(gate.accept(oldInstance,scope('instance-b','world-a','')),false,'same-game replacement fences old responses')
+  const oldWorld = gate.begin(scope('instance-b','world-a',''))
+  assert.equal(gate.accept(oldWorld,scope('instance-b','world-b','')),false,'world selection fences old responses')
+  const oldFilter = gate.begin(scope('instance-b','world-b',''))
+  const current = gate.begin(scope('instance-b','world-b','paused'))
+  assert.equal(gate.accept(oldFilter,scope('instance-b','world-b','')),false,'new filtering supersedes the prior request')
+  assert.equal(gate.accept(current,scope('instance-b','world-b','paused')),true)
+  gate.invalidate()
+  assert.equal(gate.accept(current,scope('instance-b','world-b','paused')),false,'hidden or unmounted views cannot install results')
+}
+
 assert.deepEqual(disconnectedConsoleState(), { status: null, turns: [] })
 
 console.log('latest response ordering: ok')

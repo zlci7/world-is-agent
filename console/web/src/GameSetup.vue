@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { fetchGames, saveGameSetup } from './api'
-import { ApiError, type GameChoice, type Status } from './types'
+import { type GameChoice, type Status } from './types'
+import { errorText, gameName } from './i18n/zh-CN'
+import UiIcon from './UiIcon.vue'
 
 const props = defineProps<{
   status: Status
@@ -23,8 +25,8 @@ const problem = ref('')
 const currentId = computed(() => props.status.loaded_game?.id ?? '')
 const targetId = computed(() => props.status.configured_game?.id ?? '')
 const buttonLabel = computed(() => {
-  if (saving.value) return 'Switching game…'
-  return props.status.ready ? 'Switch game' : 'Choose game'
+  if (saving.value) return '切换中…'
+  return props.status.ready ? '应用游戏选择' : '选择游戏'
 })
 const canSubmit = computed(() => {
   const game = games.value.find((item) => item.id === selected.value)
@@ -46,15 +48,11 @@ async function loadGames() {
       ? targetId.value
       : games.value[0]?.id ?? ''
   } catch (error) {
-    problem.value = describe(error)
+    problem.value = errorText(error)
     emit('readFailed', error)
   } finally {
     loading.value = false
   }
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 async function submit() {
@@ -66,7 +64,7 @@ async function submit() {
     props.acceptStatus(await saveGameSetup(selected.value), request)
     await loadGames()
   } catch (error) {
-    problem.value = error instanceof ApiError ? error.message : describe(error)
+    problem.value = errorText(error)
     emit('mutationFailed', error, request)
   } finally {
     saving.value = false
@@ -75,39 +73,16 @@ async function submit() {
 </script>
 
 <template>
-  <section class="card control-card">
-    <div class="card-heading">
-      <div>
-        <h2>Game</h2>
-        <p v-if="status.ready" class="lead">Switching cancels the current turn and keeps recorded history.</p>
-        <p v-else class="lead">Select the game this Runtime will serve.</p>
-      </div>
-      <span v-if="currentId" class="current-label">Current</span>
-    </div>
-
-    <p v-if="loading" class="muted">Reading available games…</p>
-    <p v-else-if="games.length === 0 && !problem" class="problem">No game profiles are available.</p>
-    <div v-else class="game-control">
-      <select v-model="selected" :disabled="saving || busy" aria-label="Game profile">
-        <option v-for="game in games" :key="game.id" :value="game.id">{{ game.title }}</option>
-      </select>
-      <button type="button" :disabled="!canSubmit" @click="submit">{{ buttonLabel }}</button>
-    </div>
-
-    <p v-if="games.find((game) => game.id === selected && !game.assets_ready)" class="muted asset-note">
-      Missing profile files will be prepared and existing files validated.
-    </p>
-
-    <p v-if="problem" class="problem">{{ problem }}</p>
-    <p v-if="saving" class="muted progress">Preparing and applying the selected game…</p>
+  <section class="surface settings-panel">
+    <h2 class="panel-title"><UiIcon name="leaf" />当前游戏</h2>
+    <p class="panel-description">选择本机运行服务接入的游戏，每次只加载一个游戏配置。</p>
+    <p v-if="loading" class="muted" role="status">正在读取游戏配置…</p>
+    <p v-else-if="!games.length && !problem" class="notice problem">当前没有可用的游戏配置。</p>
+    <form v-else @submit.prevent="submit"><label v-for="game in games" :key="game.id" class="game-choice" :class="{ chosen:selected===game.id }"><span class="avatar"><UiIcon :name="game.id==='rimworld' ? 'world' : 'leaf'" /></span><div><strong>{{ gameName(game.id,game.title) }}</strong><small>{{ currentId===game.id ? '当前加载游戏' : '可用游戏配置' }}</small></div><input v-model="selected" type="radio" name="game" :value="game.id" :disabled="saving || busy" /></label>
+      <p v-if="status.ready" class="notice"><UiIcon name="history" />切换会结束当前回合，已经记录的历史保留。</p>
+      <p v-if="games.find(game=>game.id===selected && !game.assets_ready)" class="muted">提交时准备缺少的配置，并校验已有文件。</p>
+      <p v-if="problem" class="notice problem" role="alert">{{ problem }}</p><button v-if="problem && !games.length" class="secondary" type="button" @click="loadGames">重新读取游戏配置</button>
+      <button type="submit" :disabled="!canSubmit">{{ buttonLabel }}<UiIcon name="chevron" /></button><p v-if="saving" class="muted" role="status">正在等待游戏配置生效。</p>
+    </form>
   </section>
 </template>
-
-<style scoped>
-.card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.lead { margin: 3px 0 16px; color: var(--muted); font-size: 13px; }
-.current-label { padding: 2px 7px; border-radius: 999px; background: var(--ok-soft); color: var(--ok); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.game-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-.game-control select { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-subtle); color: var(--ink); font: inherit; }
-.asset-note, .progress { margin: 10px 0 0; font-size: 12px; }
-</style>

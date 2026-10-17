@@ -5,9 +5,11 @@
  *  There is one button and no test button. The Runtime probes the exact
  *  parameters it is about to write, so a separate test would only add a second
  *  real model call and a second state that can disagree with what was saved. */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { fetchSetupOptions, saveModelSetup } from './api'
-import { ApiError, type ModelCandidate, type Status } from './types'
+import { type ModelCandidate, type Status } from './types'
+import { errorText } from './i18n/zh-CN'
+import UiIcon from './UiIcon.vue'
 
 const props = defineProps<{
   status: Status
@@ -34,23 +36,12 @@ const apiKey = ref('')
 const saving = ref(false)
 const failure = ref('')
 
-/** Failure codes the Runtime can answer with. The probe's own message is shown
- *  as the detail because it is written to be safe for a browser and never
- *  carries the credential. */
-const failureHeadlines: Record<string, string> = {
-  invalid_configuration: 'Check the configuration',
-  authentication_failed: 'Authentication failed',
-  network_unavailable: 'Network unavailable',
-  provider_error: 'The provider answered with an error',
-  setup_blocked: 'The Runtime cannot be configured',
-  model_setup_failed: 'The configuration was not accepted',
-}
-
 const canSubmit = computed(
   () => !saving.value && !props.busy && provider.value !== '' && apiKey.value.trim() !== '',
 )
 
 onMounted(loadOptions)
+onUnmounted(() => { apiKey.value = '' })
 
 async function loadOptions() {
   optionsLoading.value = true
@@ -65,32 +56,25 @@ async function loadOptions() {
     // The first choice is the provider this build and its release notes lead
     // with; the user can still pick another.
     if (props.mode === 'settings') {
-      provider.value = props.status.model?.provider ?? providers.value[0]?.provider ?? ''
-      model.value = props.status.model?.model ?? ''
+      const current = providers.value.find(choice => choice.provider === props.status.model?.provider)
+      provider.value = current?.provider ?? providers.value[0]?.provider ?? ''
+      model.value = current ? props.status.model?.model ?? '' : providers.value[0]?.model ?? ''
       baseUrl.value = ''
     } else {
       selectProvider(providers.value[0]?.provider ?? '')
     }
   } catch (error) {
-    optionsProblem.value = describe(error)
+    optionsProblem.value = errorText(error)
     emit('readFailed', error)
   } finally {
     optionsLoading.value = false
   }
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 function selectProvider(next: string) {
   provider.value = next
   const choice = providers.value.find((candidate) => candidate.provider === next)
   model.value = choice?.model ?? ''
-}
-
-function headline(code: string): string {
-  return failureHeadlines[code] ?? 'The configuration was not accepted'
 }
 
 async function submit() {
@@ -115,11 +99,7 @@ async function submit() {
   } catch (error) {
     // Nothing was written for a failed probe, so the form stays exactly as the
     // user left it and can be corrected and submitted again.
-    if (error instanceof ApiError) {
-      failure.value = error.message ? `${headline(error.code)}: ${error.message}` : headline(error.code)
-    } else {
-      failure.value = describe(error)
-    }
+    failure.value = errorText(error)
     emit('mutationFailed', error, request)
   } finally {
     saving.value = false
@@ -134,157 +114,17 @@ function cancel() {
 </script>
 
 <template>
-  <section class="card">
-    <h2>{{ mode === 'settings' ? 'Model settings' : 'Set up your model' }}</h2>
-    <template v-if="optionsProblem">
-      <p class="banner banner-error">
-        The Runtime did not report which providers it supports: {{ optionsProblem }}
-      </p>
-      <div class="actions">
-        <button type="button" :disabled="optionsLoading || busy" @click="loadOptions">
-          {{ optionsLoading ? 'Retrying…' : 'Retry' }}
-        </button>
-        <button v-if="mode === 'settings'" type="button" class="secondary" :disabled="busy" @click="cancel">
-          Cancel
-        </button>
-      </div>
-    </template>
-    <template v-else>
-    <p class="lead">
-      The Runtime drives the agent with a model of your choice. The key is stored on this machine
-      only, in the data root, and is never sent anywhere except your provider.
-    </p>
-
-    <div class="field">
-      <label for="setup-provider">Provider</label>
-      <select
-        id="setup-provider"
-        :value="provider"
-        :disabled="saving || busy"
-        @change="selectProvider(($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="choice in providers" :key="choice.provider" :value="choice.provider">
-          {{ choice.provider }}
-        </option>
-      </select>
-    </div>
-
-    <div class="field">
-      <label for="setup-model">Model</label>
-      <input id="setup-model" v-model="model" :disabled="saving || busy" spellcheck="false" />
-    </div>
-
-    <div class="field">
-      <label for="setup-base-url">Base URL</label>
-      <div class="field-control">
-        <input id="setup-base-url" v-model="baseUrl" :disabled="saving || busy" spellcheck="false" />
-        <small>Leave empty to use the provider default.</small>
-      </div>
-    </div>
-
-    <div class="field">
-      <label for="setup-key">API Key</label>
-      <input
-        id="setup-key"
-        v-model="apiKey"
-        type="password"
-        autocomplete="off"
-        spellcheck="false"
-        :disabled="saving || busy"
-        @keyup.enter="submit"
-      />
-    </div>
-
-    <p v-if="failure" class="problem">{{ failure }}</p>
-
-    <div class="actions">
-      <button type="button" :disabled="!canSubmit" @click="submit">
-        {{ saving ? 'Testing and applying…' : (mode === 'settings' ? 'Apply settings' : 'Save and continue') }}
-      </button>
-      <button v-if="mode === 'settings'" type="button" class="secondary" :disabled="saving || busy" @click="cancel">
-        Cancel
-      </button>
-      <span v-if="saving" class="muted">
-        The Runtime is checking the key with {{ provider }} before it saves anything.
-      </span>
-      <span v-else-if="!canSubmit" class="muted">An API key is required.</span>
-    </div>
-    </template>
+  <section class="surface settings-panel">
+    <h2 class="panel-title"><UiIcon name="settings" />{{ mode === 'settings' ? '模型设置' : '配置模型' }}</h2>
+    <p class="panel-description">新配置通过连接检查后生效，检查失败时保留当前运行模型。接口密钥保存在本机。</p>
+    <template v-if="optionsProblem"><p class="notice problem" role="alert">{{ optionsProblem }}</p><div class="actions"><button :disabled="optionsLoading || busy" @click="loadOptions">{{ optionsLoading ? '正在读取…' : '重新读取服务商' }}</button><button v-if="mode === 'settings'" class="secondary" :disabled="busy" @click="cancel">取消修改</button></div></template>
+    <form v-else @submit.prevent="submit">
+      <div class="field"><label for="setup-provider">服务商</label><select id="setup-provider" :value="provider" :disabled="saving || busy" @change="selectProvider(($event.target as HTMLSelectElement).value)"><option v-for="choice in providers" :key="choice.provider" :value="choice.provider">{{ choice.provider }}</option></select></div>
+      <div class="field"><label for="setup-model">模型名称</label><input id="setup-model" v-model="model" :disabled="saving || busy" spellcheck="false" /></div>
+      <div class="field"><label for="setup-key">接口密钥</label><input id="setup-key" v-model="apiKey" type="password" autocomplete="off" spellcheck="false" :disabled="saving || busy" required /><small>网页不显示已保存的密钥，请输入本次配置使用的密钥。</small></div>
+      <div class="field"><label for="setup-base-url">接口地址（可选）</label><input id="setup-base-url" v-model="baseUrl" :disabled="saving || busy" spellcheck="false" /><small>留空时使用服务商默认地址。</small></div>
+      <p v-if="failure" class="notice problem" role="alert">{{ failure }}</p>
+      <div class="actions"><button type="submit" :disabled="!canSubmit">{{ saving ? '正在检查并应用…' : '检查并保存' }}<UiIcon name="check" /></button><button v-if="mode === 'settings'" type="button" class="secondary" :disabled="saving || busy" @click="cancel">取消修改</button><span v-if="saving" role="status">正在检查模型连接，通过后保存。</span></div>
+    </form>
   </section>
 </template>
-
-<style scoped>
-.lead {
-  margin: 0 0 16px;
-  color: var(--muted);
-}
-
-.field {
-  display: grid;
-  grid-template-columns: 90px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.field label {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.field input,
-.field select {
-  width: 100%;
-  max-width: 420px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--bg);
-  color: var(--ink);
-  font: inherit;
-}
-
-.field-control {
-  display: grid;
-  gap: 3px;
-}
-
-.field-control small {
-  color: var(--muted);
-}
-
-.field input:disabled,
-.field select:disabled {
-  opacity: 0.6;
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 16px;
-  flex-wrap: wrap;
-}
-
-button {
-  padding: 7px 14px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: var(--accent);
-  color: var(--panel);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.secondary {
-  border-color: var(--line);
-  background: transparent;
-  color: var(--ink);
-}
-</style>

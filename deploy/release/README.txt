@@ -48,7 +48,7 @@ What you need
 
 The Runtime checks the key with the provider before it saves anything, so a
 wrong key is reported on the page and nothing is written to disk.
-Use Model settings to change the provider or model while the Runtime is running.
+Use the model form in 游戏与模型 (Game & Model) to change the provider or model.
 Supply an API key for each update. Enter a custom base URL when needed; an empty
 base URL uses the provider default. A failed check keeps the current model.
 
@@ -58,7 +58,7 @@ Connecting the game
 
 The Runtime alone does not touch the game. Games are connected by an adapter
 that is installed separately and is not part of this package. Choose the matching
-game in the console and wait for Ready before starting it.
+game in the console and wait for 运行服务已就绪 (Runtime Ready) before starting it.
 
 Official adapters:
 https://github.com/zlci7/world-is-agent-adapters
@@ -78,8 +78,8 @@ The adapter connects to 127.0.0.1:50051, which is where the Runtime listens. Its
 config.json is created inside the mod folder on first run; the default address is
 already correct, so no edit is normally needed.
 
-Until an adapter is connected, the Runtime works but has nothing to show: the
-console lists agent turns, and turns come from the game.
+The console retains saved appointment records while the game is disconnected.
+New turns and game-clock progress require a connected, bound game world.
 
 RimWorld is supported by the separate adapter repository's rimworld project.
 Its adapter is installed as a RimWorld mod and is Windows x64 only. Each game
@@ -87,8 +87,8 @@ directory contains its own build, package, and installation instructions.
 
 Use Stardew Adapter 0.1.1 or RimWorld Adapter 0.1.0 for automatic reconnection.
 
-One Runtime process loads one game at a time. Switch game applies another
-profile immediately, cancels active turns and retains recorded history. An
+One Runtime process loads one game at a time. Applying a selection in 游戏与模型
+loads the profile, cancels active turns and retains recorded history. An
 adapter for another game is rejected. Multiple adapters for the current game may
 connect as separate sessions, but that does not make concurrent writes to one
 save safe.
@@ -121,8 +121,10 @@ Status and limits
 -----------------
 
 This is an experimental 0.2.0 build. The console shows runtime state and a
-summary of recent agent turns; it does not yet offer per-turn detail, task or
-memory views, or dependency diagnostics. See docs/STATUS.md in the repository
+summary of recent agent turns. 预约任务 (Appointments) provides read-only world,
+Task, result and cleanup views; Stardew enables appointments and RimWorld does
+not. Focused live-game save/restart/reconnect/rollback acceptance is pending.
+Per-turn trace details, memory views and dependency diagnostics are not offered. See docs/STATUS.md in the repository
 for the current validation scope and known limits.
 
 
