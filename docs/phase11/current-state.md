@@ -179,7 +179,7 @@ Memory SQLite 独立于游戏存档。时间过滤可以隐藏当前时间线中
 | RimWorld 基础闭环 | 殖民者点击、真实模型选用对话工具、玩家回复、身份保存与加载有实机记录 | 非法角色范围和逐字段跨角色上下文对比没有完整实机记录 |
 | 多游戏产品化与拆仓 | 10.4/10.5 自动化与独立交付验证通过，用户已报告对应实机基线通过 | 该基线不替代后续运行中切换功能的专项验收 |
 | Runtime 0.2.0 Live Settings | 自动化、聚焦生命周期 race、浏览器配置与请求失败、便携包进程和会话保持验证 | 使用受控模型服务；运行中切换、Adapter 重连和模型替换的专项游戏实机验收仍待完成 |
-| Phase11.1 开发验证 | 全量 Go 回归、跨进程恢复与精确回档、只读 API、Vue 类型/请求门控/构建、真实 HTTP 浏览器检查及便携包进程验证通过；Stardew TaskExecution 166 项、ProtocolMapper 186 项、RuntimeClient 26 项通过 | 使用隔离数据库与 fake model；实机组合恢复待验，race 缺少 C 工具链；见 [验收记录](phase11.1-acceptance.md) |
+| Phase11.1 开发验证 | 全量 Go 回归、跨进程恢复与精确回档、只读 API、Vue 类型/请求门控/构建、真实 HTTP 浏览器检查及便携包进程验证通过；Stardew TaskExecution 166 项、ProtocolMapper 186 项、RuntimeClient 26 项通过 | 使用隔离数据库与 fake model；四个核心包完整 race 检测通过，2 个符号链接权限相关测试跳过；实机组合恢复待验；见 [验收记录](phase11.1-acceptance.md) |
 
 历史阶段中存在因 Windows C 工具链而未执行完整 race 的记录。Live Settings 的聚焦 race 通过只覆盖对应生命周期范围。
 

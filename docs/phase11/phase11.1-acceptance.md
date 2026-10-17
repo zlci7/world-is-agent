@@ -2,7 +2,7 @@
 
 日期：2026-10-17（Asia/Shanghai）
 
-状态：生产代码、自动化回归、浏览器检查与便携包进程验证通过；真实游戏组合恢复验收待完成。
+状态：生产代码、自动化回归、四个核心包 race 检测、浏览器检查与便携包进程验证通过；真实游戏组合恢复验收待完成。
 
 ## 交付范围
 
@@ -29,11 +29,42 @@ Runtime 版本保持 `0.2.0`；Stardew Adapter `0.1.1`、RimWorld Adapter `0.1.0
 | 前端 | `type-check`、`test:ordering`、`build` 通过；门控覆盖实例、世界、筛选变化与失效请求 |
 | 架构与协议 | `scripts/check-architecture.ps1` 通过，包含 Protocol static check |
 | Stardew 相关回归 | `dotnet test`：ProtocolMapper 186、RuntimeClient 26、TaskExecution 166 项通过；显式引用主仓库 Protocol 与本机游戏程序集 |
-| race | 未通过执行条件：当前 `CGO_ENABLED=0` 且没有可用 C 编译器；需要在具备工具链的环境补验 |
+| race | Task、Gateway、Bootstrap、HTTP 四包完整检测通过，无数据竞争报告；499 个顶层测试和 788 个子用例通过，2 个 Windows 符号链接权限相关用例跳过 |
 
 现有检查点、证据和 Protocol 链路回归覆盖 prepared/Finish、同 run 重绑、等待证据、恢复失败锁存、错误或损坏引用、旧代次和重复事实。测试中的游戏能力与模型是 fake；它们证明机制断言，不证明真实 NPC 路线或游戏主线程行为。
 
 核心新增测试位于 [Task 查询](../../runtime/internal/task/console_query_test.go)、[Gateway 世界快照](../../runtime/internal/gateway/console_world_test.go)、[实例替换](../../runtime/internal/bootstrap/task_console_test.go)、[HTTP 安全边界](../../runtime/internal/httpapi/tasks_test.go) 和 [真实 HTTP 持久任务读取](../../runtime/internal/httpapi/tasks_integration_test.go)。
+
+## 后台验收
+
+验证时间：2026-10-17 16:50–16:53（Asia/Shanghai，race 执行区间）。测试源码为 `02ec54a240295632bf9ea44bc2670265e45e1ecb`，测试开始时工作区干净。
+
+| race 包 | 顶层测试通过 | 子用例通过 | 跳过 | 包执行耗时 |
+| --- | ---: | ---: | ---: | ---: |
+| `runtime/internal/task` | 265 | 648 | 2 | 82.237 秒 |
+| `runtime/internal/gateway` | 157 | 134 | 0 | 41.288 秒 |
+| `runtime/internal/bootstrap` | 40 | 6 | 0 | 14.597 秒 |
+| `runtime/internal/httpapi` | 37 | 0 | 0 | 7.975 秒 |
+
+四个包退出成功，无失败用例、无 `WARNING: DATA RACE` 报告。跳过项为 `TestStoreLockCanonicalizesExistingDatabaseSymlink` 和 `TestStoreLockRejectsDanglingDatabaseSymlinkBeforeCreatingSidecar`，原因是普通 Windows 账户缺少创建文件符号链接的权限。该路径仍需在支持符号链接的环境验证。
+
+环境为 Go `1.25.3 windows/amd64`、GCC `14.3.0`、MinGW-w64 UCRT `12.0.0`。便携编译器位于本机忽略目录 `runtime/.local/phase11-qa/toolchain/gcc14`。`CGO_ENABLED=1`、`CC`、PATH 和 `GOMAXPROCS=2` 仅作用于本次测试进程，系统配置和普通启动环境保持原值。
+
+命令：
+
+```powershell
+$env:CGO_ENABLED = '1'
+$env:CC = (Resolve-Path 'runtime/.local/phase11-qa/toolchain/gcc14/mingw64/bin/gcc.exe').Path
+$env:PATH = (Split-Path -Parent $env:CC) + ';' + $env:PATH
+$env:GOMAXPROCS = '2'
+go test -race -json -p 1 ./runtime/internal/task ./runtime/internal/gateway ./runtime/internal/bootstrap ./runtime/internal/httpapi -count=1 -timeout 15m
+```
+
+工具链来自 [WinLibs 固定版本发布](https://github.com/brechtsanders/winlibs_mingw/releases/tag/14.3.0posix-12.0.0-ucrt-r1)。归档为 `winlibs-x86_64-posix-seh-gcc-14.3.0-mingw-w64ucrt-12.0.0-r1.7z`，SHA-256 与发布方文件一致：`0ca3d2b5c2eb11ad60227b5da3099ff1fb2d0ac0f129d95f34b78255d9a822b1`。`libsynchronization.a` 检查满足 [Go Windows race 工具链要求](https://go.dev/doc/articles/race_detector#Requirements)。
+
+本轮同时复验 Task、Gateway、Bootstrap、HTTP、Context、Memory 六包普通测试，前端类型与请求顺序检查，以及交付包在独立数据根的真实进程启动、配置、切换与重启，均通过。包校验值与交付记录一致。测试未启动游戏，未读取或改写玩家正式存档。
+
+原始 race 事件和摘要保存在本机忽略目录的 `runtime/.local/phase11-qa/race-results.jsonl` 与 `race-summary.json`。race 检测结论覆盖本轮执行过的路径；真实 NPC 路线、游戏主线程和保存读档组合仍属于实机验收。
 
 ## 浏览器与视觉证据
 
