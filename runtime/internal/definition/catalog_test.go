@@ -259,6 +259,7 @@ func TestLoadCatalogFromDirLoadsBundledStardewDefinitions(t *testing.T) {
 		"npc:Kent",
 		"npc:Krobus",
 		"npc:Leah",
+		"npc:Leo",
 		"npc:Lewis",
 		"npc:Linus",
 		"npc:Marnie",
@@ -299,8 +300,9 @@ func TestLoadCatalogFromDirLoadsBundledStardewDefinitions(t *testing.T) {
 			if len(agent.BehaviorGuidelines) == 0 {
 				t.Fatalf("%s behavior_guidelines is empty", definitionID)
 			}
-			if agent.SourceVersion != "manual-valleytalk-inspired-draft" {
-				t.Fatalf("%s SourceVersion = %q, want manual-valleytalk-inspired-draft", definitionID, agent.SourceVersion)
+			wantSource := "stardew-content-v1"
+			if agent.SourceVersion != wantSource {
+				t.Fatalf("%s SourceVersion = %q, want %q", definitionID, agent.SourceVersion, wantSource)
 			}
 		}
 	}

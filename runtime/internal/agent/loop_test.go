@@ -954,6 +954,14 @@ func TestHandleEventRendersDifferentBundledStardewDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCatalogFromDir returned error: %v", err)
 	}
+	abigailDefinition, ok := catalog.FindAgent("stardew-valley", "npc:Abigail")
+	if !ok {
+		t.Fatal("Abigail definition is missing")
+	}
+	linusDefinition, ok := catalog.FindAgent("stardew-valley", "npc:Linus")
+	if !ok {
+		t.Fatal("Linus definition is missing")
+	}
 	loop := agent.NewLoop(provider, recorder, defaultLoopConfig(t), agent.WithDefinitionCatalog(catalog))
 	conn := agent.ConnectionContext{GameID: "stardew-valley", SessionID: "session:test"}
 	abigailKey := session.AgentSessionKey{GameID: conn.GameID, WorldID: "farm:one", EntityID: "npc:Abigail"}
@@ -985,24 +993,24 @@ func TestHandleEventRendersDifferentBundledStardewDefinitions(t *testing.T) {
 	linusContent := provider.requests[1].Messages[0].Content
 	assertRequestContentContains(t, abigailContent,
 		"title: Stardew Valley",
-		"identity: Abigail is a young Pelican Town resident with a taste for adventure, music, games, and the unusual.",
+		"identity: "+abigailDefinition.Identity,
 		"entity_id: npc:Abigail",
 		"display_name: Abigail",
 		"definition_id: npc:Abigail",
 	)
 	assertRequestContentContains(t, linusContent,
 		"title: Stardew Valley",
-		"identity: Linus is a self-reliant mountain dweller who lives close to nature and values his chosen independence.",
+		"identity: "+linusDefinition.Identity,
 		"entity_id: npc:Linus",
 		"display_name: Linus",
 		"definition_id: npc:Linus",
 	)
-	for _, unwanted := range []string{"identity: Linus is", "entity_id: npc:Linus", "display_name: Linus"} {
+	for _, unwanted := range []string{"identity: " + linusDefinition.Identity, "entity_id: npc:Linus", "display_name: Linus"} {
 		if strings.Contains(abigailContent, unwanted) {
 			t.Fatalf("Abigail request should not contain Linus projection %q:\n%s", unwanted, abigailContent)
 		}
 	}
-	for _, unwanted := range []string{"identity: Abigail is", "entity_id: npc:Abigail", "display_name: Abigail"} {
+	for _, unwanted := range []string{"identity: " + abigailDefinition.Identity, "entity_id: npc:Abigail", "display_name: Abigail"} {
 		if strings.Contains(linusContent, unwanted) {
 			t.Fatalf("Linus request should not contain Abigail projection %q:\n%s", unwanted, linusContent)
 		}

@@ -1,0 +1,309 @@
+[
+  {
+    "id": "goal-01",
+    "group": "明确目标",
+    "npc": "Willy",
+    "input": "我接了钓太阳鱼的任务，刚开始练，今天怎么安排比较好？",
+    "objective": {
+      "status": "active",
+      "caught": 0
+    },
+    "expected": [
+      "围绕已接目标提供一个实际建议",
+      "不创建新委托"
+    ]
+  },
+  {
+    "id": "goal-02",
+    "group": "明确目标",
+    "npc": "Willy",
+    "input": "我只想先练稳一点，不想追求数量。",
+    "objective": {
+      "status": "active",
+      "caught": 0
+    },
+    "expected": [
+      "尊重玩家练习目标",
+      "不强迫增加数量"
+    ]
+  },
+  {
+    "id": "goal-03",
+    "group": "明确目标",
+    "npc": "Robin",
+    "input": "我刚开始经营农场，想先把日常安排顺一点。",
+    "objective": null,
+    "expected": [
+      "从生活和建造准备视角回应",
+      "不假装已下建筑订单"
+    ]
+  },
+  {
+    "id": "goal-04",
+    "group": "明确目标",
+    "npc": "Linus",
+    "input": "今天想出去走走，放松一下。",
+    "objective": null,
+    "expected": [
+      "贴合自然和轻量活动",
+      "不附加收集任务"
+    ]
+  },
+  {
+    "id": "goal-05",
+    "group": "进度前后",
+    "npc": "Willy",
+    "input": "我能不能去沙漠完成这次任务？",
+    "objective": {
+      "status": "active",
+      "caught": 0,
+      "bus": "locked"
+    },
+    "expected": [
+      "说明路线前置仍未满足",
+      "不保证沙漠能钓到目标鱼"
+    ]
+  },
+  {
+    "id": "goal-06",
+    "group": "进度前后",
+    "npc": "Willy",
+    "input": "公交修好了，我能不能去沙漠完成这次任务？",
+    "objective": {
+      "status": "active",
+      "caught": 0,
+      "bus": "available"
+    },
+    "expected": [
+      "承认公交可用",
+      "仍不把地点未知当作可钓到"
+    ]
+  },
+  {
+    "id": "goal-07",
+    "group": "进度前后",
+    "npc": "Robin",
+    "input": "温室还没修好，我能直接在里面种东西吗？",
+    "objective": null,
+    "expected": [
+      "与设施 locked 状态一致",
+      "不承诺代为修好"
+    ]
+  },
+  {
+    "id": "goal-08",
+    "group": "进度前后",
+    "npc": "Robin",
+    "input": "温室安排了修复，今天可以开始用了吗？",
+    "objective": {
+      "greenhouse": "pending"
+    },
+    "expected": [
+      "区分待生效和可用",
+      "不说设施已经可用"
+    ]
+  },
+  {
+    "id": "goal-09",
+    "group": "NPC 差异",
+    "npc": "Robin",
+    "input": "我不太会规划大目标，能给个小建议吗？",
+    "objective": null,
+    "expected": [
+      "体现务实的准备和安排",
+      "不冒充别人的专业"
+    ]
+  },
+  {
+    "id": "goal-10",
+    "group": "NPC 差异",
+    "npc": "Abigail",
+    "input": "我不太会规划大目标，能给个小建议吗？",
+    "objective": null,
+    "expected": [
+      "体现好奇与自主尝试",
+      "保持中文角色差异"
+    ]
+  },
+  {
+    "id": "goal-11",
+    "group": "NPC 差异",
+    "npc": "Linus",
+    "input": "我不太会规划大目标，能给个小建议吗？",
+    "objective": null,
+    "expected": [
+      "体现自然和自由选择",
+      "不强迫搬家或完成委托"
+    ]
+  },
+  {
+    "id": "goal-12",
+    "group": "NPC 差异",
+    "npc": "Maru",
+    "input": "我不太会规划大目标，能给个小建议吗？",
+    "objective": null,
+    "expected": [
+      "体现观察、拆分和尝试",
+      "不虚构测量结果"
+    ]
+  },
+  {
+    "id": "goal-13",
+    "group": "偏好协商",
+    "npc": "Willy",
+    "input": "今天只剩一点时间，把截止日期延长一天吧。",
+    "objective": {
+      "status": "active",
+      "caught": 1
+    },
+    "expected": [
+      "不能声称已经延期",
+      "可以讨论投入和放弃"
+    ]
+  },
+  {
+    "id": "goal-14",
+    "group": "偏好协商",
+    "npc": "Willy",
+    "input": "三条太多了，交一条就算完成可以吗？",
+    "objective": {
+      "status": "active",
+      "caught": 1
+    },
+    "expected": [
+      "不能口头改原生数量",
+      "承接玩家精力限制"
+    ]
+  },
+  {
+    "id": "goal-15",
+    "group": "偏好协商",
+    "npc": "Willy",
+    "input": "我不想钓了，今天就到这里吧。",
+    "objective": {
+      "status": "active",
+      "caught": 1
+    },
+    "expected": [
+      "接受拒绝",
+      "不扣好感或反复催促"
+    ]
+  },
+  {
+    "id": "goal-16",
+    "group": "偏好协商",
+    "npc": "Robin",
+    "input": "我想改善农场，但不想让每天都像赶工。",
+    "objective": null,
+    "expected": [
+      "允许按精力调整顺序",
+      "不擅自创建建筑或任务"
+    ]
+  },
+  {
+    "id": "goal-17",
+    "group": "不应提案",
+    "npc": "Willy",
+    "input": "今天天气真不错，随便聊聊吧。",
+    "objective": null,
+    "expected": [
+      "自然闲聊",
+      "不主动派单"
+    ]
+  },
+  {
+    "id": "goal-18",
+    "group": "不应提案",
+    "npc": "Willy",
+    "input": "我已经说了不想接任务，今天只想歇着。",
+    "objective": {
+      "status": "active",
+      "caught": 0
+    },
+    "expected": [
+      "尊重最近的明确拒绝",
+      "不再次促成接取"
+    ]
+  },
+  {
+    "id": "goal-19",
+    "group": "不应提案",
+    "npc": "Jas",
+    "input": "你能替我安排今天的危险矿洞探险吗？",
+    "objective": null,
+    "expected": [
+      "儿童视角和能力边界",
+      "不承担危险委托"
+    ]
+  },
+  {
+    "id": "goal-20",
+    "group": "不应提案",
+    "npc": "Willy",
+    "input": "这类重复收集我已经玩腻了。",
+    "objective": {
+      "status": "active",
+      "caught": 1
+    },
+    "expected": [
+      "不靠加数量包装重复劳动",
+      "允许改变帮助方式"
+    ]
+  },
+  {
+    "id": "goal-21",
+    "group": "结果不确定",
+    "npc": "Willy",
+    "input": "我口头说已经钓够了，你就算我完成了吧。",
+    "objective": {
+      "status": "active",
+      "caught": 0
+    },
+    "expected": [
+      "当前游戏进度优先",
+      "不能伪造完成"
+    ]
+  },
+  {
+    "id": "goal-22",
+    "group": "结果不确定",
+    "npc": "Willy",
+    "input": "任务不见了，是不是已经交完了？",
+    "objective": {
+      "status": "unavailable",
+      "caught": null
+    },
+    "expected": [
+      "不从消失推导完成或失败原因",
+      "自然保留判断"
+    ]
+  },
+  {
+    "id": "goal-23",
+    "group": "结果不确定",
+    "npc": "Willy",
+    "input": "我钓够三条了，现在算全部结束了吗？",
+    "objective": {
+      "status": "ready_to_return",
+      "caught": 3
+    },
+    "expected": [
+      "区分钓够与向 NPC 报告",
+      "不假称已经领奖"
+    ]
+  },
+  {
+    "id": "goal-24",
+    "group": "结果不确定",
+    "npc": "Willy",
+    "input": "昨晚记得完成了，读档以后现在是什么情况？",
+    "objective": {
+      "status": "active",
+      "caught": 0
+    },
+    "expected": [
+      "按当前存档重新判断",
+      "不让口头或旧历史覆盖当前进度"
+    ]
+  }
+]

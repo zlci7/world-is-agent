@@ -47,7 +47,7 @@ and a per-instance observation.
 | Task console | Authenticated read-only world, list and detail APIs use the current instance and bounded SQLite snapshots. The Chinese pixel console offers world selection, active/terminal filters, facts and cleanup status. World readiness and Task state are separate. |
 | Turn completion | Runtime can send best-effort `TurnCompletion` to the adapter. |
 | Memory | SQLite-backed terminal history and Task results, separated by game/world and scoped by entity. Bounded summaries, literal source retrieval, source-coverage checks and game-time filtering are implemented. Retention cleanup is disabled by default. |
-| Definitions | Optional static Runtime catalog for Game Definitions and Agent Definitions scoped by `game_id + definition_id`. |
+| Definitions | Static Game Definitions scoped by `game_id` and Agent Definitions scoped by `game_id + definition_id`. Stardew's shared background and all 34 ordinary friendship NPCs, including Leo, use Chinese content version `stardew-content-v1`; every NPC plus shared background passes the 4096-token definition budget. Per-save identity and memory use `game_id + world_id + entity_id`; current relationships come from Adapter observations. Real-model persona and gameplay acceptance remain open. |
 | Context | Runtime Context Engine builds stable Context Projection from event, ContextFacts, observation, recent memory, current-turn transcript, definitions, Agent Instance Descriptor, runtime policy, and Turn Tool View snapshot. |
 | Context budget | Deterministic provider-neutral estimated-token budget selection, section cropping, tool size admission, and final request hard gates. |
 | Context diagnostics | `ContextBuildReport` and bounded `ToolAdmissionReport` summaries record fallback, cropping, dropped content, tool admission, and final request estimated-token size. |
@@ -69,7 +69,9 @@ Task console validation passed with full Go regression, Vue type/order/build che
 | Area | Current support |
 | --- | --- |
 | Stardew adapter | Real SMAPI adapter used as the first validation adapter. |
-| Stardew observation | Adapter-owned Stardew fact projection for time, weather, scene, relationship, schedule, conversation, and nearby NPC context. |
+| Stardew observation | Adapter-owned projection for time, weather, scene, relationship, schedule, conversation and nearby NPCs. Adapter 0.1.2 source also provides exact relationship status, five bounded world-progress fields, and up to three selected current-NPC event flags. Missing facts remain unknown; these additions require live-game acceptance. |
+| Stardew native interactions | Adapter 0.1.2 source preserves held-item offers/gifts, native quest reporting and Dwarf's language prerequisite. Native 1.6.15 API probes pass in background tests; actual interaction and deduction behavior remain subject to live-game acceptance. |
+| Stardew objective pilot | Experimental single-player reader for one accepted native Willy fishing quest. Quest/player save metadata scopes the instance and last observed result; a native completed flag is required, absence stays unavailable, and reward collection is not inferred. No new quest creation or reward capability. See [Phase11.15 acceptance](phase11/phase11.15-acceptance.md). |
 | Stardew interaction events | NPC interaction and player dialogue input events. |
 | Stardew dialogue | Native NPC dialogue line followed by generated reply choices and optional free-text input. |
 | Stardew actions | `speak`, `emote`, `present_dialogue`, `face_player`, and same-location `move_to`. |

@@ -255,21 +255,10 @@ func TestDamagedActiveGameSkipsLegacyMigration(t *testing.T) {
 }
 
 func TestLegacyExistingTargetRepairsMissingDefinitions(t *testing.T) {
-	dir, _ := legacyFixture(t)
-	path := filepath.Join(dir, "games", "stardew-valley", "definitions", "game.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatal(err)
-	}
-	game, _ := defaults.ReadFile("games/stardew-valley/definitions/game.json")
-	profile, _ := defaults.ReadFile("games/stardew-valley/agent.json")
+	dir, profile := legacyFixture(t)
 	authoritative := bytes.Replace(profile, []byte(`"max_steps": 5`), []byte(`"max_steps": 2`), 1)
-	for path, data := range map[string][]byte{path: game, filepath.Join(dir, "agent.json"): profile, filepath.Join(dir, "games", "stardew-valley", "agent.json"): profile} {
-		if path == filepath.Join(dir, "games", "stardew-valley", "agent.json") {
-			data = authoritative
-		}
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, "games", "stardew-valley", "agent.json"), authoritative, 0644); err != nil {
+		t.Fatal(err)
 	}
 	p, err := PrepareGame(dir, "rimworld")
 	if err != nil {
