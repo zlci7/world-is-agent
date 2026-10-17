@@ -106,4 +106,8 @@ Willy 钓鱼试点限定单人、当前玩家、一个已接原生目标。任�
 
 当前只给 Willy 提供相关目标上下文。鱼名与一般季节、时段、天气来自游戏物品数据和 `Data/Fish`；未提供鱼池与地点可达性证据时不保证能在某处钓到。观察完成不推断奖励已经领取。
 
+基础游戏 `Data/Locations` 中，太阳鱼 `(O)145` 存在于 `Town` 的鱼池与 `Forest` 的 `River` 鱼区，`Mountain` 的基础鱼池不含该鱼；`Data/Fish[145]` 给出的普通条件为春夏、晴天、6:00 至 19:00。Willy definition 使用这些原版背景知识，当前 Mod 改动和实际观察仍有优先权。
+
+原生日常任务由 `Billboard.receiveLeftClick` 接取时设置 `daysLeft = 2`；`Farmer.dayupdate` 每次换日减一，降至零且未完成时移除，因此 `days_left = 1` 是最后有效日。原生 `FishingQuest` 按累计钓获数量报告，与 `ItemDeliveryQuest` 的持物交付不同，玩家不用保留或递交所钓的鱼。
+
 开发接口参考：[原生任务数据](https://stardewvalleywiki.com/Modding:Quest_data)、[SMAPI 内容编辑](https://stardewvalleywiki.com/Modding:Modder_Guide/APIs/Content)、[SMAPI 存档数据](https://stardewvalleywiki.com/Modding:Modder_Guide/APIs/Data)。

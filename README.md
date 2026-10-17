@@ -24,7 +24,7 @@ World Is Agent（WIA）在本机运行，通过游戏 Adapter 接收实时状态
 
 Runtime 和游戏 Adapter 分开发布。安装 WIA 时需要一个 Runtime，以及与你所玩游戏匹配的 Adapter。
 
-The development source includes Chinese definitions for all 34 ordinary Stardew friendship NPCs. With a source-built Stardew Adapter 0.1.2, it also provides bounded progress facts, preserves native gift/quest interactions, and exposes an experimental single-player Willy fishing-objective context. Real-model and live-game acceptance are pending; see the [acceptance record](docs/phase11/phase11.15-acceptance.md). Existing data roots keep their definitions until explicitly updated.
+The development source includes Chinese definitions for all 34 ordinary Stardew friendship NPCs. With a source-built Stardew Adapter 0.1.2, it also provides bounded progress facts, preserves native gift/quest interactions, and exposes an experimental single-player Willy fishing-objective context. Synthetic real-model dialogue checks have run; intermittent parsing failures, content quality, and live-game acceptance remain open. See the [acceptance record](docs/phase11/phase11.15-acceptance.md). Existing data roots keep their definitions until explicitly updated.
 
 ## 使用前准备
 
