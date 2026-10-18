@@ -227,3 +227,14 @@ func (s *Server) Close() {
 		cancel()
 	}
 }
+
+func (s *Server) disconnectUser(user string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c := s.connections[user]; c != nil {
+		c.cancel()
+	}
+	if cancel := s.modelCancels[user]; cancel != nil {
+		cancel()
+	}
+}

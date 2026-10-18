@@ -139,7 +139,7 @@ func (f *fixture) user(t *testing.T, email string) accounts.User {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := f.store.Register(context.Background(), email, "a long test password", invite)
+	u, err := f.store.Register(context.Background(), email, "a long test password", invite, f.proof(t, email, "register", invite))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,8 @@ func TestHostedRegistrationSessionCsrfAndPrivateSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]string{"email": "player@example.com", "password": "a long test password", "invitation": invite})
+	proof := f.proof(t, "player@example.com", "register", invite)
+	body, _ := json.Marshal(map[string]string{"email": "player@example.com", "password": "a long test password", "invitation": invite, "challenge_id": proof.ChallengeID, "code": proof.Code})
 	r := f.request(t, "POST", "/api/invitations/redeem", string(body), "", "")
 	if r.Code != 201 {
 		t.Fatalf("register %d %s", r.Code, r.Body.String())
@@ -312,7 +313,7 @@ func openHosted(t *testing.T, client protocol.GameAgentGatewayClient, key, devic
 		t.Fatal(err)
 	}
 	err = stream.Send(&protocol.AdapterMessage{MessageId: "same-hello", Payload: &protocol.AdapterMessage_Hello{Hello: &protocol.AdapterHello{AdapterId: "test", AdapterVersion: "0.1.2", ProtocolVersion: "v1alpha2", GameId: "stardew-valley", SessionId: "same-session"}}})
-	if err != nil {
+	if err != nil && !errors.Is(err, io.EOF) {
 		cancel()
 		t.Fatal(err)
 	}

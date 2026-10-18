@@ -31,9 +31,11 @@ var (
 )
 
 type User struct {
-	ID        string `json:"user_id"`
-	Email     string `json:"email"`
-	CreatedAt int64  `json:"created_at"`
+	ID         string `json:"user_id"`
+	Email      string `json:"email"`
+	CreatedAt  int64  `json:"created_at"`
+	VerifiedAt int64  `json:"email_verified_at"`
+	IsAdmin    bool   `json:"is_admin"`
 }
 
 type Session struct {
@@ -70,6 +72,11 @@ func Open(path string, pepper []byte) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
+	info, statErr := os.Stat(path)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, statErr
+	}
+	existing := statErr == nil && info.Size() > 0
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -105,6 +112,10 @@ CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,created INTEGER NOT NULL
 	if !hmac.Equal([]byte(check), []byte(s.Digest("wia.account-store.v1"))) {
 		db.Close()
 		return nil, errors.New("account secret does not match the existing account store")
+	}
+	if err = s.migrate(path, existing); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return s, nil
 }
@@ -151,22 +162,18 @@ func (s *Store) password(ctx context.Context, value, salt string) (string, error
 }
 
 func (s *Store) Invite(ctx context.Context, lifetime time.Duration) (string, error) {
-	if lifetime <= 0 || lifetime > 30*24*time.Hour {
-		return "", ErrInput
-	}
-	secret := "invite_" + NewSecret()
-	_, err := s.db.ExecContext(ctx, "INSERT INTO invitations(digest,expires) VALUES(?,?)", s.Digest(secret), time.Now().Add(lifetime).Unix())
+	_, secret, err := s.NewInvitation(ctx, "operator", lifetime)
 	return secret, err
 }
 
-func (s *Store) Register(ctx context.Context, email, password, invitation string) (User, error) {
+func (s *Store) Register(ctx context.Context, email, password, invitation string, proof Proof) (User, error) {
 	email, err := normalizeEmail(email)
 	if err != nil || utf8.RuneCountInString(password) < 12 || utf8.RuneCountInString(password) > 128 || len(password) > 512 {
 		return User{}, ErrInput
 	}
 	// Validate the invitation before spending the password hashing budget.
 	var valid int
-	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM invitations WHERE digest=? AND used_by IS NULL AND expires>?", s.Digest(invitation), time.Now().Unix()).Scan(&valid); err != nil {
+	if err = s.db.QueryRowContext(ctx, "SELECT count(*) FROM invitations WHERE digest=? AND used_by IS NULL AND revoked=0 AND expires>?", s.Digest(invitation), time.Now().Unix()).Scan(&valid); err != nil {
 		return User{}, err
 	}
 	if valid != 1 {
@@ -177,7 +184,7 @@ func (s *Store) Register(ctx context.Context, email, password, invitation string
 	if err != nil {
 		return User{}, err
 	}
-	u := User{ID: NewID("usr_"), Email: email, CreatedAt: time.Now().Unix()}
+	u := User{ID: NewID("usr_"), Email: email, CreatedAt: time.Now().Unix(), VerifiedAt: time.Now().Unix()}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return User{}, err
@@ -190,10 +197,13 @@ func (s *Store) Register(ctx context.Context, email, password, invitation string
 	if found != 0 {
 		return User{}, ErrConflict
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO users(id,email,password,created) VALUES(?,?,?,?)", u.ID, email, "argon2id-v1$"+salt+"$"+hash, u.CreatedAt); err != nil {
+	if err = s.consumeProof(ctx, tx, email, "register", proof); err != nil {
+		return User{}, finishProofError(tx, err)
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO users(id,email,password,created,verified) VALUES(?,?,?,?,?)", u.ID, email, "argon2id-v1$"+salt+"$"+hash, u.CreatedAt, u.VerifiedAt); err != nil {
 		return User{}, err
 	}
-	result, err := tx.ExecContext(ctx, "UPDATE invitations SET used_by=? WHERE digest=? AND used_by IS NULL AND expires>?", u.ID, s.Digest(invitation), time.Now().Unix())
+	result, err := tx.ExecContext(ctx, "UPDATE invitations SET used_by=? WHERE digest=? AND used_by IS NULL AND revoked=0 AND expires>?", u.ID, s.Digest(invitation), time.Now().Unix())
 	if err != nil {
 		return User{}, err
 	}
@@ -220,7 +230,7 @@ func (s *Store) Login(ctx context.Context, email, password string) (User, error)
 	}
 	var u User
 	var encoded string
-	err = s.db.QueryRowContext(ctx, "SELECT id,email,created,password FROM users WHERE email=? AND enabled=1", email).Scan(&u.ID, &u.Email, &u.CreatedAt, &encoded)
+	err = s.db.QueryRowContext(ctx, "SELECT id,email,created,verified,admin,password FROM users WHERE email=? AND enabled=1", email).Scan(&u.ID, &u.Email, &u.CreatedAt, &u.VerifiedAt, &u.IsAdmin, &encoded)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return User{}, err
 	}
@@ -249,7 +259,7 @@ func (s *Store) NewSession(ctx context.Context, user string, lifetime time.Durat
 }
 func (s *Store) Session(ctx context.Context, secret string) (Session, error) {
 	var result Session
-	err := s.db.QueryRowContext(ctx, "SELECT u.id,u.email,u.created FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.digest=? AND s.expires>? AND u.enabled=1", s.Digest(secret), time.Now().Unix()).Scan(&result.User.ID, &result.User.Email, &result.User.CreatedAt)
+	err := s.db.QueryRowContext(ctx, "SELECT u.id,u.email,u.created,u.verified,u.admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.digest=? AND s.expires>? AND u.enabled=1", s.Digest(secret), time.Now().Unix()).Scan(&result.User.ID, &result.User.Email, &result.User.CreatedAt, &result.User.VerifiedAt, &result.User.IsAdmin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, ErrCredentials
 	}
@@ -270,6 +280,12 @@ func (s *Store) CreateKey(ctx context.Context, user string, lifetime time.Durati
 	}
 	defer tx.Rollback()
 	var count int
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM users WHERE id=? AND enabled=1 AND verified>0", user).Scan(&count); err != nil {
+		return Key{}, "", err
+	}
+	if count != 1 {
+		return Key{}, "", ErrCredentials
+	}
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM device_keys WHERE user_id=? AND revoked=0 AND expires>?", user, k.CreatedAt).Scan(&count); err != nil {
 		return Key{}, "", err
 	}
@@ -466,12 +482,7 @@ func (s *Store) Disable(ctx context.Context, email string) error {
 	if err = tx.QueryRowContext(ctx, "SELECT id FROM users WHERE email=?", email).Scan(&user); err != nil {
 		return err
 	}
-	for _, q := range []string{"UPDATE users SET enabled=0 WHERE id=?", "DELETE FROM sessions WHERE user_id=?", "UPDATE device_keys SET revoked=1 WHERE user_id=?"} {
-		if _, err = tx.ExecContext(ctx, q, user); err != nil {
-			return err
-		}
-	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(created,user_id,event) VALUES(?,?,?)", time.Now().Unix(), user, "account_disabled"); err != nil {
+	if err = setEnabledTx(ctx, tx, "operator", user, false); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -495,13 +506,8 @@ func (s *Store) ResetPassword(ctx context.Context, email, password string) error
 	if err = tx.QueryRowContext(ctx, "SELECT id FROM users WHERE email=?", email).Scan(&user); err != nil {
 		return err
 	}
-	for _, q := range []struct {
-		sql  string
-		args []any
-	}{{"UPDATE users SET password=? WHERE id=?", []any{"argon2id-v1$" + salt + "$" + hash, user}}, {"DELETE FROM sessions WHERE user_id=?", []any{user}}, {"UPDATE device_keys SET revoked=1 WHERE user_id=?", []any{user}}, {"INSERT INTO audit(created,user_id,event) VALUES(?,?,?)", []any{time.Now().Unix(), user, "password_reset"}}} {
-		if _, err = tx.ExecContext(ctx, q.sql, q.args...); err != nil {
-			return err
-		}
+	if err = replacePassword(ctx, tx, user, "argon2id-v1$"+salt+"$"+hash, "operator"); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

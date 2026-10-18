@@ -28,7 +28,7 @@ func registerFixture(t *testing.T, s *Store, email string) User {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := s.Register(ctx, email, "a long test password", invite)
+	u, err := s.Register(ctx, email, "a long test password", invite, proofFixture(t, s, email, "register", invite))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,14 +42,14 @@ func TestInvitationIdentityAndCredentialsPersist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := s.Register(ctx, "Player@Example.com", "a long test password", invite)
+	u, err := s.Register(ctx, "Player@Example.com", "a long test password", invite, proofFixture(t, s, "Player@Example.com", "register", invite))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !safeUserID(u.ID) || u.Email != "player@example.com" {
 		t.Fatalf("identity: %+v", u)
 	}
-	if _, err = s.Register(ctx, "other@example.com", "a long test password", invite); !errors.Is(err, ErrCredentials) {
+	if _, err = s.Register(ctx, "other@example.com", "a long test password", invite, Proof{}); !errors.Is(err, ErrCredentials) {
 		t.Fatalf("invite reused: %v", err)
 	}
 	if _, err = s.Login(ctx, "player@example.com", "wrong"); !errors.Is(err, ErrCredentials) {

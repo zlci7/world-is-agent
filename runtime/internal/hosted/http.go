@@ -33,10 +33,11 @@ type Server struct {
 	modelActive  map[string]bool
 	modelCancels map[string]context.CancelFunc
 	client       *http.Client
+	mailer       MailSender
 }
 
 func New(c Config, store *accounts.Store, workers Workers, assets fs.FS) *Server {
-	return &Server{Config: c, Accounts: store, Workers: workers, Assets: assets, connections: map[string]*connection{}, modelSlots: make(chan struct{}, c.GlobalModelConcurrency), modelActive: map[string]bool{}, modelCancels: map[string]context.CancelFunc{}, client: &http.Client{Timeout: time.Duration(c.ModelTimeoutSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &Server{Config: c, Accounts: store, Workers: workers, Assets: assets, connections: map[string]*connection{}, modelSlots: make(chan struct{}, c.GlobalModelConcurrency), modelActive: map[string]bool{}, modelCancels: map[string]context.CancelFunc{}, mailer: &SMTPMail{Config: c.Mail}, client: &http.Client{Timeout: time.Duration(c.ModelTimeoutSeconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 func subtleToken(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -94,6 +95,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.login(w, r)
 		return
 	}
+	if s.publicMailRoute(w, r) {
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
 		s.asset(w, r)
 		return
@@ -122,6 +126,20 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := session.User.ID
+	if r.URL.Path == "/api/me" && r.Method == "GET" {
+		writeJSON(w, 200, session)
+		return
+	}
+	if s.verificationRoute(w, r, session, cookie.Value) {
+		return
+	}
+	if session.User.VerifiedAt == 0 {
+		problem(w, 403, "email_verification_required", "请先验证邮箱")
+		return
+	}
+	if s.adminRoute(w, r, session) {
+		return
+	}
 	switch {
 	case r.URL.Path == "/api/me" && r.Method == "GET":
 		writeJSON(w, 200, session)
@@ -209,6 +227,7 @@ func (s *Server) authBudget(w http.ResponseWriter, r *http.Request, email string
 }
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	var b struct {
+		accounts.Proof
 		Email      string `json:"email"`
 		Password   string `json:"password"`
 		Invitation string `json:"invitation"`
@@ -216,9 +235,11 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &b) || !s.authBudget(w, r, b.Email) {
 		return
 	}
-	u, err := s.Accounts.Register(r.Context(), b.Email, b.Password, b.Invitation)
+	u, err := s.Accounts.Register(r.Context(), b.Email, b.Password, b.Invitation, b.Proof)
 	if err != nil {
-		if errors.Is(err, accounts.ErrInput) {
+		if errors.Is(err, accounts.ErrVerification) {
+			problem(w, 400, "verification_invalid", "验证码错误、已失效或尝试次数已用完，请重新获取")
+		} else if errors.Is(err, accounts.ErrInput) {
 			problem(w, 400, "account_invalid", "请填写有效邮箱和 12–128 个字符的密码")
 		} else if errors.Is(err, accounts.ErrCredentials) || errors.Is(err, accounts.ErrConflict) {
 			problem(w, 400, "registration_rejected", "邀请码不可用或邮箱已注册")

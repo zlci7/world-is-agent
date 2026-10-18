@@ -13,31 +13,32 @@ import (
 )
 
 type Config struct {
-	GameID                 string `json:"game_id"`
-	Origin                 string `json:"origin"`
-	GatewayURL             string `json:"gateway_url"`
-	HTTPAddr               string `json:"http_addr"`
-	GRPCAddr               string `json:"grpc_addr"`
-	ModelAddr              string `json:"model_addr"`
-	DataRoot               string `json:"data_root"`
-	SecretEnv              string `json:"secret_env"`
-	WorkerImage            string `json:"worker_image"`
-	WorkerNetwork          string `json:"worker_network"`
-	WorkerMemoryMB         int    `json:"worker_memory_mb"`
-	WorkerCPUs             string `json:"worker_cpus"`
-	MaxWorkers             int    `json:"max_workers"`
-	ModelPrivateURL        string `json:"model_private_url"`
-	UpstreamURL            string `json:"upstream_url"`
-	Model                  string `json:"model"`
-	ModelKeyEnv            string `json:"model_key_env"`
-	ContextTokens          int    `json:"context_tokens"`
-	OutputTokens           int    `json:"output_tokens"`
-	DailyTokens            int64  `json:"daily_tokens"`
-	GlobalModelConcurrency int    `json:"global_model_concurrency"`
-	ModelTimeoutSeconds    int    `json:"model_timeout_seconds"`
-	SessionHours           int    `json:"session_hours"`
-	KeyDays                int    `json:"key_days"`
-	MinAdapterVersion      string `json:"min_adapter_version"`
+	Mail                   SMTPConfig `json:"mail"`
+	GameID                 string     `json:"game_id"`
+	Origin                 string     `json:"origin"`
+	GatewayURL             string     `json:"gateway_url"`
+	HTTPAddr               string     `json:"http_addr"`
+	GRPCAddr               string     `json:"grpc_addr"`
+	ModelAddr              string     `json:"model_addr"`
+	DataRoot               string     `json:"data_root"`
+	SecretEnv              string     `json:"secret_env"`
+	WorkerImage            string     `json:"worker_image"`
+	WorkerNetwork          string     `json:"worker_network"`
+	WorkerMemoryMB         int        `json:"worker_memory_mb"`
+	WorkerCPUs             string     `json:"worker_cpus"`
+	MaxWorkers             int        `json:"max_workers"`
+	ModelPrivateURL        string     `json:"model_private_url"`
+	UpstreamURL            string     `json:"upstream_url"`
+	Model                  string     `json:"model"`
+	ModelKeyEnv            string     `json:"model_key_env"`
+	ContextTokens          int        `json:"context_tokens"`
+	OutputTokens           int        `json:"output_tokens"`
+	DailyTokens            int64      `json:"daily_tokens"`
+	GlobalModelConcurrency int        `json:"global_model_concurrency"`
+	ModelTimeoutSeconds    int        `json:"model_timeout_seconds"`
+	SessionHours           int        `json:"session_hours"`
+	KeyDays                int        `json:"key_days"`
+	MinAdapterVersion      string     `json:"min_adapter_version"`
 }
 
 var safeID = regexp.MustCompile(`^usr_[a-f0-9]{32}$`)
@@ -58,6 +59,9 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if err := c.Mail.Validate(); err != nil {
+		return err
+	}
 	u, err := url.Parse(c.Origin)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || (u.Path != "" && u.Path != "/") {
 		return errors.New("origin must be an HTTPS origin")

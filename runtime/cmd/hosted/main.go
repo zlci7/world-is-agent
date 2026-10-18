@@ -29,7 +29,7 @@ func main() {
 }
 func run() error {
 	configPath := flag.String("config", "hosted.json", "hosted service configuration")
-	command := flag.String("command", "serve", "serve, invite, reset-password, disable, backup-accounts, or deployment-id")
+	command := flag.String("command", "serve", "serve, invite, reset-password, disable, grant-admin, revoke-admin, backup-accounts, or deployment-id")
 	inviteHours := flag.Int("invite-hours", 72, "one-use invitation lifetime in hours")
 	email := flag.String("email", "", "account email for private password recovery")
 	backupPath := flag.String("backup-path", "", "new account database backup destination")
@@ -72,6 +72,10 @@ func run() error {
 		return store.ResetPassword(ctx, *email, strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r"))
 	case "disable":
 		return store.Disable(ctx, *email)
+	case "grant-admin":
+		return store.SetAdmin(ctx, *email, true)
+	case "revoke-admin":
+		return store.SetAdmin(ctx, *email, false)
 	case "backup-accounts":
 		return store.Backup(ctx, *backupPath)
 	case "serve":
