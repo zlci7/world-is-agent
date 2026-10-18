@@ -466,6 +466,24 @@ func TestSchedulerDoesNotExecuteWhenBatchValidationFails(t *testing.T) {
 	}
 }
 
+func TestSchedulerRejectsMalformedArgumentsBeforeExecutingParameterlessTool(t *testing.T) {
+	capability := schedulerCapability("generic_ping", tool.ConcurrencySequential)
+	capability.InputSchemaJson = `{"type":"object","additionalProperties":false}`
+	scheduler := toolBatchScheduler{view: schedulerRegistry(capability), actionTimeout: time.Second}
+	env := &schedulerTestEnvironment{}
+	outcome, err := scheduler.Run(context.Background(), env, "world", "actor", []model.ToolCall{{
+		ID: "bad", Name: capability.Name, Arguments: map[string]any{}, RawArguments: `null`, ArgumentsError: "expected object",
+	}})
+	if err != nil || len(env.callOrder()) != 0 || len(outcome.Results) != 1 {
+		t.Fatalf("err=%v actions=%v results=%v", err, env.callOrder(), outcome.Results)
+	}
+	assertToolResult(t, outcome.Results[0], "bad", capability.Name, "invalid", "tool_arguments_invalid_json")
+	outcome, err = scheduler.Run(context.Background(), env, "world", "actor", []model.ToolCall{{ID: "valid", Name: capability.Name, Arguments: map[string]any{}}})
+	if err != nil || len(env.callOrder()) != 1 || outcome.Results[0].Status != "succeeded" {
+		t.Fatalf("valid empty object was rejected: err=%v results=%v", err, outcome.Results)
+	}
+}
+
 func TestSchedulerUsesTurnToolViewForLookup(t *testing.T) {
 	view := schedulerToolView(t,
 		schedulerCapability("speak", tool.ConcurrencySequential),

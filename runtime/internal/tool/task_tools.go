@@ -16,6 +16,11 @@ type TaskWorld interface {
 	GuardOwner(task.Binding, uint64, string, func(task.Head) error) error
 }
 
+const (
+	createTaskToolName = "create_task"
+	updateTaskToolName = "update_task"
+)
+
 const createTaskSchema = `{"type":"object","properties":{"proposal_ref":{"type":"string","minLength":1},"instruction":{"type":"string","minLength":1,"maxLength":2048}},"required":["proposal_ref","instruction"],"additionalProperties":false}`
 const updateTaskSchema = `{"type":"object","properties":{"task_id":{"type":"string","minLength":1},"intent":{"type":"string","enum":["wait","cancel"]},"next_wakeup_at":{"type":"integer"},"progress_note":{"type":"string","maxLength":2048},"reason":{"type":"string","maxLength":512}},"required":["task_id","intent"],"additionalProperties":false}`
 
@@ -39,6 +44,11 @@ func NewTaskTools(service *task.Service, world TaskWorld, authority RuntimeCallC
 }
 
 func (t *TaskTools) Close() { t.closed = true; clear(t.proposals); clear(t.creates) }
+
+// OwnsTool identifies task calls even after their snapshot admission ends.
+func (t *TaskTools) OwnsTool(name string) bool {
+	return name == createTaskToolName || name == updateTaskToolName
+}
 
 func validTaskSource(rc RuntimeCallContext) bool {
 	exec := rc.Execution
@@ -99,10 +109,10 @@ func (t *TaskTools) Entries(rc RuntimeCallContext) []Entry {
 	}
 	entries := []Entry{}
 	if rc.Execution.Source.Kind == task.SourceKindInteraction && len(t.proposals) > 0 {
-		entries = append(entries, t.entry("create_task", "Create the agreed task using a proposal_ref from a successful tool result. Confirm the task only after this tool succeeds.", createTaskSchema))
+		entries = append(entries, t.entry(createTaskToolName, "Create the agreed task using a proposal_ref from a successful tool result. Confirm the task only after this tool succeeds.", createTaskSchema))
 	}
 	if record := rc.ObservedTask; record != nil && record.Owner == rc.Execution.Owner && activeTask(record.State) && (rc.Execution.Source.Kind == task.SourceKindInteraction || record.ID == rc.Execution.TaskID) {
-		entries = append(entries, t.entry("update_task", "Update the task shown in Task Context. A player interaction may cancel it; a task wake may wait or cancel its own task.", updateTaskSchema))
+		entries = append(entries, t.entry(updateTaskToolName, "Update the task shown in Task Context. A player interaction may cancel it; a task wake may wait or cancel its own task.", updateTaskSchema))
 	}
 	return entries
 }
@@ -117,7 +127,7 @@ func activeTask(state task.State) bool {
 
 func (t *TaskTools) Execute(ctx context.Context, rc RuntimeCallContext, call model.ToolCall) (model.ToolResult, error) {
 	switch call.Name {
-	case "create_task":
+	case createTaskToolName:
 		if ValidateArguments(createTaskSchema, call.Arguments) != nil || !validTaskText(call.Arguments["instruction"], 2048, true) || !validTaskText(call.Arguments["proposal_ref"], 0, true) {
 			return invalidTaskArguments(call), nil
 		}
@@ -165,7 +175,7 @@ func (t *TaskTools) Execute(ctx context.Context, rc RuntimeCallContext, call mod
 		result := taskSuccess(call, created.Task)
 		result.Output["created"] = created.Created
 		return result, nil
-	case "update_task":
+	case updateTaskToolName:
 		intent, taskID, err := decodeTaskIntent(call.Arguments)
 		if err != nil {
 			return invalidTaskArguments(call), nil

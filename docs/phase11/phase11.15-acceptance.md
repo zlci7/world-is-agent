@@ -2,7 +2,7 @@
 
 日期：2026-10-17。源码：Runtime `0.2.0`、Stardew Adapter `0.1.2`、Protocol `v1alpha2`。游戏引用：Stardew Valley `1.6.15`、SMAPI `4.3.2`。Protocol 构建依赖为 `protocol-v1alpha2.0`，解析 commit `950d417fcc64517d8d59c334a4cf96ec224bd61a`。
 
-**交付状态：基础代码、后台自动验证、真实模型鉴权与合成单轮调用通过；连续对话稳定性、内容质量、实机交互和玩家价值尚未最终验收。** 新 AI 委托创建不属于已通过能力。
+**交付状态：基础代码、后台自动验证、真实模型鉴权、合成单轮调用与 DeepSeek 参数纠错通过；连续对话稳定性、内容质量、实机交互和玩家价值尚未最终验收。** 新 AI 委托创建不属于已通过能力。
 
 ## 功能范围
 
@@ -63,6 +63,28 @@ Environment 提供合成 Observation 与动作结果，不连接或操作游戏�
 本地模型证据位于 `runtime/.local/phase11.15/llm/`：`auth-after-key-update.jsonl`、`matrix-current-definitions.jsonl`、`boundary-current-definitions.jsonl`、`continuity-current-definitions.jsonl`、`linus-diagnostic-results.jsonl` 和 `continuity-diagnostic-results.jsonl`。诊断目录保留合成场景关联、响应格式与回答内容，不记录请求头或凭据。场景完成数量表示调用与对话形态结果，不是语义正确率。
 
 真实模型对合成观察的回答与真实游戏交互分别记录，前者通过不能代替后者。
+
+## 工具参数纠错验证（2026-10-18）
+
+契约见 [工具参数纠错与 DeepSeek 工具续接](tool-call-correction.md)。错误调用保留在当前回合，使用标准工具消息反馈；每回合只有一次参数纠错机会，失败批次执行次数为零。
+
+| 检查 | 结果与证明范围 |
+| --- | --- |
+| 通用 fake capability 调用链 | 坏 JSON、`null`、字段类型错误、重复错误、直接结束、调用 ID 复用、混合批次、先前成功动作与回合纠错额度通过；含取消、超时和既有 step 预算 |
+| Provider 与上下文 | 空字符串、数组、标量、非法 JSON、有效空对象、外层损坏和输出截断通过；参数原文、续接字段与工具结果关联保留，超预算明确失败 |
+| 真实 DeepSeek 纠错 | 普通对话一条；在真实响应中分别注入坏 JSON 和字段类型错误各一条。两条注入均在下一步修正，标准工具消息续接返回 HTTP 200，各执行一次有效对话 |
+| 连续对话复测 | Linus 20/20 完成，每轮一次有效对话；模拟换日与重建 Loop，不代表游戏保存加载或 Runtime 进程重启 |
+| 全量 Go 回归 | `go test ./... -count=1` 通过，包含现有 OpenAI、Task、Gateway、Memory 和 HTTP 回归 |
+| race 检测 | agent、context、llm/deepseek、model 四包完整检测通过，无数据竞争报告；使用本机既有便携 GCC，环境变量仅作用于测试进程 |
+| 架构与差异检查 | 架构、Protocol 静态检查与 `git diff --check` 通过；CR 为当前开发上下文内部自查 |
+
+本轮证据位于 `runtime/.local/phase11.15/llm/`：`correction-live-results.jsonl`、`correction-schema-live-results.jsonl`、`continuity-after-correction.jsonl` 及对应诊断目录。诊断记录可见工具输出、注入种类、HTTP 状态与续接数量，未记录凭据或思考正文。模型与输出预算沿用上述配置。
+
+本轮证明工具参数错误能够反馈并限次修正。最初九次失败缺少原始响应，其具体来源仍未确认；当前已分别记录外层 JSON 错误和输出截断。角色事实准确性、真实游戏体验与玩家价值继续按下述步骤验收。
+
+## 后台组合验收（2026-10-18）
+
+参数纠错与任务状态变化的四个组合场景、当前开发二进制的四进程／九项 API 场景通过。全量 Go 24 个测试包、Stardew 六个测试工程 527 项、agent / tool race 和前端类型与请求顺序检查通过；跳过项、数据保持与实机边界见 [后台验收报告](phase11.15-background-acceptance.md)。
 
 ## 实机验收步骤
 

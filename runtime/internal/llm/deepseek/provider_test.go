@@ -163,14 +163,20 @@ func TestBuildRequestAllowsSettleOnlyWithoutEnvironmentTools(t *testing.T) {
 	}
 }
 
-func TestBuildRequestMapsToolTranscriptToProviderSafeMessage(t *testing.T) {
+func TestBuildRequestSplitsOneToolMessagePerResult(t *testing.T) {
 	provider := NewProvider("test-key", "deepseek-v4-flash")
 
 	body, err := provider.buildRequest(model.Request{
 		Messages: []model.Message{
 			{Role: model.RoleUser, Content: "current context"},
-			{Role: model.RoleAssistant, Content: `[{"tool_call_id":"call_1","name":"speak"}]`},
-			{Role: model.RoleTool, Content: `[{"tool_call_id":"call_1","status":"succeeded","code":"action_succeeded"}]`},
+			{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+				{ID: "call_1", Name: "speak", Arguments: map[string]any{}},
+				{ID: "call_2", Name: "speak", Arguments: map[string]any{}},
+			}},
+			{Role: model.RoleTool, ToolResults: []model.ToolResult{
+				{ToolCallID: "call_1", Status: "succeeded", Code: "action_succeeded"},
+				{ToolCallID: "call_2", Status: "skipped", Code: "batch_validation_failed"},
+			}},
 		},
 		Tools: []model.ToolDefinition{
 			{
@@ -189,12 +195,18 @@ func TestBuildRequestMapsToolTranscriptToProviderSafeMessage(t *testing.T) {
 		t.Fatalf("request body is not JSON: %v", err)
 	}
 	messages := payload["messages"].([]any)
+	if len(messages) != 4 {
+		t.Fatalf("messages = %v, want user, assistant and two results", messages)
+	}
 	toolTranscript := messages[2].(map[string]any)
-	if got := toolTranscript["role"]; got != "user" {
-		t.Fatalf("tool transcript role = %v, want provider-safe user", got)
+	if got := toolTranscript["role"]; got != "tool" {
+		t.Fatalf("tool transcript role = %v, want tool", got)
 	}
 	if content := toolTranscript["content"].(string); !strings.Contains(content, "action_succeeded") {
 		t.Fatalf("tool transcript content missing result:\n%s", content)
+	}
+	if messages[3].(map[string]any)["tool_call_id"] != "call_2" {
+		t.Fatalf("second result lost call id: %v", messages[3])
 	}
 }
 
@@ -263,6 +275,62 @@ func TestParseResponseNoToolCallSettles(t *testing.T) {
 	}
 	if len(resp.Decision.ToolCalls) != 0 {
 		t.Fatalf("tool calls = %+v, want none", resp.Decision.ToolCalls)
+	}
+}
+
+func TestParseResponseKeepsMalformedArgumentsForCorrection(t *testing.T) {
+	for _, arguments := range []string{`{"text":你好}`, `null`, `[]`, `"hello"`, ``, `{} trailing`} {
+		t.Run(arguments, func(t *testing.T) {
+			data, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{
+				"message": map[string]any{"tool_calls": []any{map[string]any{
+					"id": "bad_call", "type": "function",
+					"function": map[string]any{"name": "show_message", "arguments": arguments},
+				}}},
+			}}})
+			response, err := parseResponse(data)
+			if err != nil {
+				t.Fatalf("identifiable bad call should reach validation: %v", err)
+			}
+			if len(response.Decision.ToolCalls) != 1 {
+				t.Fatalf("calls = %+v, want original call", response.Decision.ToolCalls)
+			}
+			call := response.Decision.ToolCalls[0]
+			if call.ID != "bad_call" || call.Name != "show_message" || call.Arguments != nil || call.ArgumentsError == "" || call.RawArguments != arguments {
+				t.Fatalf("bad arguments became executable: %+v", call)
+			}
+		})
+	}
+}
+
+func TestParseResponseRejectsTruncatedToolCalls(t *testing.T) {
+	_, err := parseResponse([]byte(`{"choices":[{"finish_reason":"length","message":{"tool_calls":[{"id":"call","type":"function","function":{"name":"show_message","arguments":"{}"}}]}}]}`))
+	if err == nil {
+		t.Fatal("truncated response must fail even when arguments happen to be valid JSON")
+	}
+}
+
+func TestBuildRequestPairsStructuredToolMessages(t *testing.T) {
+	provider := NewProvider("test-key", "deepseek-v4-flash")
+	body, err := provider.buildRequest(model.Request{Messages: []model.Message{
+		{Role: model.RoleUser, Content: "current context"},
+		{Role: model.RoleAssistant, Content: "rendered tool call", ToolCalls: []model.ToolCall{{ID: "call", Name: "show_message", Arguments: map[string]any{"text": "hello"}}}},
+		{Role: model.RoleTool, Content: "rendered result", ToolResults: []model.ToolResult{{ToolCallID: "call", Name: "show_message", Status: "invalid", Code: "tool_arguments_invalid"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	assistant, result := payload.Messages[1], payload.Messages[2]
+	if assistant["tool_calls"] == nil || assistant["content"] == "rendered tool call" {
+		t.Fatalf("assistant call is flattened or duplicated: %v", assistant)
+	}
+	if result["role"] != "tool" || result["tool_call_id"] != "call" || !strings.Contains(result["content"].(string), "tool_arguments_invalid") {
+		t.Fatalf("result is not paired with call: %v", result)
 	}
 }
 

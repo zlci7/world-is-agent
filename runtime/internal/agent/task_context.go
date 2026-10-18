@@ -172,15 +172,21 @@ func (t *taskTurnContext) releaseCommitted(ctx context.Context, env Environment,
 	return releaser.ReleaseTask(ctx, *rc.ObservedTask)
 }
 
-func redactTaskCalls(calls []model.ToolCall, view tool.TurnToolView) []model.ToolCall {
+func redactTaskCalls(calls []model.ToolCall, view tool.TurnToolView, owner *tool.TaskTools) []model.ToolCall {
 	result := copyToolCallsForTranscript(calls)
 	for i := range result {
-		entry, ok := view.Lookup(result[i].Name)
-		if ok {
-			if _, taskTool := entry.Executor.(*tool.TaskTools); taskTool {
-				result[i].Arguments = nil
-			}
+		if isTaskHistoryCall(result[i].Name, view, owner) {
+			result[i].Arguments = nil
+			result[i].RawArguments = ""
 		}
 	}
 	return result
+}
+
+func isTaskHistoryCall(name string, view tool.TurnToolView, owner *tool.TaskTools) bool {
+	if entry, ok := view.Lookup(name); ok {
+		_, taskTool := entry.Executor.(*tool.TaskTools)
+		return taskTool
+	}
+	return owner != nil && owner.OwnsTool(name)
 }

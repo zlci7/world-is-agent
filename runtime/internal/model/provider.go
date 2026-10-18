@@ -2,6 +2,12 @@ package model
 
 import (
 	"context"
+	"errors"
+)
+
+var (
+	ErrResponseInvalidJSON = errors.New("model response is not valid JSON")
+	ErrResponseTruncated   = errors.New("model response was truncated")
 )
 
 const (
@@ -45,10 +51,11 @@ type Request struct {
 }
 
 type Message struct {
-	Role        Role
-	Content     string
-	ToolCalls   []ToolCall
-	ToolResults []ToolResult
+	Role             Role
+	Content          string
+	ToolCalls        []ToolCall
+	ToolResults      []ToolResult
+	ReasoningContent string `json:",omitempty"`
 }
 
 type Role string
@@ -60,7 +67,8 @@ type ToolDefinition struct {
 }
 
 type Response struct {
-	Decision ModelDecision
+	Decision         ModelDecision
+	ReasoningContent string
 }
 
 type ModelDecision struct {
@@ -72,6 +80,9 @@ type ToolCall struct {
 	ID        string
 	Name      string
 	Arguments map[string]any
+	// RawArguments is retained only when decoding fails; Arguments stays nil.
+	RawArguments   string `json:",omitempty"`
+	ArgumentsError string `json:",omitempty"`
 }
 
 type ToolResult struct {

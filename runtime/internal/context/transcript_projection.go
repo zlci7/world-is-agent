@@ -15,10 +15,11 @@ func projectCurrentTurnTranscript(messages []model.Message, bounds projectionBou
 	out := make([]model.Message, len(messages))
 	for i, message := range messages {
 		out[i] = model.Message{
-			Role:        message.Role,
-			Content:     strings.TrimSpace(message.Content),
-			ToolCalls:   projectTranscriptToolCalls(message.ToolCalls, bounds),
-			ToolResults: projectTranscriptToolResults(message.ToolResults, bounds),
+			Role:             message.Role,
+			Content:          strings.TrimSpace(message.Content),
+			ToolCalls:        projectTranscriptToolCalls(message.ToolCalls, bounds),
+			ToolResults:      projectTranscriptToolResults(message.ToolResults, bounds),
+			ReasoningContent: message.ReasoningContent,
 		}
 	}
 	groups, err := transcriptCausalGroups(out)

@@ -50,7 +50,7 @@ func measureMessages(messages []model.Message) (int, int, error) {
 	contentEstimatedTokens := 0
 	userEstimatedTokens := 0
 	for _, message := range messages {
-		contentTokens := tokenestimate.EstimateText(message.Content)
+		contentTokens := tokenestimate.EstimateText(message.Content) + tokenestimate.EstimateText(message.ReasoningContent)
 		contentEstimatedTokens += contentTokens
 		items = append(items, requestMessageStructureForSizing{
 			Role: message.Role,

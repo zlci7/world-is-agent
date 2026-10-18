@@ -23,24 +23,26 @@ const (
 	toolResultStatusCancelled   = "cancelled"
 	toolResultStatusInterrupted = "interrupted"
 
-	toolResultCodeActionSucceeded        = "action_succeeded"
-	toolResultCodeBatchValidationFailed  = "batch_validation_failed"
-	toolResultCodeBatchAborted           = "batch_aborted"
-	toolResultCodePriorGroupFailed       = "prior_group_failed"
-	toolResultCodeDuplicateToolCallID    = "duplicate_tool_call_id"
-	toolResultCodeToolNotRegistered      = "tool_not_registered"
-	toolResultCodeToolArgumentsMissing   = "tool_arguments_missing"
-	toolResultCodeToolArgumentsInvalid   = "tool_arguments_invalid"
-	toolResultCodeActionRequestInvalid   = "action_request_invalid"
-	toolResultCodeNonTerminalActionState = "non_terminal_action_status"
-	toolResultCodeExclusiveToolBatch     = "exclusive_tool_must_be_only_tool_call"
-	toolResultCodeAsyncBatchUnsupported  = "async_batch_unsupported"
-	toolResultCodeAsyncActionLimit       = "async_action_limit_exceeded"
-	toolResultCodeActionStartRejected    = "action_start_rejected"
+	toolResultCodeActionSucceeded          = "action_succeeded"
+	toolResultCodeBatchValidationFailed    = "batch_validation_failed"
+	toolResultCodeBatchAborted             = "batch_aborted"
+	toolResultCodePriorGroupFailed         = "prior_group_failed"
+	toolResultCodeDuplicateToolCallID      = "duplicate_tool_call_id"
+	toolResultCodeToolNotRegistered        = "tool_not_registered"
+	toolResultCodeToolArgumentsMissing     = "tool_arguments_missing"
+	toolResultCodeToolArgumentsInvalid     = "tool_arguments_invalid"
+	toolResultCodeToolArgumentsInvalidJSON = "tool_arguments_invalid_json"
+	toolResultCodeActionRequestInvalid     = "action_request_invalid"
+	toolResultCodeNonTerminalActionState   = "non_terminal_action_status"
+	toolResultCodeExclusiveToolBatch       = "exclusive_tool_must_be_only_tool_call"
+	toolResultCodeAsyncBatchUnsupported    = "async_batch_unsupported"
+	toolResultCodeAsyncActionLimit         = "async_action_limit_exceeded"
+	toolResultCodeActionStartRejected      = "action_start_rejected"
 )
 
 type toolBatchScheduler struct {
 	view                    tool.TurnToolView
+	taskHistoryOwner        *tool.TaskTools
 	maxParallelToolCalls    int
 	actionTimeout           time.Duration
 	actionStartTimeout      time.Duration
@@ -130,14 +132,11 @@ func (s toolBatchScheduler) Run(
 		}
 		for i := range outcome.Executions {
 			execution := &outcome.Executions[i]
-			entry, ok := s.view.Lookup(execution.Call.Name)
-			if !ok {
-				continue
-			}
-			if _, ok := entry.Executor.(*tool.TaskTools); !ok {
+			if !isTaskHistoryCall(execution.Call.Name, s.view, s.taskHistoryOwner) {
 				continue
 			}
 			execution.Call.Arguments = nil
+			execution.Call.RawArguments = ""
 			if execution.RuntimeResult != nil && execution.RuntimeResult.Status == toolResultStatusInvalid {
 				execution.RuntimeResult.Message = execution.RuntimeResult.Code
 			}
@@ -265,6 +264,12 @@ func (s toolBatchScheduler) preflight(
 			hasFailure = true
 			continue
 		}
+		if call.ArgumentsError != "" {
+			results[i] = invalidToolResult(call, toolResultCodeToolArgumentsInvalidJSON, "Tool arguments must be a valid JSON object. This call was not executed. Correct the arguments using the tool schema.")
+			invalid[i] = true
+			hasFailure = true
+			continue
+		}
 		if call.Arguments == nil {
 			results[i] = invalidToolResult(call, toolResultCodeToolArgumentsMissing, "tool arguments are missing")
 			invalid[i] = true
@@ -326,6 +331,28 @@ func (s toolBatchScheduler) preflight(
 	}
 
 	return plan, nil, false
+}
+
+func hasToolArgumentFailure(results []model.ToolResult) bool {
+	for _, result := range results {
+		if result.Status != toolResultStatusInvalid {
+			continue
+		}
+		switch result.Code {
+		case toolResultCodeToolArgumentsInvalidJSON, toolResultCodeToolArgumentsMissing, toolResultCodeToolArgumentsInvalid:
+			return true
+		}
+	}
+	return false
+}
+
+func hasInvalidToolResult(results []model.ToolResult) bool {
+	for _, result := range results {
+		if result.Status == toolResultStatusInvalid {
+			return true
+		}
+	}
+	return false
 }
 
 func (s toolBatchScheduler) lookup(name string) (tool.Entry, bool) {

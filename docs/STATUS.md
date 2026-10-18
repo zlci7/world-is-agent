@@ -6,9 +6,11 @@ MVP0 is now frozen for release: the current version is stabilized and documented
 
 This document is the public source of truth for current repository capabilities, validation scope, and known limits.
 
-Last updated: 2026-10-17.
+Last updated: 2026-10-18.
 
 ## Validation Scope
+
+The latest [background acceptance](phase11/phase11.15-background-acceptance.md) covers argument correction during task changes, full Go and Stardew adapter regressions, affected-package race checks, and the current development binary's task API across process restart and exact checkpoint restore. It uses synthetic game facts and does not establish live-game acceptance.
 
 Two real adapters have been validated against the same Runtime and the same protocol, with no
 game-specific branch in either:
@@ -52,6 +54,7 @@ and a per-instance observation.
 | Context budget | Deterministic provider-neutral estimated-token budget selection, section cropping, tool size admission, and final request hard gates. |
 | Context diagnostics | `ContextBuildReport` and bounded `ToolAdmissionReport` summaries record fallback, cropping, dropped content, tool admission, and final request estimated-token size. |
 | Providers | Provider-neutral model interface with Fake, DeepSeek, and OpenAI implementations. |
+| Tool argument correction | Runtime allows one argument correction per turn within existing budgets. DeepSeek preserves malformed arguments and pairs native assistant tool calls with tool results, including the current turn's required thinking continuation. Invalid batches execute no actions; repeated invalid corrections fail explicitly. Background and real-model synthetic checks are documented in the [correction contract](phase11/tool-call-correction.md). |
 | Trace | JSONL turn trace written under the Runtime data root at `data/traces.jsonl`, including bounded context request summaries. |
 | Data root | Every Runtime-owned path resolves from one data root instead of the process working directory. Precedence: `--data-root`, then `WIA_DATA_ROOT`, then the platform data directory (`%LOCALAPPDATA%\WorldIsAgent`, `~/Library/Application Support/WorldIsAgent`, or `$XDG_DATA_HOME/wia`). Absolute configured paths are used as-is; relative ones resolve against the data root. |
 | Startup | The Runtime starts its loopback control surfaces without an implicit game selection. Missing or recoverably invalid selection, profile, or model state is reported as `needs_configuration`; unrecoverable initialization state is `blocked`. Business traffic is admitted only after one complete instance reaches Ready. |
@@ -95,6 +98,7 @@ Task console validation passed with full Go regression, Vue type/order/build che
 | History branches | Memory is independent of save checkpoints and has no complete abandoned-branch isolation. |
 | Long-term semantic memory | No Semantic extraction/correction pipeline, vector store, or embedding index. |
 | Provider-specific token sizing | Context budget uses deterministic estimated tokens, not exact provider tokenizer or automatic model window detection. |
+| Tool schema coverage | Runtime validates its existing JSON Schema subset; this is not full JSON Schema enforcement. Adapter business checks remain authoritative. DeepSeek strict Beta and malformed-argument recovery for the OpenAI Provider are outside the correction contract. |
 | Durable async continuation | Async action waiting is process-local. |
 | Cross-stream ordering | Same-agent FIFO is validated inside one live EnvironmentSession. |
 | Concurrent save access | Multiple matching streams are counted and admitted as separate EnvironmentSessions. This does not guarantee safe concurrent writes to the same game save or mean that a connection has loaded a save or reached world readiness. |

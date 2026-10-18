@@ -122,9 +122,13 @@ func (p *Provider) buildRequest(req model.Request) ([]byte, error) {
 		})
 	}
 
+	messages, err := buildMessages(req)
+	if err != nil {
+		return nil, err
+	}
 	payload := map[string]any{
 		"model":    p.model,
-		"messages": buildMessages(req),
+		"messages": messages,
 		"stream":   false,
 	}
 	if p.window.OutputTokens > 0 {
@@ -137,31 +141,66 @@ func (p *Provider) buildRequest(req model.Request) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-func buildMessages(req model.Request) []map[string]string {
-	messages := make([]map[string]string, 0, len(req.Messages)+1)
+func buildMessages(req model.Request) ([]map[string]any, error) {
+	messages := make([]map[string]any, 0, len(req.Messages)+1)
 
 	if system := buildSystemContent(req.System, req.Controls); system != "" {
-		messages = append(messages, map[string]string{
+		messages = append(messages, map[string]any{
 			"role":    "system",
 			"content": system,
 		})
 	}
 
 	for _, message := range req.Messages {
-		messages = append(messages, map[string]string{
-			"role":    providerMessageRole(message.Role),
+		if len(message.ToolCalls) > 0 {
+			calls := make([]map[string]any, 0, len(message.ToolCalls))
+			for _, call := range message.ToolCalls {
+				arguments := call.RawArguments
+				if call.ArgumentsError == "" {
+					data, err := json.Marshal(call.Arguments)
+					if err != nil {
+						return nil, fmt.Errorf("encode tool arguments: %w", err)
+					}
+					arguments = string(data)
+				}
+				calls = append(calls, map[string]any{
+					"id": call.ID, "type": "function",
+					"function": map[string]any{"name": call.Name, "arguments": arguments},
+				})
+			}
+			item := map[string]any{"role": "assistant", "content": "", "tool_calls": calls}
+			if message.ReasoningContent != "" {
+				item["reasoning_content"] = message.ReasoningContent
+			}
+			messages = append(messages, item)
+			continue
+		}
+		if len(message.ToolResults) > 0 {
+			for _, result := range message.ToolResults {
+				content := map[string]any{"status": result.Status, "code": result.Code}
+				if result.Message != "" {
+					content["message"] = result.Message
+				}
+				if len(result.Output) > 0 {
+					content["output"] = result.Output
+				}
+				data, err := json.Marshal(content)
+				if err != nil {
+					return nil, fmt.Errorf("encode tool result: %w", err)
+				}
+				messages = append(messages, map[string]any{
+					"role": "tool", "tool_call_id": result.ToolCallID, "content": string(data),
+				})
+			}
+			continue
+		}
+		messages = append(messages, map[string]any{
+			"role":    string(message.Role),
 			"content": message.Content,
 		})
 	}
 
-	return messages
-}
-
-func providerMessageRole(role model.Role) string {
-	if role == model.RoleTool {
-		return string(model.RoleUser)
-	}
-	return string(role)
+	return messages, nil
 }
 
 func parseResponse(data []byte) (model.Response, error) {
@@ -172,8 +211,10 @@ func parseResponse(data []byte) (model.Response, error) {
 			Code    string `json:"code"`
 		} `json:"error"`
 		Choices []struct {
-			Message struct {
-				ToolCalls []struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
 					ID       string `json:"id"`
 					Type     string `json:"type"`
 					Function struct {
@@ -186,11 +227,19 @@ func parseResponse(data []byte) (model.Response, error) {
 	}
 
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return model.Response{}, err
+		return model.Response{}, fmt.Errorf("%w: %v", model.ErrResponseInvalidJSON, err)
 	}
 
 	if raw.Error != nil {
 		return model.Response{}, fmt.Errorf("deepseek error %s: %s", raw.Error.Code, raw.Error.Message)
+	}
+	if len(raw.Choices) == 0 {
+		return model.Response{}, errors.New("deepseek response has no choices")
+	}
+	for _, choice := range raw.Choices {
+		if choice.FinishReason == "length" {
+			return model.Response{}, model.ErrResponseTruncated
+		}
 	}
 
 	var calls []model.ToolCall
@@ -210,11 +259,10 @@ func parseResponse(data []byte) (model.Response, error) {
 			}
 
 			args, err := parseArguments(call.Function.Arguments)
-			if err != nil {
-				return model.Response{}, err
-			}
-
 			if name == model.InternalSettleToolName {
+				if err != nil {
+					return model.Response{}, fmt.Errorf("deepseek settle arguments: %w", err)
+				}
 				decision.Control = model.ControlDirective{
 					Kind:   model.ControlSettle,
 					Reason: stringArgument(args, "reason"),
@@ -222,11 +270,19 @@ func parseResponse(data []byte) (model.Response, error) {
 				continue
 			}
 
-			calls = append(calls, model.ToolCall{
+			parsed := model.ToolCall{
 				ID:        deepSeekToolCallID(call.ID, functionOrdinal),
 				Name:      name,
 				Arguments: args,
-			})
+			}
+			if err != nil {
+				if strings.TrimSpace(call.ID) == "" {
+					return model.Response{}, errors.New("deepseek malformed function_call has no id")
+				}
+				parsed.RawArguments = call.Function.Arguments
+				parsed.ArgumentsError = err.Error()
+			}
+			calls = append(calls, parsed)
 		}
 	}
 
@@ -238,7 +294,7 @@ func parseResponse(data []byte) (model.Response, error) {
 		}
 	}
 	decision.ToolCalls = calls
-	return model.Response{Decision: decision}, nil
+	return model.Response{Decision: decision, ReasoningContent: raw.Choices[0].Message.ReasoningContent}, nil
 }
 
 func buildSystemContent(system string, controls []model.ControlDefinition) string {
@@ -262,7 +318,7 @@ func buildSystemContent(system string, controls []model.ControlDefinition) strin
 
 func parseArguments(arguments string) (map[string]any, error) {
 	if strings.TrimSpace(arguments) == "" {
-		return map[string]any{}, nil
+		return nil, errors.New("tool arguments are empty; expected a JSON object")
 	}
 
 	var args map[string]any
@@ -270,7 +326,7 @@ func parseArguments(arguments string) (map[string]any, error) {
 		return nil, err
 	}
 	if args == nil {
-		args = map[string]any{}
+		return nil, errors.New("tool arguments must be a JSON object")
 	}
 	return args, nil
 }

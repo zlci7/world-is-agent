@@ -366,14 +366,20 @@ func (l *Loop) runBoundedSteps(
 	taskContexts ...*taskTurnContext,
 ) error {
 	var taskContext *taskTurnContext
+	var taskHistoryOwner *tool.TaskTools
 	if len(taskContexts) > 0 {
 		taskContext = taskContexts[0]
+	}
+	if taskContext != nil {
+		taskHistoryOwner = taskContext.tools
 	}
 	transcript := make([]model.Message, 0)
 	successfulActions := make([]completedToolAction, 0)
 	totalToolCalls := 0
 	asyncActionsStarted := 0
 	seenToolCallIDs := make(map[string]struct{})
+	argumentCorrectionUsed := false
+	argumentCorrectionPending := false
 
 	for stepIndex := 1; stepIndex <= l.config.MaxSteps; stepIndex++ {
 		turnTracer.Emit(trace.EventAgentStepStarted, trace.EventData{
@@ -440,8 +446,13 @@ func (l *Loop) runBoundedSteps(
 		cancelLLM()
 		if err != nil {
 			reason := "provider_failed"
-			if errors.Is(err, context.DeadlineExceeded) {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
 				reason = "provider_timeout"
+			case errors.Is(err, model.ErrResponseInvalidJSON):
+				reason = "model_response_invalid_json"
+			case errors.Is(err, model.ErrResponseTruncated):
+				reason = "model_response_truncated"
 			}
 			turnTracer.Emit(trace.EventAgentStepFailed, trace.EventData{
 				Fields: trace.Fields{"step_index": stepIndex, "reason": reason},
@@ -458,7 +469,7 @@ func (l *Loop) runBoundedSteps(
 
 		decision := rep.Decision
 		historyDecision := decision
-		historyDecision.ToolCalls = redactTaskCalls(decision.ToolCalls, toolView)
+		historyDecision.ToolCalls = redactTaskCalls(decision.ToolCalls, toolView, taskHistoryOwner)
 		turnHistoryFromContext(ctx).collector.Decision(stepIndex, historyDecision)
 		if err := validateControlDirective(decision.Control); err != nil {
 			turnTracer.Emit(trace.EventAgentStepFailed, trace.EventData{
@@ -472,6 +483,12 @@ func (l *Loop) runBoundedSteps(
 
 		calls := decision.ToolCalls
 		if len(calls) == 0 {
+			if argumentCorrectionPending {
+				err := errors.New("tool argument correction failed: no corrected tool call was returned")
+				l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindPriorSuccessfulActions)
+				l.failTurn(ctx, env, turnTracer, key, event, turnID, "model", "tool_argument_correction_failed", err, trace.EventData{Fields: trace.Fields{"step_index": stepIndex}})
+				return err
+			}
 			if decision.Control.Kind == model.ControlSettle {
 				turnTracer.Emit(trace.EventTurnSettled, trace.EventData{
 					Fields: trace.Fields{"step_index": stepIndex},
@@ -538,8 +555,9 @@ func (l *Loop) runBoundedSteps(
 		rememberToolCallIDs(calls, seenToolCallIDs)
 
 		transcript = append(transcript, model.Message{
-			Role:      model.RoleAssistant,
-			ToolCalls: redactTaskCalls(calls, toolView),
+			Role:             model.RoleAssistant,
+			ToolCalls:        copyToolCallsForTranscript(calls),
+			ReasoningContent: rep.ReasoningContent,
 		})
 		for _, call := range calls {
 			turnTracer.Emit(trace.EventToolCallSelected, trace.EventData{
@@ -561,7 +579,7 @@ func (l *Loop) runBoundedSteps(
 		})
 		if hasPriorStepDuplicateID {
 			executions := make([]memory.HistoryExecution, len(calls))
-			for i, call := range redactTaskCalls(calls, toolView) {
+			for i, call := range redactTaskCalls(calls, toolView, taskHistoryOwner) {
 				result := idValidationResults[i]
 				executions[i] = memory.HistoryExecution{Call: call, RuntimeResult: &result}
 			}
@@ -570,6 +588,12 @@ func (l *Loop) runBoundedSteps(
 				Role:        model.RoleTool,
 				ToolResults: copyToolResultsForTranscript(idValidationResults),
 			})
+			if argumentCorrectionPending {
+				err := errors.New("tool argument correction failed: tool call id was reused")
+				l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindPriorSuccessfulActions)
+				l.failTurn(ctx, env, turnTracer, key, event, turnID, "model", "tool_argument_correction_failed", err, trace.EventData{Fields: trace.Fields{"step_index": stepIndex}})
+				return err
+			}
 			turnTracer.Emit(trace.EventToolBatchFailed, trace.EventData{
 				Fields: trace.Fields{
 					"step_index":           stepIndex,
@@ -583,6 +607,7 @@ func (l *Loop) runBoundedSteps(
 			continue
 		}
 		scheduler := l.newToolBatchScheduler(turnTracer, stepIndex, event, turnID, toolView, asyncActionsStarted >= l.config.MaxAsyncActionsPerTurn)
+		scheduler.taskHistoryOwner = taskHistoryOwner
 		if taskContext != nil && taskContext.background() {
 			scheduler.sourceEventID = taskContext.authority.Execution.WakeID
 			scheduler.beforeEnvironmentAction = taskContext.beforeAction(env, toolView.RuntimeContext())
@@ -620,6 +645,18 @@ func (l *Loop) runBoundedSteps(
 			ToolResults: copyToolResultsForTranscript(outcome.Results),
 		})
 		successfulActions = append(successfulActions, outcome.SuccessfulActions...)
+		if hasToolArgumentFailure(outcome.Results) || argumentCorrectionPending && hasInvalidToolResult(outcome.Results) {
+			if argumentCorrectionUsed {
+				err := errors.New("tool argument correction failed: corrected tool call is invalid")
+				l.updateMemoryForCompletedTurn(ctx, turnTracer, key, turnID, event, successfulActions, memory.ProjectionKindPriorSuccessfulActions)
+				l.failTurn(ctx, env, turnTracer, key, event, turnID, "model", "tool_argument_correction_failed", err, trace.EventData{Fields: trace.Fields{"step_index": stepIndex}})
+				return err
+			}
+			argumentCorrectionUsed = true
+			argumentCorrectionPending = true
+		} else {
+			argumentCorrectionPending = false
+		}
 		if taskContext != nil && taskContext.background() {
 			stopped, err := taskContext.stopped(ctx)
 			if err != nil {

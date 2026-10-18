@@ -11,7 +11,7 @@ import (
 )
 
 func TestRuntimeToolTaskRedaction(t *testing.T) {
-	for _, scenario := range []string{"success", "schema"} {
+	for _, scenario := range []string{"success", "schema", "json"} {
 		t.Run(scenario, func(t *testing.T) {
 			env, key, event, catalog := taskContextFixture(t)
 			record := seedContextTask(t, env, key, "current")
@@ -29,11 +29,21 @@ func TestRuntimeToolTaskRedaction(t *testing.T) {
 			if scenario == "schema" {
 				call.Arguments["SECRET FIELD"] = "SECRET VALUE"
 			}
+			if scenario == "json" {
+				call.Arguments = nil
+				call.RawArguments = "SECRET malformed JSON"
+				call.ArgumentsError = "invalid JSON"
+			}
+			redacted := redactTaskCalls([]model.ToolCall{call}, admission.View, turn.tools)
+			data, _ := json.Marshal(redacted)
+			if strings.Contains(string(data), "SECRET") {
+				t.Fatalf("decision history exposed task arguments: %s", data)
+			}
 			outcome, err := (toolBatchScheduler{view: admission.View}).Run(context.Background(), env, key.WorldID, key.EntityID, []model.ToolCall{call})
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := json.Marshal(outcome.Executions)
+			data, err = json.Marshal(outcome.Executions)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -45,5 +55,14 @@ func TestRuntimeToolTaskRedaction(t *testing.T) {
 				t.Fatalf("result exposed task arguments: %s", data)
 			}
 		})
+	}
+}
+
+func TestTaskHistoryUsesTheAdmittedExecutorForMatchingEnvironmentName(t *testing.T) {
+	view := schedulerToolView(t, schedulerCapability("update_task", tool.ConcurrencySequential))
+	call := model.ToolCall{ID: "environment-call", Name: "update_task", Arguments: map[string]any{"text": "environment argument"}}
+	redacted := redactTaskCalls([]model.ToolCall{call}, view, &tool.TaskTools{})
+	if redacted[0].Arguments["text"] != "environment argument" {
+		t.Fatal("an environment capability was classified by its name")
 	}
 }

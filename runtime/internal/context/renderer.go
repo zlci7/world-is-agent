@@ -48,10 +48,11 @@ func (r Renderer) renderTranscript(transcript []model.Message) []model.Message {
 	messages := make([]model.Message, 0, len(transcript))
 	for _, message := range transcript {
 		rendered := model.Message{
-			Role:        message.Role,
-			Content:     strings.TrimSpace(message.Content),
-			ToolCalls:   copyToolCalls(message.ToolCalls),
-			ToolResults: copyToolResults(message.ToolResults),
+			Role:             message.Role,
+			Content:          strings.TrimSpace(message.Content),
+			ToolCalls:        copyToolCalls(message.ToolCalls),
+			ToolResults:      copyToolResults(message.ToolResults),
+			ReasoningContent: message.ReasoningContent,
 		}
 
 		switch {
@@ -68,10 +69,14 @@ func (r Renderer) renderTranscript(transcript []model.Message) []model.Message {
 func renderToolCalls(calls []model.ToolCall) string {
 	items := make([]map[string]any, 0, len(calls))
 	for _, call := range calls {
+		var arguments any = orderedMap(call.Arguments)
+		if call.ArgumentsError != "" {
+			arguments = call.RawArguments
+		}
 		items = append(items, map[string]any{
 			"tool_call_id": call.ID,
 			"name":         call.Name,
-			"arguments":    orderedMap(call.Arguments),
+			"arguments":    arguments,
 		})
 	}
 	return mustMarshalJSONString(items)
