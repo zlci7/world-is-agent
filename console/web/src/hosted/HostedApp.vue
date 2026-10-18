@@ -4,14 +4,17 @@ import { ApiError, type Status, type Turn } from '../types'
 import { localTime } from '../i18n/zh-CN'
 import UiIcon from '../UiIcon.vue'
 import Tasks from '../tasks/Tasks.vue'
+import AuthPanel from './AuthPanel.vue'
+import AdminPanel from './AdminPanel.vue'
 import { request, type UserSession, type DeviceKey, type Preferences, type Usage } from './api'
 
 type HostedStatus = Pick<Status,'instance_id'|'state'|'ready'|'loaded_game'|'connection_count'|'reason_code'>
 const session=ref<UserSession|null>(null), initial=ref(true), busy=ref(false), problem=ref(''), notice=ref('')
-const register=ref(false), email=ref(''), password=ref(''), invitation=ref('')
-const view=ref<'connect'|'tasks'|'turns'|'preferences'>('connect')
-const views={connect:'连接游戏',tasks:'预约任务',turns:'运行记录',preferences:'账号偏好'}
-const icons={connect:'compass',tasks:'book',turns:'history',preferences:'settings'}
+const resetFlow=ref(window.location.hash.startsWith('#reset?'))
+const authVersion=ref(0)
+const view=ref<'connect'|'tasks'|'turns'|'preferences'|'admin'>('connect')
+const views=computed(()=>({connect:'连接游戏',tasks:'预约任务',turns:'运行记录',preferences:'账号偏好',...(session.value?.user.is_admin?{admin:'内测管理'}:{})}))
+const icons={connect:'compass',tasks:'book',turns:'history',preferences:'settings',admin:'shield'}
 const status=ref<HostedStatus|null>(null), statusProblem=ref(''), keys=ref<DeviceKey[]>([]), secret=ref('')
 const preferences=ref<Preferences|null>(null), usage=ref<Usage|null>(null), turns=ref<Turn[]>([])
 const connection=ref<{gateway_url:string;min_adapter_version:string}|null>(null)
@@ -27,12 +30,14 @@ function failed(error:unknown){if(error instanceof ApiError && error.status===40
 function readSucceeded(kind:ReadKind){readings.value[kind]={problem:'',at:new Date().toISOString()}}
 function readFailed(kind:ReadKind,error:unknown){if(error instanceof ApiError&&error.status===401)failed(error);else readings.value[kind].problem=message(error)}
 function readProblem(kind:ReadKind){const reading=readings.value[kind];return `${reading.problem}${reading.at ? `；保留上次读取的数据（${localTime(reading.at)}）` : '；尚未取得数据，请点击刷新状态重试'}`}
-async function authenticate(){
-  busy.value=true;problem.value=''
-  try{const result=await request<UserSession>(register.value?'/api/invitations/redeem':'/api/session',{method:'POST',body:{email:email.value,password:password.value,...(register.value?{invitation:invitation.value}:{})}});clearSession();session.value=result;password.value='';invitation.value='';await loadAccount()}
-  catch(error){failed(error)}finally{busy.value=false}
+async function authenticated(value:UserSession){
+  clearSession();problem.value='';session.value=value;resetFlow.value=false
+  if(value.user.email_verified_at)await loadAccount()
 }
+function adminPermissionLost(){if(session.value)session.value.user.is_admin=false;view.value='connect';problem.value='管理权限已变化，请重新登录后确认。'}
+function resetLinkOpened(){if(window.location.hash.startsWith('#reset?')){controller?.abort();resetFlow.value=true;authVersion.value++;secret.value=''}}
 async function loadAccount(){
+  if(!session.value?.user.email_verified_at||resetFlow.value)return
   controller?.abort();controller=new AbortController();const signal=controller.signal, current=epoch
   const results=await Promise.allSettled([
     request<{keys:DeviceKey[]}>('/api/me/keys',{signal}).then(value=>{if(current===epoch&&!signal.aborted){keys.value=value.keys;readSucceeded('keys')}}),
@@ -45,7 +50,7 @@ async function loadAccount(){
   if(current===epoch)await refresh()
 }
 async function refresh(){
-  if(!session.value||refreshing||document.hidden)return
+  if(!session.value?.user.email_verified_at||resetFlow.value||view.value==='admin'||refreshing||document.hidden)return
   refreshing=true;const current=epoch, signal=controller?.signal
   const results=await Promise.allSettled([
     request<HostedStatus>('/api/me/status',{signal}).then(value=>{if(current===epoch&&!signal?.aborted){if(status.value&&status.value.instance_id!==value.instance_id){turns.value=[];readings.value.turns={problem:'',at:''}}status.value=value;statusProblem.value=''}}),
@@ -66,35 +71,22 @@ async function revokeKey(key:DeviceKey){busy.value=true;problem.value='';const c
 async function savePreferences(){if(!preferences.value)return;busy.value=true;problem.value='';notice.value='';const current=epoch;try{const value=await request<Preferences>('/api/me/preferences',{method:'PUT',csrf:session.value?.csrf,body:preferences.value});if(current===epoch){preferences.value=value;readSucceeded('preferences');notice.value='偏好已保存，将用于后续对话'}}catch(error){if(current===epoch){if(error instanceof ApiError&&error.status===409)readFailed('preferences',error);else failed(error)}}finally{busy.value=false}}
 async function copyKey(){try{await navigator.clipboard.writeText(secret.value);notice.value='已复制，请粘贴到游戏连接设置'}catch{notice.value='请选中密钥文本后手动复制'}}
 function changeView(next:typeof view.value){secret.value='';notice.value='';problem.value='';view.value=next}
-onMounted(async()=>{try{session.value=await request<UserSession>('/api/me');await loadAccount()}catch(error){if(!(error instanceof ApiError&&error.status===401))failed(error)}finally{initial.value=false};timer=window.setInterval(()=>void refresh(),5000)})
-onUnmounted(()=>{epoch++;controller?.abort();window.clearInterval(timer)})
+onMounted(async()=>{window.addEventListener('hashchange',resetLinkOpened);try{session.value=await request<UserSession>('/api/me');await loadAccount()}catch(error){if(!(error instanceof ApiError&&error.status===401))failed(error)}finally{initial.value=false};timer=window.setInterval(()=>void refresh(),5000)})
+onUnmounted(()=>{epoch++;controller?.abort();window.clearInterval(timer);window.removeEventListener('hashchange',resetLinkOpened)})
 </script>
 
 <template>
   <div class="wia-app hosted-app farm">
     <div class="scenery" aria-hidden="true" />
     <header class="world-masthead"><div class="world-name"><span class="world-emblem"><UiIcon name="leaf" /></span><div><strong>星露谷物语</strong><small>World Is Agent · 我的游戏</small></div></div><span class="game-tag">邀请内测</span></header>
-    <main v-if="!session" class="hosted-auth surface">
-      <div class="auth-title"><span class="brand-mark"><UiIcon name="compass" /></span><span>World Is Agent</span></div>
-      <h1>{{ register ? '创建你的账号' : '回到你的星露谷' }}</h1>
-      <p class="muted">{{ register ? '使用邀请码注册，连接属于你的角色与经历。' : '登录后获取连接密钥，继续与你的角色相处。' }}</p>
-      <p v-if="problem" class="notice problem" role="alert">{{ problem }}</p>
-      <p v-if="initial" role="status">正在读取登录状态…</p>
-      <form v-else @submit.prevent="authenticate">
-        <div class="field"><label for="email">邮箱</label><input id="email" v-model="email" type="email" autocomplete="email" required maxlength="254" :disabled="busy" /></div>
-        <div class="field"><label for="password">密码</label><input id="password" v-model="password" type="password" :autocomplete="register ? 'new-password' : 'current-password'" required :minlength="register ? 12 : 1" maxlength="128" :disabled="busy" /><small v-if="register">至少 12 个字符</small></div>
-        <div v-if="register" class="field"><label for="invitation">邀请码</label><input id="invitation" v-model="invitation" autocomplete="off" required maxlength="120" :disabled="busy" /></div>
-        <button class="auth-submit" type="submit" :disabled="busy">{{ busy ? '正在处理…' : register ? '创建账号并登录' : '登录' }}</button>
-      </form>
-      <div class="auth-switch"><span>{{ register ? '已经有账号？' : '首次来访？' }}</span><button class="text-link" :disabled="busy" @click="register=!register;problem=''">{{ register ? '返回登录' : '使用邀请码注册' }}</button></div>
-      <p class="auth-help">忘记密码时，请联系内测管理员。</p>
-    </main>
+    <main v-if="initial" class="hosted-auth surface"><h1>World Is Agent</h1><p role="status">正在读取登录状态…</p></main>
+    <AuthPanel v-else-if="!session||!session.user.email_verified_at||resetFlow" :key="authVersion" :session="session" :reset-flow="resetFlow" :account-busy="busy" :external-problem="problem" @authenticated="authenticated" @logout="logout" @expired="clearSession" />
     <div v-else class="shell">
       <aside class="sidebar"><div class="brand"><span class="brand-mark"><UiIcon name="compass" /></span><div><strong>World Is Agent</strong><small>我的游戏</small></div></div><nav aria-label="主导航"><button v-for="(label,id) in views" :key="id" :class="{active:view===id}" :aria-current="view===id ? 'page' : undefined" :disabled="busy" @click="changeView(id)"><UiIcon :name="icons[id]" />{{ label }}</button></nav><div class="sidebar-bottom"><p class="account-email">{{ session.user.email }}</p><button class="text-link" :disabled="busy" @click="logout">退出账号</button></div></aside>
       <main class="workspace">
-        <header class="app-topbar"><div class="breadcrumbs">我的游戏 <UiIcon name="chevron" />{{ views[view] }}</div><span class="runtime-pill"><i class="state-dot" :class="{offline:!status,pending:status&&!status.ready}" />{{ connectionLabel }}</span></header>
-        <div class="page-heading"><div><h1>{{ views[view] }}</h1><p>{{ view==='connect' ? '用个人密钥连接你的游戏。' : view==='tasks' ? '查看约定与真实的执行结果。' : view==='turns' ? '查看最近的角色回合。' : '让交流更贴近你的习惯。' }}</p></div><button class="secondary hosted-refresh" :disabled="busy" @click="loadAccount"><UiIcon name="refresh" />刷新状态</button></div>
-        <p v-if="problem" class="notice problem" role="alert">{{ problem }}</p><p v-if="notice" class="notice" role="status">{{ notice }}</p><p v-if="statusProblem" class="notice problem" role="status">{{ statusProblem }}；已显示的信息可能尚未同步。</p>
+        <header class="app-topbar"><div class="breadcrumbs">我的游戏 <UiIcon name="chevron" />{{ views[view] }}</div><span v-if="view==='admin'" class="runtime-pill"><UiIcon name="shield" />管理员</span><span v-else class="runtime-pill"><i class="state-dot" :class="{offline:!status,pending:status&&!status.ready}" />{{ connectionLabel }}</span></header>
+        <div class="page-heading"><div><h1>{{ views[view] }}</h1><p>{{ view==='connect' ? '用个人密钥连接你的游戏。' : view==='tasks' ? '查看约定与真实的执行结果。' : view==='turns' ? '查看最近的角色回合。' : view==='admin'?'管理邀请、账号与运行状态。':'让交流更贴近你的习惯。' }}</p></div><button v-if="view!=='admin'" class="secondary hosted-refresh" :disabled="busy" @click="loadAccount"><UiIcon name="refresh" />刷新状态</button></div>
+        <p v-if="problem" class="notice problem" role="alert">{{ problem }}</p><p v-if="notice" class="notice" role="status">{{ notice }}</p><p v-if="statusProblem&&view!=='admin'" class="notice problem" role="status">{{ statusProblem }}；已显示的信息可能尚未同步。</p>
         <template v-if="view==='connect'">
           <div class="hosted-connect-grid">
             <section class="surface settings-panel install-panel"><h2>开始游玩</h2><ol class="install-steps"><li><strong>安装 SMAPI 与 WIA Mod</strong><p>使用邀请说明中的下载包，解压到游戏的 Mods 文件夹。</p></li><li><strong>创建个人连接密钥</strong><p>复制右侧新创建的 WIA Key。每个密钥绑定一个游戏安装。</p></li><li><strong>打开游戏，按 F8 连接</strong><p>选择在线服务，粘贴密钥，保存后加载存档。</p></li></ol><p v-if="readings.connection.problem" class="notice problem" role="status">连接信息读取失败：{{ readProblem('connection') }}</p><dl class="connection-facts"><div><dt>服务地址</dt><dd>{{ connection?.gateway_url || (readings.connection.problem?'暂不可用':'正在读取') }}</dd></div><div><dt>Mod 最低版本</dt><dd>{{ connection?.min_adapter_version || (readings.connection.problem?'暂不可用':'正在读取') }}</dd></div></dl><p class="muted">记忆与预约保存在你的账号下。游戏关闭后，游戏时间与角色动作暂停。</p></section>
@@ -106,6 +98,7 @@ onUnmounted(()=>{epoch++;controller?.abort();window.clearInterval(timer)})
           </div>
           <section class="surface hosted-usage" aria-label="今日模型额度"><div><h2>今日模型额度</h2><p v-if="usage">{{ usage.period }} · {{ usage.timezone }} 日界</p><p v-else>{{ readings.usage.problem?'暂无可用额度信息':'正在读取额度' }}</p></div><dl v-if="usage"><div><dt>已使用</dt><dd>{{ usage.used.toLocaleString() }}</dd></div><div><dt>待结算预留</dt><dd>{{ usage.pending.toLocaleString() }}</dd></div><div><dt>剩余可用</dt><dd>{{ usage.remaining.toLocaleString() }}</dd></div></dl><p v-if="readings.usage.problem" class="notice problem" role="status">额度读取失败：{{ readProblem('usage') }}</p><p>单位为模型 tokens；结果未确认的请求会保留预留额度。</p></section>
         </template>
+        <AdminPanel v-else-if="view==='admin'&&session.user.is_admin" :key="session.user.user_id" :session="session" @expired="clearSession" @permission-lost="adminPermissionLost" />
         <Tasks v-else-if="view==='tasks'&&status?.ready" :key="taskScope" :status="status" api-base="/api/me" storage-scope="account" @read-failed="failed" />
         <section v-else-if="view==='tasks'" class="surface empty-state"><UiIcon name="book" /><h2>等待运行实例就绪</h2><p>连接恢复后可继续查看预约，已有数据会保留。</p></section>
         <section v-else-if="view==='turns'" class="surface log-list">

@@ -2,6 +2,7 @@ package accounts
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,6 +35,13 @@ func TestAdminInvitationsAndAccountLifecycle(t *testing.T) {
 	_, key, err := s.CreateKey(ctx, player.ID, time.Hour)
 	if err != nil {
 		t.Fatal(err)
+	}
+	entries, err := s.Audit(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries[0].Actor != player.ID || !strings.HasPrefix(entries[0].Target, "key_") {
+		t.Fatal("key audit lost actual actor/target")
 	}
 	if err = s.SetEnabled(ctx, admin.ID, admin.ID, false); !errors.Is(err, ErrInput) {
 		t.Fatal("admin disabled self")

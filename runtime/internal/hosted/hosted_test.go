@@ -45,6 +45,16 @@ type localWorkers struct {
 	preview     bool
 }
 
+func (w *localWorkers) Inspect(_ context.Context, user string) (WorkerStatus, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	state := WorkerStatus{State: "not_allocated"}
+	if _, ok := w.assignments[user]; ok {
+		state.State = "running"
+	}
+	return state, nil
+}
+
 func (w *localWorkers) Ensure(ctx context.Context, user string) (Assignment, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

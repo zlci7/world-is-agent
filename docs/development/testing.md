@@ -175,7 +175,11 @@ go test ./runtime/internal/accounts ./runtime/internal/hosted ./runtime/internal
 
 The hosted suite uses real SQLite, a certificate-verified local TLS gRPC gateway, separate bootstrap Runtime instances and stub model endpoints. It covers session/CSRF boundaries, key binding/revocation, identical game/world/NPC identities across accounts, worker reconstruction, conservative quota reservations and cancellation. Docker allocation tests use a fake engine; they do not prove that a container launches on Linux.
 
+Email/account tests cover schema migration with backup, SMTP activation, expiry/resend/wrong-attempt persistence, atomic invitation/code consumption, reset replay and credential revocation. Local SMTP receivers exercise implicit TLS and STARTTLS with a trusted test CA, rejection of untrusted certificates and cancellation. Administrator tests cover current-role checks, CSRF, invitation revocation, account availability, audit attribution and read-only worker inspection.
+
 An opt-in `TestHostedBrowserPreview` fixture serves the built account website and isolated local workers. Set `WIA_HOSTED_BROWSER_PREVIEW=1`; its output includes a trusted-localhost URL and a temporary invitation. `WIA_HOSTED_PREVIEW_STOP_FILE` ends the fixture when the file appears. Optional `WIA_HOSTED_PREVIEW_FAULT_FILE` lists exact GET paths to return 503 for failure/retry checks. Preview accounts and the seeded offline Task world are synthetic and are removed with the test directory.
+
+The preview seeds `operator@example.test`, `player@example.test` and an unverified `legacy@example.test`, using the fixture password `a long test password`. Only the first has an administrator role. Its loopback-only `/__preview/mail` route reads the fake outbox for browser verification/reset checks. This route and sender exist only in test code; they are not production mail configuration. Tests must not send to real recipients.
 
 Real-host acceptance uses the [hosted deployment guide](../../deploy/hosted/README.md): verify public gRPC TLS, a clean player installation, two-account isolation, save/load and network/worker recovery, a complete closed-volume restore, and capacity on the chosen host/model. The [acceptance record](../phase11/phase11.2-acceptance.md) separates local evidence from those pending checks.
 

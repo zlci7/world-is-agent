@@ -23,5 +23,13 @@
   "model_timeout_seconds": 45,
   "session_hours": 24,
   "key_days": 30,
-  "min_adapter_version": "0.1.3"
+  "min_adapter_version": "0.1.3",
+  "mail": {
+    "host": "smtp.example.com",
+    "port": 465,
+    "tls_mode": "tls",
+    "from": "noreply@example.com",
+    "username": "noreply@example.com",
+    "password_env": "WIA_SMTP_PASSWORD"
+  }
 }

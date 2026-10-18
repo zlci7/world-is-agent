@@ -6,6 +6,7 @@ services:
     environment:
       WIA_ACCOUNT_SECRET: ${WIA_ACCOUNT_SECRET:?Generate and retain an account secret}
       WIA_MODEL_KEY: ${WIA_MODEL_KEY:?Set the platform model credential}
+      WIA_SMTP_PASSWORD: ${WIA_SMTP_PASSWORD:-}
     volumes:
       - ./hosted.json:/etc/wia/hosted.json:ro
       - hosted-state:/data

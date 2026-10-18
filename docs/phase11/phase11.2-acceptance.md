@@ -2,6 +2,8 @@
 
 Date: 2026-10-18
 
+This record covers the hosted baseline. Current mailbox verification, email recovery and administrator results are recorded in the [email/admin acceptance](phase11.2-email-admin-acceptance.md).
+
 Status: development source and local background validation complete; deployment-host and real-player acceptance pending. This is not a public service availability or production-readiness claim.
 
 ## Delivered scope

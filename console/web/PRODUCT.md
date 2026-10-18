@@ -8,7 +8,7 @@ web
 
 ## Users
 
-Players connecting their local games to World Is Agent, and people operating a local Runtime.
+Players connecting their local games to World Is Agent, people operating a local Runtime, and invitation-beta administrators.
 
 ## Product Purpose
 
@@ -20,7 +20,7 @@ The local console belongs to one local Runtime. Hosted access uses invitation-ba
 
 ## Capabilities and Constraints
 
-The hosted development scope is Windows Stardew Valley, one active device per account, a platform-managed model, independent account data, task views, recent turns, explicit preferences, and usage limits. Deployment and real-game acceptance are recorded separately from source implementation.
+The hosted development scope is Windows Stardew Valley, one active device per account, a platform-managed model, independent account data, task views, recent turns, explicit preferences, and usage limits. Accounts use verified-email invitation registration, mailbox verification for existing users and one-use password recovery. CLI-granted administrators manage invitations and account availability, and read runtime state, usage and audit entries. Deployment, real mailbox delivery and real-game acceptance are recorded separately from source implementation.
 
 ## Brand Commitments
 

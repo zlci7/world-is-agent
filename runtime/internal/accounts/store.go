@@ -217,7 +217,7 @@ func (s *Store) Register(ctx context.Context, email, password, invitation string
 	if _, err = tx.ExecContext(ctx, "INSERT INTO preferences(user_id) VALUES(?)", u.ID); err != nil {
 		return User{}, err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(created,user_id,event) VALUES(?,?,?)", u.CreatedAt, u.ID, "account_registered"); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(created,user_id,event,actor,target) VALUES(?,?,?,?,?)", u.CreatedAt, u.ID, "account_registered", u.ID, u.ID); err != nil {
 		return User{}, err
 	}
 	return u, tx.Commit()
@@ -295,7 +295,7 @@ func (s *Store) CreateKey(ctx context.Context, user string, lifetime time.Durati
 	if _, err = tx.ExecContext(ctx, "INSERT INTO device_keys(id,user_id,digest,created,expires) VALUES(?,?,?,?,?)", k.ID, user, s.Digest(secret), k.CreatedAt, k.ExpiresAt); err != nil {
 		return Key{}, "", err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(created,user_id,event) VALUES(?,?,?)", k.CreatedAt, user, "key_created:"+k.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(created,user_id,event,actor,target) VALUES(?,?,?,?,?)", k.CreatedAt, user, "key_created:"+k.ID, user, k.ID); err != nil {
 		return Key{}, "", err
 	}
 	return k, secret, tx.Commit()
@@ -322,10 +322,18 @@ func (s *Store) RevokeKey(ctx context.Context, user, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "UPDATE device_keys SET revoked=1 WHERE user_id=? AND id=?", user, id); err != nil {
+	result, err := tx.ExecContext(ctx, "UPDATE device_keys SET revoked=1 WHERE user_id=? AND id=? AND revoked=0", user, id)
+	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(created,user_id,event) VALUES(?,?,?)", time.Now().Unix(), user, "key_revoked:"+id); err != nil {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return tx.Commit()
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO audit(created,user_id,event,actor,target) VALUES(?,?,?,?,?)", time.Now().Unix(), user, "key_revoked:"+id, user, id); err != nil {
 		return err
 	}
 	return tx.Commit()

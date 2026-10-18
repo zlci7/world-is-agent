@@ -39,6 +39,8 @@ CREATE UNIQUE INDEX invitation_id ON invitations(id);
 ALTER TABLE audit ADD COLUMN actor TEXT NOT NULL DEFAULT 'operator';
 ALTER TABLE audit ADD COLUMN target TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN result TEXT NOT NULL DEFAULT 'success';
+UPDATE audit SET actor=user_id WHERE event='account_registered' OR event LIKE 'key_created:%' OR event LIKE 'key_revoked:%';
+UPDATE audit SET target=user_id WHERE target='';
 CREATE TABLE mail_challenges(id TEXT PRIMARY KEY,email TEXT NOT NULL,purpose TEXT NOT NULL,digest TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL);
 CREATE INDEX mail_challenge_owner ON mail_challenges(email,purpose,created);
 PRAGMA user_version=1;`)

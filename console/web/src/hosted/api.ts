@@ -1,6 +1,6 @@
 import { ApiError } from '../types'
 
-export interface UserSession { user: { user_id: string; email: string; created_at: number }; csrf: string }
+export interface UserSession { user: { user_id: string; email: string; created_at: number; email_verified_at: number; is_admin: boolean }; csrf: string }
 export interface DeviceKey { key_id: string; created_at: number; expires_at: number; last_used_at: number; revoked: boolean; device_id: string }
 export interface Preferences { version: number; name: string; language: string; style: string }
 export interface Usage { period: string; timezone: string; limit: number; used: number; pending: number; remaining: number }

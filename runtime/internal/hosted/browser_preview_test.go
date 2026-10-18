@@ -2,6 +2,8 @@ package hosted
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,6 +30,22 @@ func TestHostedBrowserPreview(t *testing.T) {
 	f.workers.preview = true
 	f.s.Assets = console.Assets()
 	f.s.Config.MinAdapterVersion = "0.1.3"
+	mailbox := &testMailer{}
+	f.s.mailer = mailbox
+	admin := f.user(t, "operator@example.test")
+	if err := f.store.SetAdmin(t.Context(), admin.Email, true); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.user(t, "player@example.test")
+	legacy := f.user(t, "legacy@example.test")
+	db, err := sql.Open("sqlite", filepath.Join(f.workers.root, "accounts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("UPDATE users SET verified=0 WHERE id=?", legacy.ID); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +55,13 @@ func TestHostedBrowserPreview(t *testing.T) {
 	handler := f.s.Handler()
 	faultFile := os.Getenv("WIA_HOSTED_PREVIEW_FAULT_FILE")
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/__preview/mail" {
+			mailbox.mu.Lock()
+			defer mailbox.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(mailbox.messages)
+			return
+		}
 		if faultFile != "" && r.Method == http.MethodGet {
 			data, _ := os.ReadFile(faultFile)
 			for _, path := range strings.Fields(string(data)) {

@@ -1,22 +1,23 @@
 # World Is Agent Phase11.2 云端 Runtime 托管与账号技术方案
 
-日期：2026-10-18（Asia/Shanghai）
+日期：2026-10-19（Asia/Shanghai）
 
-状态：邀请内测源码与后台验证具备；真实 Linux Docker 部署、公网游戏连接、完整卷恢复及容量验收待完成。验证范围见 [验收记录](phase11.2-acceptance.md)，部署操作见 [Hosted invitation beta](../../deploy/hosted/README.md)。
+状态：邀请内测、邮箱验证、密码找回及管理员后台源码与后台验证具备；真实邮件收件、Linux Docker 部署、公网游戏连接、完整卷恢复及容量验收待完成。验证范围见[托管基线验收](phase11.2-acceptance.md)和[邮箱与管理验收](phase11.2-email-admin-acceptance.md)，部署操作见 [Hosted invitation beta](../../deploy/hosted/README.md)。
 
-邮箱验证、密码恢复、管理员后台与后续上线验收按[执行方案](phase11.2-execution.md)推进。
+开发范围与上线条件见[执行方案](phase11.2-execution.md)。
 
 ## 1. 产品范围
 
-首版面向 Windows 单人 Stardew Valley。玩家安装 SMAPI 与 WIA Mod，在网站凭邀请码、邮箱和密码注册，取得个人 WIA Key，在游戏中按 F8 配置连接。平台提供模型凭据，玩家电脑负责游戏模拟与动作执行，服务端保存角色历史、预约与显式玩家偏好。
+首版面向 Windows 单人 Stardew Valley。玩家安装 SMAPI 与 WIA Mod，在网站凭邀请码、邮箱、密码和邮箱验证码注册，取得个人 WIA Key，在游戏中按 F8 配置连接。平台提供模型凭据，玩家电脑负责游戏模拟与动作执行，服务端保存角色历史、预约与显式玩家偏好。
 
 - 账号模块独立于 Runtime，以服务端生成的稳定 `user_id` 作为数据所有者。
 - 每个账号分配一个独立 Runtime 容器和持久卷，沿用卷内的 game/world/NPC 数据边界。
 - 同一账号同一时刻连接一个安装实例。相同安装重连先退役旧流；不同安装的并发连接被拒绝。
 - 网页提供注册登录、安装指引、密钥管理、连接状态、只读预约、近期回合、偏好和额度。
+- 邮件提供注册验证、现有账号补验和密码找回；管理员网页提供邀请、账号启停及只读运行概览。
 - 本地 Runtime、控制台、模型配置与两款游戏的本地接入保持独立使用。
 
-首版采用单节点、固定 DeepSeek Provider 和平台指定模型。公开自由注册、邮箱所有权验证、SMTP、支付、多节点调度、多设备并发、RimWorld 托管和离线游戏模拟均在范围外。现有 Action continuation 仍为进程内状态。
+首版采用单节点、SQLite、固定 DeepSeek Provider 和平台指定模型。公开自由注册、支付、通用权限平台、多节点调度、多设备并发、RimWorld 托管和离线游戏模拟均在范围外。现有 Action continuation 仍为进程内状态。
 
 ## 2. 系统与仓库边界
 
@@ -50,11 +51,17 @@ Core 不查询账号、计费或容器库，不解释游戏私有状态。Protoc
 
 ### 注册与网页登录
 
-运维使用私有 CLI 发放有期限的一次性邀请码。玩家用邀请码、邮箱和 12–128 字符密码注册；邮箱仅作为登录标识。密码按 `argon2id-v1` 加盐保存，当前参数为 64 MiB、3 次、1 lane、32 字节输出；同时最多执行 2 次密码哈希。正式服务器仍需测量其开销。
+运维使用私有 CLI 或管理员网页发放有期限的一次性邀请码。玩家用邀请码、邮箱、12–128 字符密码和六位邮箱验证码注册。密码按 `argon2id-v1` 加盐保存，当前参数为 64 MiB、3 次、1 lane、32 字节输出；同时最多执行 2 次密码哈希。正式服务器仍需测量其开销。
 
-账号主秘密由环境提供，至少 32 字节并在部署生命周期内保留。已有管理库会校验其验证值，秘密不匹配时拒绝打开。邀请、会话和 Key 保存 HMAC 验证摘要。
+验证码有效期 10 分钟，同邮箱与用途的发送间隔 60 秒，每个挑战允许 5 次错误输入。SMTP 接受消息后挑战才可使用，成功重发使旧挑战失效。注册在单一事务内消费验证码和邀请并建立已验证账号。普通登录只需要邮箱和密码。
 
-网页登录使用 Secure、HttpOnly、SameSite=Strict Cookie。修改请求校验 Host、Origin 和 CSRF。认证入口具有持久化的分钟预算：同邮箱每分钟 6 次、入口来源每分钟 30 次；示例 Caddy 下来源为代理连接，不声称提供真实终端 IP 限流。密码恢复与停用仅由运维 CLI 执行，撤销该账号会话与设备 Key，并写入审计。
+账号主秘密由环境提供，至少 32 字节并在部署生命周期内保留。已有管理库会校验其验证值，秘密不匹配时拒绝打开。邀请、会话、Key、验证码和重置令牌保存 HMAC 验证摘要。
+
+网页登录使用 Secure、HttpOnly、SameSite=Strict Cookie。修改请求校验 Host、Origin 和 CSRF。认证入口具有持久化的分钟预算：同邮箱每分钟 6 次、入口来源每分钟 30 次；示例 Caddy 下来源为代理连接，不声称提供真实终端 IP 限流。
+
+已验证且启用的账号可以申请邮件找回密码。重置链接有效期 30 分钟，仅在提交新密码时消费；成功后撤销该账号会话和设备 Key，断开活动连接并记录审计。申请接口统一响应，不据此确认邮件送达。私有 CLI 保留运维恢复入口。
+
+升级后的未验证账号可以登录并完成补验，普通账号页面及新建 Key 要求邮箱已验证；原有 Key 保持既有到期和撤销规则。补验成功轮换当前网页会话。管理员由私有 CLI 授予已验证且启用的账号，后续请求检查当前角色；停用账号撤销凭据，重新启用需要重新登录和创建 Key。管理员网页禁止停用自己。
 
 ### 三类凭据
 
@@ -68,7 +75,7 @@ Core 不查询账号、计费或容器库，不解释游戏私有状态。Protoc
 
 ## 4. 账号存储与 worker 所有权
 
-管理库位于控制进程的数据卷，保存账号、邀请、会话、Key、偏好、额度、generation、已分配卷标记和审计。每个账号的 Runtime 卷包含原有配置、Memory、经历、Task、checkpoint 与 Trace。游戏存档继续留在玩家电脑。
+SQLite 管理库位于控制进程的数据卷，保存账号及验证/管理员标记、邀请、会话、Key、邮箱挑战、偏好、额度、generation、已分配卷标记和审计。schema version 1 迁移前备份现有 version-0 数据库，迁移事务保持身份与现有数据连续。每个账号的 Runtime 卷包含原有配置、Memory、经历、Task、checkpoint 与 Trace。游戏存档继续留在玩家电脑。
 
 容器名称为 `wia-usr_<id>`，卷为 `wia-usr_<id>-data`。容器与卷具有部署归属和用户标签。部署 ID 从保留的账号主秘密派生，用于限定容量统计、关闭和备份范围。
 
@@ -123,19 +130,26 @@ worker 约每 5 秒刷新，读取故障保留最近确认值。偏好以单独�
 
 ## 8. 网站与 API
 
-沿用已确认的中文像素农场视觉、透明窗口、间距和对齐。四个账号栏目为连接游戏、预约任务、运行记录、账号偏好；网站不提供模型密钥或服务器管理参数。
+沿用已确认的中文像素农场视觉、透明窗口、间距和对齐。四个账号栏目为连接游戏、预约任务、运行记录、账号偏好；管理员另有内测管理入口，包含邀请、用户及审计。网站不提供模型密钥或任意服务器操作参数。
 
 | HTTP 接口 | 语义 |
 | --- | --- |
-| `POST /api/invitations/redeem` | 邀请注册并建立会话 |
+| `POST /api/registration-code` | 校验邀请并请求注册验证码 |
+| `POST /api/invitations/redeem` | 验证邀请及邮箱挑战、注册并建立会话 |
+| `POST /api/password-resets`、`POST /api/password-resets/complete` | 申请邮件重置链接、一次性提交新密码 |
 | `POST /api/session`、`DELETE /api/session` | 登录、退出 |
 | `GET /api/me` | 账号信息与 CSRF |
+| `POST /api/me/email-verification`、`POST /api/me/email-verification/confirm` | 现有账号补验、轮换当前会话 |
 | `GET /api/me/connection` | 正式网关、游戏及最低版本 |
 | `GET/POST /api/me/keys`、`DELETE /api/me/keys/{key_id}` | 元信息、一次性创建与撤销 |
 | `GET/PUT /api/me/preferences` | 有限偏好及版本校验 |
 | `GET /api/me/usage` | UTC 周期、额度、已结算、预留与剩余 |
 | `GET /api/me/status`、`GET /api/me/turns` | 脱敏 Runtime 状态与有界回合列表 |
 | `GET /api/me/task-worlds`、`/api/me/tasks`、`/api/me/tasks/detail` | 账号路由后的现有只读 Task 契约 |
+| `GET/POST /api/admin/invitations`、`DELETE /api/admin/invitations/{id}` | 分页邀请、创建与撤销 |
+| `GET /api/admin/users`、`PATCH /api/admin/users/{id}` | 分页用户与启停 |
+| `GET /api/admin/users/{id}/runtime`、`/api/admin/users/{id}/usage` | 只读运行、连接及 UTC 用量；读取不分配 worker |
+| `GET /api/admin/audit` | 分页审计，包含操作主体、目标及结果 |
 
 Task 查询继续校验 instance/game/world，游标不改变账号归属。公共 DTO 排除服务器路径、上游凭据和原始 Trace。退出或会话失效清空视图、取消请求，并丢弃旧账号响应。读取失败明确提示；保留旧值时标明最后成功时间。离线任务表明记录保存在账号下，执行条件仍需游戏确认。
 
@@ -145,6 +159,8 @@ Task 查询继续校验 instance/game/world，游标不改变账号归属。公�
 
 部署材料包括 Dockerfile、Compose、Caddy、环境与 JSON 示例、`backup.sh` 和运维说明。固定运行于 Linux amd64 单机，公网仅发布 80/443；控制进程独占 Docker 管理权限。
 
+控制进程通过 `mail` 配置指定 SMTP 主机、端口、`tls` 或 `starttls`、授权发件人和凭据环境变量。标准证书验证及发送超时生效；SMTP 凭据不传入 worker。整个 `mail` 配置省略时服务可以启动，注册和补验明确报告邮件未配置。管理员登录邮箱独立于发件邮箱，真实收件由运维验证。
+
 备份使用全服务维护窗口：停止控制进程、取消准入及模型请求、排空并关闭本部署 worker，确认停止后归档管理卷及本部署所有账号卷，生成校验和，再恢复服务。备份包括尚未挂接容器但仍保留的账号卷。恢复需保留部署主秘密、账号卷名称、标签与归档内所有者，并在隔离环境验证。
 
 已分配卷缺失、数据库不可读或存档引用的 checkpoint 缺失时，保留故障事实并阻断恢复。普通 Memory 的历史分支限制仍存在，普通 Action continuation 不跨进程恢复。游戏关闭后服务器保留记录，游戏时间与真实动作暂停。
@@ -153,7 +169,7 @@ Task 查询继续校验 instance/game/world，游标不改变账号归属。公�
 
 ## 10. 验收边界
 
-源码完成条件包括相关自动化测试、本地 TLS 流与账号隔离测试、前端构建及后台浏览器验证、代码审查、架构和 Protocol 检查。
+源码与后台验证包括相关自动化测试、本地 TLS 流与账号隔离测试、邮箱挑战与 SMTP 协议测试、管理员权限与只读查询测试、前端构建及后台浏览器验证、代码审查、架构和 Protocol 检查。具体证据见[邮箱与管理验收](phase11.2-email-admin-acceptance.md)。
 
 真实开放邀请前还需在目标部署环境完成：
 
@@ -162,5 +178,6 @@ Task 查询继续校验 instance/game/world，游标不改变账号归属。公�
 3. 保存读档、预约成功/过期、网络中断、worker 与控制进程重启后的事实一致性。
 4. 完整卷备份在隔离主机恢复；缺失 checkpoint 时明确阻断。
 5. 指定模型与服务器的容量、认证哈希开销、费用预算、磁盘告警、证书续期和发布回退。
+6. 真实邮箱收到注册/补验和密码找回邮件；验证码重发、过期及密码重置后的凭据撤销符合预期。
 
-[验收记录](phase11.2-acceptance.md) 区分已通过的本地证据和待完成的部署/游戏结论，源码验证不替代上线验收。
+[托管基线验收](phase11.2-acceptance.md)和[邮箱与管理验收](phase11.2-email-admin-acceptance.md)区分已通过的本地证据和待完成的收件、部署及游戏结论，源码验证不替代上线验收。
