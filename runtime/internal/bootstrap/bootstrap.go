@@ -16,6 +16,7 @@ import (
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/config"
 	"gameagent/runtime/internal/agent"
+	agentcontext "gameagent/runtime/internal/context"
 	"gameagent/runtime/internal/dataroot"
 	"gameagent/runtime/internal/definition"
 	"gameagent/runtime/internal/gateway"
@@ -105,6 +106,7 @@ type runtimeBundle struct {
 // setupMu owns all slow preparation and commits. mu protects only the published
 // snapshot; readers never wait for model or asset IO.
 type Runtime struct {
+	playerPreferences func() agentcontext.PlayerPreferences
 	protocolv1alpha2.UnimplementedGameAgentGatewayServer
 	setupMu             sync.Mutex
 	mu                  sync.RWMutex
@@ -124,6 +126,10 @@ type Runtime struct {
 }
 
 func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
+	return OpenWithPlayerPreferences(explicitRoot, env, nil)
+}
+
+func OpenWithPlayerPreferences(explicitRoot string, env dataroot.Env, preferences func() agentcontext.PlayerPreferences) (*Runtime, error) {
 	root, err := dataroot.Resolve(explicitRoot, env)
 	if err != nil {
 		return nil, err
@@ -136,7 +142,7 @@ func Open(explicitRoot string, env dataroot.Env) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open trace storage: %w", err)
 	}
-	r := &Runtime{layout: layout, recorder: recorder, streams: &gateway.StreamGroup{}}
+	r := &Runtime{layout: layout, recorder: recorder, streams: &gateway.StreamGroup{}, playerPreferences: preferences}
 	r.modelPath = resolveConfigPath(env, llm.ConfigEnvName, root, layout.ConfigPath(modelConfigFile))
 	if value := strings.TrimSpace(env.Getenv(agent.ConfigEnvName)); value != "" {
 		r.overridePath = dataroot.ResolvePath(root, value)
@@ -362,7 +368,7 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 	}, cfg.History, memory.WithHistoryIndexLimits(cfg.HistoryIndex))
 	readContext, cancelReads := context.WithCancel(context.Background())
 	candidate := &runtimeBundle{id: idgen.New("instance"), readContext: readContext, cancelReads: cancelReads, config: cfg, catalog: catalog, provider: provider, history: history}
-	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history))
+	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history), agent.WithPlayerPreferences(r.playerPreferences))
 	options := []gateway.ServerOption{gateway.WithConnectionReady(func() { r.mu.Lock(); r.lastConnectionError = nil; r.mu.Unlock() })}
 	if cfg.MemoryEnabledValue() {
 		options = append(options, gateway.WithExperienceHistory(history))

@@ -6,6 +6,8 @@ import (
 )
 
 var (
+	ErrQuotaExceeded       = errors.New("model quota exceeded")
+	ErrServiceBusy         = errors.New("model service busy")
 	ErrResponseInvalidJSON = errors.New("model response is not valid JSON")
 	ErrResponseTruncated   = errors.New("model response was truncated")
 )

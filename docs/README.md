@@ -16,6 +16,8 @@ The Runtime embeds Stardew Valley and RimWorld Game Profiles. Phase 10.4 selecti
 
 The local Chinese pixel console includes read-only appointment lists and details. Automated recovery and query checks pass; focused live-game recovery acceptance remains pending. See [appointment recovery and console](development/testing.md#appointment-recovery-and-console).
 
+Hosted invitation-beta source adds independent email/password accounts, WIA Keys and account-isolated workers. Local automated and browser checks pass; actual cloud and game acceptance remain open. Start with the [deployment guide](../deploy/hosted/README.md) and [hosted acceptance record](phase11/phase11.2-acceptance.md).
+
 ## Architecture And Decisions
 
 - [Runtime Architecture Baseline](<summary/GameAgent Runtime 整体架构设计规范.md>)

@@ -188,7 +188,8 @@ type Engine struct {
 }
 
 type ContextProjection struct {
-	SessionKey session.AgentSessionKey
+	PlayerPreferences PlayerPreferences
+	SessionKey        session.AgentSessionKey
 
 	CanonicalTarget *protocolv1alpha2.EntityRef
 
@@ -254,11 +255,12 @@ type MemoryProjection struct {
 }
 
 type BuildInput struct {
-	SessionKey      session.AgentSessionKey
-	CanonicalTarget *protocolv1alpha2.EntityRef
-	AgentDescriptor definition.AgentInstanceDescriptor
-	GameDefinition  *definition.GameDefinition
-	AgentDefinition *definition.AgentDefinition
+	PlayerPreferences PlayerPreferences
+	SessionKey        session.AgentSessionKey
+	CanonicalTarget   *protocolv1alpha2.EntityRef
+	AgentDescriptor   definition.AgentInstanceDescriptor
+	GameDefinition    *definition.GameDefinition
+	AgentDefinition   *definition.AgentDefinition
 
 	RuntimePolicy string
 
@@ -317,6 +319,7 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 		return BuildResult{Report: report}, err
 	}
 	projection := ContextProjection{
+		PlayerPreferences:        boundedPreferences(input.PlayerPreferences),
 		SessionKey:               input.SessionKey,
 		CanonicalTarget:          input.CanonicalTarget,
 		AgentDescriptor:          input.AgentDescriptor,
@@ -414,6 +417,7 @@ func newContextBuildReport(projection ContextProjection, input BuildInput, budge
 
 func sectionReportsForProjection(projection ContextProjection) SectionReports {
 	sections := SectionReports{
+		{Name: "player_preferences", Included: projection.PlayerPreferences != (PlayerPreferences{}), ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.PlayerPreferences)},
 		{Name: "runtime_policy", Included: projection.RuntimePolicy != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.RuntimePolicy)},
 		{Name: "instruction", Included: renderAuthorityInstruction(projection) != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(renderAuthorityInstruction(projection))},
 		{Name: "agent_descriptor", Included: true, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.AgentDescriptor)},
@@ -577,6 +581,9 @@ func enforceGlobalRequestBudget(projection ContextProjection, budget BudgetConfi
 			return projection, report, nil
 		}
 		switch {
+		case projection.PlayerPreferences != (PlayerPreferences{}):
+			projection.PlayerPreferences = PlayerPreferences{}
+			report.addReason("player_preferences_budget_exceeded")
 		case dropRetrievedHistoryDisplay(&projection, &report):
 			report.addReason(ReasonRetrievedHistoryBudgetExceeded)
 			sectionCropped["retrieved_history"] = ReasonRetrievedHistoryBudgetExceeded

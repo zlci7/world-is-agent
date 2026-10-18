@@ -3,6 +3,7 @@ module gameagent
 go 1.25.0
 
 require (
+	golang.org/x/crypto v0.43.0
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.77.0
 	google.golang.org/protobuf v1.36.10

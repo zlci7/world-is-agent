@@ -65,11 +65,11 @@ export function fetchTurns(gameId: string, limit = 50, signal?: AbortSignal): Pr
   return get<TurnsResponse>(`/api/turns?${query}`, signal)
 }
 
-export function fetchTaskWorlds(query: Record<string,string>, signal: AbortSignal): Promise<TaskWorlds> {
-  return get<TaskWorlds>(`/api/task-worlds?${new URLSearchParams(query)}`, signal)
+export function fetchTaskWorlds(query: Record<string,string>, signal: AbortSignal, base = '/api'): Promise<TaskWorlds> {
+  return get<TaskWorlds>(`${base}/task-worlds?${new URLSearchParams(query)}`, signal)
 }
-export function fetchTaskPage(query: Record<string,string>, signal: AbortSignal, detail = false): Promise<TaskPage> {
-  return get<TaskPage>(`/api/tasks${detail ? '/detail' : ''}?${new URLSearchParams(query)}`, signal)
+export function fetchTaskPage(query: Record<string,string>, signal: AbortSignal, detail = false, base = '/api'): Promise<TaskPage> {
+  return get<TaskPage>(`${base}/tasks${detail ? '/detail' : ''}?${new URLSearchParams(query)}`, signal)
 }
 
 /** The providers the first-run form may offer, with each one's default model.

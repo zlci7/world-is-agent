@@ -1,0 +1,50 @@
+name: wia
+services:
+  hosted:
+    image: ${WIA_HOSTED_IMAGE:?Set a commit-tagged hosted image}
+    restart: unless-stopped
+    environment:
+      WIA_ACCOUNT_SECRET: ${WIA_ACCOUNT_SECRET:?Generate and retain an account secret}
+      WIA_MODEL_KEY: ${WIA_MODEL_KEY:?Set the platform model credential}
+    volumes:
+      - ./hosted.json:/etc/wia/hosted.json:ro
+      - hosted-state:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - private
+    stop_grace_period: 150s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  ingress:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - hosted
+    environment:
+      WIA_WEB_HOST: ${WIA_WEB_HOST:?Set the website hostname}
+      WIA_GATEWAY_HOST: ${WIA_GATEWAY_HOST:?Set the gateway hostname}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-state:/data
+      - caddy-config:/config
+    networks:
+      - private
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+networks:
+  private:
+    name: wia-private
+volumes:
+  hosted-state:
+    name: wia-hosted-state
+  caddy-state:
+  caddy-config:

@@ -1,0 +1,17 @@
+.git
+**/node_modules
+**/bin
+**/obj
+**/.local
+**/.impeccable
+**/artifacts
+console/dist
+runtime/config/model.json
+runtime/config/*.local.json
+runtime/secrets
+.gstack
+deploy/hosted/.env
+deploy/hosted/hosted.json
+**/*.sqlite
+**/*.sqlite-wal
+**/*.sqlite-shm

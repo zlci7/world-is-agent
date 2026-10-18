@@ -6,7 +6,7 @@ import { ApiError, type Status, type TaskPage, type TaskRecord, type TaskState, 
 import { availabilityLabels, errorText, localTime, reasonText, taskLabels } from '../i18n/zh-CN'
 import UiIcon from '../UiIcon.vue'
 
-const props = defineProps<{ status: Status; compact?: boolean }>()
+const props = defineProps<{ status: Pick<Status,'ready'|'instance_id'|'loaded_game'>; compact?: boolean; apiBase?: string; storageScope?: 'local'|'account' }>()
 const emit = defineEmits<{ readFailed: [unknown]; openTasks: [] }>()
 const taskRoot = ref<HTMLElement | null>(null)
 const worlds = ref<TaskWorld[]>([])
@@ -66,7 +66,7 @@ async function refresh(force = false, moreWorlds = false) {
   const signal=controller.signal
   let request=gate.begin(context())
   try {
-    const response=await fetchTaskWorlds({ ...queryScope(), ...(moreWorlds && worldCursor.value ? {cursor:worldCursor.value} : {}) },signal)
+    const response=await fetchTaskWorlds({ ...queryScope(), ...(moreWorlds && worldCursor.value ? {cursor:worldCursor.value} : {}) },signal,props.apiBase)
     if (!gate.accept(request,context()) || response.instance_id!==props.status.instance_id) return
     supported.value=response.supported
     const merged=new Map((moreWorlds || response.next_cursor ? worlds.value : []).map(world=>[world.world_id,world]))
@@ -81,7 +81,7 @@ async function refresh(force = false, moreWorlds = false) {
     request=gate.begin(context())
     if (!worldID.value) { page.value=null; detail.value=null; problem.value=''; lastRead.value=response.observed_at; return }
     const result=await fetchTaskPage({ ...queryScope(), world_id:worldID.value, collection:collection.value,
-      limit:props.compact ? '3' : '20', ...(filter.value ? {state:filter.value} : {}), ...(cursor.value ? {cursor:cursor.value} : {}) },signal)
+      limit:props.compact ? '3' : '20', ...(filter.value ? {state:filter.value} : {}), ...(cursor.value ? {cursor:cursor.value} : {}) },signal,false,props.apiBase)
     if (!gate.accept(request,context()) || result.instance_id!==props.status.instance_id || result.world_id!==worldID.value) return
     const workingSetChanged=page.value && JSON.stringify(page.value.working_set)!==JSON.stringify(result.working_set)
     page.value=result; problem.value=''; lastRead.value=result.observed_at
@@ -90,7 +90,7 @@ async function refresh(force = false, moreWorlds = false) {
     selected.value=chosen ? identity(chosen) : ''
     request=gate.begin(context())
     if (!chosen || props.compact) { detail.value=null; return }
-    const full=await fetchTaskPage({ ...queryScope(), world_id:worldID.value, entity_id:chosen.entity_id, task_id:chosen.task_id },signal,true)
+    const full=await fetchTaskPage({ ...queryScope(), world_id:worldID.value, entity_id:chosen.entity_id, task_id:chosen.task_id },signal,true,props.apiBase)
     if (!gate.accept(request,context())) return
     if (full.instance_id!==result.instance_id || full.world_id!==result.world_id || JSON.stringify(full.working_set)!==JSON.stringify(result.working_set)) {
       resetPage(); throw new ApiError(409,'task_snapshot_changed','')
@@ -123,7 +123,7 @@ defineExpose({ refresh })
         <span v-if="selectedWorld" class="world-state" :class="selectedWorld.availability"><i class="state-dot" />{{ problem ? '尚未同步' : availabilityLabels[selectedWorld.availability] }}</span>
       </div>
       <p v-if="selectedWorld?.reason_code" class="notice">{{ reasonText(selectedWorld.reason_code) }}</p>
-      <p v-if="selectedWorld && selectedWorld.availability !== 'ready'" class="availability-note">记录已保存在本机，当前执行条件仍需游戏确认。</p>
+      <p v-if="selectedWorld && selectedWorld.availability !== 'ready'" class="availability-note">{{ storageScope==='account' ? '记录已保存在你的账号下' : '记录已保存在本机' }}，当前执行条件仍需游戏确认。</p>
       <div v-if="!worldID" class="surface empty-state"><UiIcon name="book" /><h2>{{ busy ? '正在读取任务记录' : worlds.length ? '选择一个世界' : '还没有预约记录' }}</h2><p>{{ worlds.length ? '世界选择只改变阅读范围。' : '加载游戏存档，与角色建立预约后即可查看。' }}</p></div>
       <template v-else-if="page">
         <div v-if="compact" class="compact-list"><div v-for="item in page.items" :key="identity(item)" class="compact-item"><span class="avatar">{{ person(item).slice(0,1) }}</span><div><strong>{{ person(item) }}</strong><p>{{ item.instruction }}</p></div><span class="task-status" :class="item.state">{{ taskLabels[item.state] }}</span></div><p v-if="!page.items.length" class="empty-state">当前世界还没有进行中的预约。</p></div>

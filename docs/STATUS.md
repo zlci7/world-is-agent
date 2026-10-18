@@ -73,6 +73,15 @@ Task console validation passed with full Go regression, Vue type/order/build che
 
 ## Experimental
 
+| Hosted invitation beta | Current support |
+| --- | --- |
+| Accounts | Independent account module with invitation + email/password registration, stable server-generated `user_id`, Argon2id password hashes, secure web sessions, CSRF checks, and operator-only password recovery/disable commands. Mailbox ownership is not verified. |
+| Ownership | Authenticated TLS gRPC gateway routes each account to one private Runtime and named volume. Another active device is rejected; same-device reconnect retires the previous stream. Missing assigned volumes and ownership conflicts block startup. Docker allocation and deployment-scoped shutdown have fake-engine tests; actual Docker execution remains unverified. |
+| Account website | Chinese pixel pages for login/registration, installation, one-time keys, revocation, saved tasks, recent turns, explicit nickname/language/response length, and UTC daily usage. Background browser checks cover desktop/mobile layouts, failure/retry and sign-out clearing. |
+| Platform model | Private fixed-DeepSeek model proxy with per-account/global concurrency and persistent reserve/settle accounting. Unknown calls retain their reservation; key revocation cancels active upstream work. Local tests use model stubs. |
+| Stardew remote source | Adapter 0.1.3 adds verified HTTPS, WIA Key/device metadata, F8 settings, bounded reconnect backoff, and Chinese failures. Release builds and background tests pass; its in-game settings and actual public connection still require acceptance. Local mode remains available. |
+| Deployment | Linux amd64 binaries cross-compile. Dockerfile, Compose, Caddy and closed-volume backup instructions are supplied. Public DNS/TLS, real-game recovery, full-volume restore, operator monitoring and measured capacity remain release gates. See [deployment](../deploy/hosted/README.md) and [acceptance](phase11/phase11.2-acceptance.md). |
+
 Stardew source builds observe the native accepted-gift ledger at `NPC.receiveGift` completion in single-player games. Receipt IDs and an offline outbox travel in player `modData`; acknowledged bodies remain in Runtime SQLite. The recipient's initial focus window is three game days. Refused offers and native item delivery do not increment the gift ledger. Background hook registration, mapper, save-journal and Runtime tests pass; actual game input, deduction, save/load presentation and NPC responses still require live-game evidence. Capture failure leaves native gifting available and is logged; storage failure retains the pending receipt for retry.
 
 | Area | Current support |

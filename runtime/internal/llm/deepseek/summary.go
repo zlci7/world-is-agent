@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 
+	"gameagent/runtime/internal/idgen"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/tokenestimate"
 )
@@ -56,6 +57,7 @@ func (p *Provider) GenerateText(ctx context.Context, req model.TextRequest) (mod
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-WIA-Request-ID", idgen.New("modelcall"))
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
 		return model.TextResponse{}, textRequestError(ctx, err)

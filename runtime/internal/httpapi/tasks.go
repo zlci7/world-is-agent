@@ -10,6 +10,12 @@ import (
 	"gameagent/runtime/internal/task"
 )
 
+// TaskQueryHandler exposes only the existing read contract. Its caller owns authentication.
+func TaskQueryHandler(runtime *bootstrap.Runtime) http.Handler {
+	server := &Server{options: Options{Runtime: runtime}}
+	return http.HandlerFunc(server.handleTasks)
+}
+
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, 405, "method_not_allowed", "task queries use GET")

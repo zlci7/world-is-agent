@@ -41,16 +41,17 @@ type Loop struct {
 	recorder trace.Recorder
 	config   Config
 
-	memoryStore      memory.Store
-	memoryProjector  memoryProjector
-	historyStore     memory.HistoryStore
-	summaryStore     memory.SummaryStore
-	summaryGenerator model.TextGenerator
-	historyState     historyRuntimeState
-	maintenanceState historyMaintenanceState
-	definitions      definition.Catalog
-	contextEngine    agentcontext.Engine
-	contextRenderer  agentcontext.Renderer
+	memoryStore       memory.Store
+	memoryProjector   memoryProjector
+	historyStore      memory.HistoryStore
+	summaryStore      memory.SummaryStore
+	summaryGenerator  model.TextGenerator
+	historyState      historyRuntimeState
+	maintenanceState  historyMaintenanceState
+	definitions       definition.Catalog
+	contextEngine     agentcontext.Engine
+	contextRenderer   agentcontext.Renderer
+	playerPreferences func() agentcontext.PlayerPreferences
 }
 
 type memoryProjector interface {
@@ -62,6 +63,10 @@ var (
 )
 
 type LoopOption func(*Loop)
+
+func WithPlayerPreferences(read func() agentcontext.PlayerPreferences) LoopOption {
+	return func(loop *Loop) { loop.playerPreferences = read }
+}
 
 // WithMemoryStore 覆盖 Loop 默认使用的 MemoryStore。
 // 主要用于测试或未来替换成持久化 Memory backend。
@@ -449,6 +454,10 @@ func (l *Loop) runBoundedSteps(
 		if err != nil {
 			reason := "provider_failed"
 			switch {
+			case errors.Is(err, model.ErrQuotaExceeded):
+				reason = "quota_exceeded"
+			case errors.Is(err, model.ErrServiceBusy):
+				reason = "model_service_busy"
 			case errors.Is(err, context.DeadlineExceeded):
 				reason = "provider_timeout"
 			case errors.Is(err, model.ErrResponseInvalidJSON):
@@ -866,6 +875,7 @@ func (l *Loop) buildModelRequestWithRetrieval(
 		recentExperiences = history.RecentExperiences
 	}
 	buildResult, err := l.contextEngine.Build(agentcontext.BuildInput{
+		PlayerPreferences: l.currentPlayerPreferences(),
 		SessionKey:        key,
 		CanonicalTarget:   target,
 		AgentDescriptor:   descriptor,
@@ -906,6 +916,13 @@ func (l *Loop) buildModelRequestWithRetrieval(
 		return model.Request{}, report, agentcontext.RequestTokenBudgetError(size, report.EffectiveBudget)
 	}
 	return req, report, nil
+}
+
+func (l *Loop) currentPlayerPreferences() agentcontext.PlayerPreferences {
+	if l.playerPreferences == nil {
+		return agentcontext.PlayerPreferences{}
+	}
+	return l.playerPreferences()
 }
 
 func (l *Loop) resolveDefinitions(key session.AgentSessionKey, descriptor definition.AgentInstanceDescriptor) (*definition.GameDefinition, *definition.AgentDefinition) {

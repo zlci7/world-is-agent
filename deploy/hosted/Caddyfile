@@ -1,0 +1,10 @@
+{$WIA_WEB_HOST} {
+    encode zstd gzip
+    reverse_proxy hosted:8080
+}
+
+{$WIA_GATEWAY_HOST} {
+    @gateway path /gameagent.protocol.v1alpha2.GameAgentGateway/Connect
+    reverse_proxy @gateway h2c://hosted:50051
+    respond 404
+}

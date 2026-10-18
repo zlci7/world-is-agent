@@ -28,6 +28,8 @@ The development source includes Chinese definitions for all 34 ordinary Stardew 
 
 Development builds also record confirmed single-player Stardew gifts as save-scoped experiences. Recent gifts have a separate bounded context block that survives conversation growth, compaction and Runtime restart; expired facts remain available to literal topic search. Receipt membership filters experience sources after rollback. This feature has [background acceptance](docs/phase11/recent-experiences-acceptance.md); in-game gifting and natural dialogue quality remain unverified.
 
+The development source also includes a **hosted invitation beta** for Windows Stardew players: invitation + email/password accounts, stable user IDs, personal WIA Keys, one private Runtime/data volume per account, a Chinese account website, explicit preferences and model quotas. Hosted players use SMAPI + Mod + WIA Key; the operator supplies the server and model credential. Stardew Adapter 0.1.3 source adds HTTPS connection settings on F8. This service has local automated and browser validation; actual Linux Docker deployment, public TLS/game connectivity, capacity and full-volume restoration remain unverified. See the [deployment guide](deploy/hosted/README.md) and [acceptance record](docs/phase11/phase11.2-acceptance.md).
+
 ## 使用前准备
 
 - Windows x64。

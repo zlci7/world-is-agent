@@ -12,6 +12,7 @@ const runtime = process.env.WIA_DEV_RUNTIME ?? 'http://127.0.0.1:8765'
 export default defineConfig({
   plugins: [vue()],
   build: {
+	rollupOptions: { input: { local: 'index.html', hosted: 'hosted.html' } },
     outDir: '../dist',
     // The output directory is deliberately not emptied by Vite: this directory
     // holds the tracked placeholder that keeps `//go:embed all:dist` valid, and

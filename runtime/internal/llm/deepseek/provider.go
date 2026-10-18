@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"gameagent/runtime/internal/idgen"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/tokenestimate"
 )
@@ -85,6 +86,7 @@ func (p *Provider) Generate(ctx context.Context, req model.Request) (model.Respo
 
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-WIA-Request-ID", idgen.New("modelcall"))
 
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
@@ -98,6 +100,9 @@ func (p *Provider) Generate(ctx context.Context, req model.Request) (model.Respo
 	}
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		if err := serviceError(httpResp.StatusCode, respBody); err != nil {
+			return model.Response{}, err
+		}
 		return model.Response{}, fmt.Errorf("deepseek response failed: status=%d", httpResp.StatusCode)
 	}
 

@@ -57,3 +57,7 @@ docs/pro/
 
 .obsidian/
 .gstack/
+# Hosted deployment credentials and host-specific configuration.
+deploy/hosted/.env
+deploy/hosted/hosted.json
+.impeccable/review/

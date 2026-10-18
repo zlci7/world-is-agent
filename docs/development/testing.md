@@ -162,6 +162,23 @@ For focused live-game acceptance, use a copied test save and an isolated data ro
 
 If recovery cannot be established, preserve the isolated save, database and logs. Keep the world unready or the Task paused; do not reset the task collection, invent success, or replay uncertain game effects. See the [Phase11.1 acceptance record](../phase11/phase11.1-acceptance.md) for current evidence. Automated and browser checks do not replace these game checks.
 
+## Hosted Invitation Beta
+
+Build the embedded account website before running hosted integration checks:
+
+```powershell
+npm --prefix console/web run type-check
+npm --prefix console/web run test:ordering
+npm --prefix console/web run build
+go test ./runtime/internal/accounts ./runtime/internal/hosted ./runtime/internal/workerapi ./runtime/internal/context ./runtime/internal/llm/deepseek -count=1
+```
+
+The hosted suite uses real SQLite, a certificate-verified local TLS gRPC gateway, separate bootstrap Runtime instances and stub model endpoints. It covers session/CSRF boundaries, key binding/revocation, identical game/world/NPC identities across accounts, worker reconstruction, conservative quota reservations and cancellation. Docker allocation tests use a fake engine; they do not prove that a container launches on Linux.
+
+An opt-in `TestHostedBrowserPreview` fixture serves the built account website and isolated local workers. Set `WIA_HOSTED_BROWSER_PREVIEW=1`; its output includes a trusted-localhost URL and a temporary invitation. `WIA_HOSTED_PREVIEW_STOP_FILE` ends the fixture when the file appears. Optional `WIA_HOSTED_PREVIEW_FAULT_FILE` lists exact GET paths to return 503 for failure/retry checks. Preview accounts and the seeded offline Task world are synthetic and are removed with the test directory.
+
+Real-host acceptance uses the [hosted deployment guide](../../deploy/hosted/README.md): verify public gRPC TLS, a clean player installation, two-account isolation, save/load and network/worker recovery, a complete closed-volume restore, and capacity on the chosen host/model. The [acceptance record](../phase11/phase11.2-acceptance.md) separates local evidence from those pending checks.
+
 ## Architecture Check
 
 ```powershell
