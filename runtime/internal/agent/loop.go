@@ -9,6 +9,7 @@ import (
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	agentcontext "gameagent/runtime/internal/context"
 	"gameagent/runtime/internal/definition"
+	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/idgen"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
@@ -339,10 +340,11 @@ func (l *Loop) handleTurn(ctx context.Context, env Environment, conn ConnectionC
 		if buildErr == nil {
 			available := max(0, min(l.config.MaxRequestTokens-report.FinalRequestSize.TotalEstimatedTokens-l.config.MaxTranscriptTokens,
 				l.config.MaxUserMessageTokens-report.FinalRequestSize.UserMessageEstimatedTokens))
-			prepared := l.prepareHistory(ctx, turnTracer, key, memory.CurrentGameTime(event, obs), available)
+			experienceView, _ := experience.ParseView(obs)
+			prepared := l.prepareHistory(ctx, turnTracer, key, memory.CurrentGameTime(event, obs), available, experienceView)
 			defer prepared.Release()
 			history = prepared.Input
-			retrieval = l.prepareRetrieval(ctx, turnTracer, prepared.Snapshot, memory.CurrentGameTime(event, obs), event)
+			retrieval = l.prepareRetrieval(ctx, turnTracer, prepared.Snapshot, memory.CurrentGameTime(event, obs), event, experienceView)
 		}
 	}
 	return l.runBoundedSteps(ctx, env, key, target, descriptor, event, obs, recentMemories, toolView, toolAdmission.Report, turnID, turnTracer, history, retrieval, taskContext)
@@ -859,20 +861,25 @@ func (l *Loop) buildModelRequestWithRetrieval(
 ) (model.Request, agentcontext.ContextBuildReport, error) {
 	gameDefinition, agentDefinition := l.resolveDefinitions(key, descriptor)
 	toolAdmissionSummary := agentcontext.ToolAdmissionSummaryFromReport(toolAdmissionReport)
+	var recentExperiences *agentcontext.RecentExperiencesInput
+	if history != nil {
+		recentExperiences = history.RecentExperiences
+	}
 	buildResult, err := l.contextEngine.Build(agentcontext.BuildInput{
-		SessionKey:      key,
-		CanonicalTarget: target,
-		AgentDescriptor: descriptor,
-		GameDefinition:  gameDefinition,
-		AgentDefinition: agentDefinition,
-		RuntimePolicy:   BuildSystemPrompt(l.config.Prompt),
-		Event:           event,
-		Observation:     obs,
-		RecentMemories:  recentMemories,
-		History:         history,
-		Retrieval:       retrieval,
-		TurnToolView:    toolView,
-		Transcript:      transcript,
+		SessionKey:        key,
+		CanonicalTarget:   target,
+		AgentDescriptor:   descriptor,
+		GameDefinition:    gameDefinition,
+		AgentDefinition:   agentDefinition,
+		RuntimePolicy:     BuildSystemPrompt(l.config.Prompt),
+		Event:             event,
+		Observation:       obs,
+		RecentMemories:    recentMemories,
+		History:           history,
+		Retrieval:         retrieval,
+		RecentExperiences: recentExperiences,
+		TurnToolView:      toolView,
+		Transcript:        transcript,
 	})
 	if err != nil {
 		return model.Request{}, buildResult.Report.WithToolAdmission(toolAdmissionSummary), err
@@ -1089,6 +1096,10 @@ func contextBuildTraceFields(stepIndex int, report agentcontext.ContextBuildRepo
 		"recent_memory_retained":                report.RecentMemory.RetainedCount,
 		"recent_memory_dropped":                 report.RecentMemory.DroppedCount,
 		"history_sources_retained":              report.History.RetainedSources,
+		"recent_experiences_retained":           report.RecentExperiences.RetainedCount,
+		"recent_experiences_dropped":            report.RecentExperiences.DroppedCount,
+		"recent_experiences_estimated_tokens":   report.RecentExperiences.EstimatedTokens,
+		"recent_experiences_diagnostics":        append([]string(nil), report.RecentExperiences.Diagnostics...),
 		"history_sources_dropped":               report.History.DroppedSources,
 		"history_summary_included":              report.History.SummaryIncluded,
 		"history_estimated_tokens":              report.History.EstimatedTokens,

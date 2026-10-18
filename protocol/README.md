@@ -44,6 +44,10 @@ Tag creation and pushing is a repository-owner action.
 - Same semantics have exactly one authoritative field; the protocol does not carry two sources for one fact.
 - Adapters depend on a **tagged release**, not on the current state of this repository. A protocol change that is not yet tagged is not a contract.
 
+## Optional extensions
+
+The optional [confirmed-experience extension](extensions/experiences-v1.md) records game-confirmed interactions and supplies save-scoped recent experiences through existing extensible fields. It is negotiated independently of durable tasks and keeps the published proto unchanged.
+
 ## Generated Code
 
 ```text

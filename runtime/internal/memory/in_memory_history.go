@@ -61,7 +61,7 @@ func (s *InMemoryHistoryStore) AppendHistory(ctx context.Context, batch HistoryB
 	if err != nil {
 		return HistorySource{}, err
 	}
-	if batch.Kind != HistoryKindTerminal && batch.Kind != HistoryKindTaskResult {
+	if batch.Kind != HistoryKindTerminal && batch.Kind != HistoryKindTaskResult && batch.Kind != HistoryKindExperience {
 		return HistorySource{}, fmt.Errorf("%w: terminal history is required", ErrInvalidHistory)
 	}
 	var stored HistoryBatch
@@ -322,6 +322,8 @@ func cloneHistorySource(source HistorySource) (HistorySource, error) {
 			return HistorySource{}, err
 		}
 		source.Batch = &batch
+		source.Experience = batch.Experience
+		source.FactID = experienceFactID(batch)
 	}
 	return source, nil
 }

@@ -10,6 +10,8 @@ Last updated: 2026-10-18.
 
 ## Validation Scope
 
+The [recent-experience acceptance](phase11/recent-experiences-acceptance.md) covers durable receipt admission, context requests across restart and compaction, scope and rollback filtering, optional-extension compatibility, and the Stardew gift-hook signature. It uses background tests and isolated Runtime processes; it does not establish live-game gifting or NPC dialogue quality.
+
 The latest [background acceptance](phase11/phase11.15-background-acceptance.md) covers argument correction during task changes, full Go and Stardew adapter regressions, affected-package race checks, and the current development binary's task API across process restart and exact checkpoint restore. It uses synthetic game facts and does not establish live-game acceptance.
 
 Two real adapters have been validated against the same Runtime and the same protocol, with no
@@ -29,6 +31,8 @@ archetype definition, and are told apart by a world-scoped entity identity with 
 and a per-instance observation.
 
 ## Implemented
+
+Confirmed experiences use the negotiated [`gameagent.experiences.v1`](../protocol/extensions/experiences-v1.md) extension. Runtime stores immutable experience sources in SQLite, excludes them from ordinary conversation compaction, and selects up to eight facts within 768 estimated tokens for Recent Experiences. Current save membership and clock scope govern both focus and archive search. Ordinary dialogue's existing branch-isolation limitation remains.
 
 | Area | Current support |
 | --- | --- |
@@ -68,6 +72,8 @@ Memory validation: Phase8.1 is accepted. Automated Store/Loop reconstruction and
 Task console validation passed with full Go regression, Vue type/order/build checks, authenticated real-HTTP browser flows, and an extracted Windows Runtime process using a fake provider. A child process exited without closing SQLite, and restart plus exact rollback retained the expected working set. The Stardew recovery matrix still needs focused live-game acceptance; this is not a guarantee of unattended execution. Full Windows race runs passed for Task, Gateway, Bootstrap and HTTP using a verified portable GCC toolchain. Two Task-store symlink tests were skipped because the normal Windows account cannot create file symlinks; no privileges or system settings were changed. See [appointment testing](development/testing.md#appointment-recovery-and-console).
 
 ## Experimental
+
+Stardew source builds observe the native accepted-gift ledger at `NPC.receiveGift` completion in single-player games. Receipt IDs and an offline outbox travel in player `modData`; acknowledged bodies remain in Runtime SQLite. The recipient's initial focus window is three game days. Refused offers and native item delivery do not increment the gift ledger. Background hook registration, mapper, save-journal and Runtime tests pass; actual game input, deduction, save/load presentation and NPC responses still require live-game evidence. Capture failure leaves native gifting available and is logged; storage failure retains the pending receipt for retry.
 
 | Area | Current support |
 | --- | --- |

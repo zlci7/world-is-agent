@@ -9,11 +9,16 @@ import (
 
 	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	agentcontext "gameagent/runtime/internal/context"
+	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/trace"
 )
 
-func (l *Loop) prepareRetrieval(ctx context.Context, tracer trace.TurnTracer, snapshot memory.HistorySnapshot, currentTime *memory.GameTimeSnapshot, event *protocol.GameEvent) *agentcontext.RetrievedHistoryInput {
+func (l *Loop) prepareRetrieval(ctx context.Context, tracer trace.TurnTracer, snapshot memory.HistorySnapshot, currentTime *memory.GameTimeSnapshot, event *protocol.GameEvent, views ...*experience.View) *agentcontext.RetrievedHistoryInput {
+	var view *experience.View
+	if len(views) > 0 {
+		view = views[0]
+	}
 	config := l.config.Retrieval.WithDefaults()
 	if !l.config.MemoryEnabledValue() || !config.EnabledValue() {
 		return nil
@@ -64,7 +69,7 @@ func (l *Loop) prepareRetrieval(ctx context.Context, tracer trace.TurnTracer, sn
 			add("search_scan_incomplete")
 			break
 		}
-		page, err := store.SearchHistory(ctx, memory.HistorySearchRequest{Snapshot: snapshot, CurrentTime: currentTime, Query: query, Limits: limits, Offset: offset})
+		page, err := store.SearchHistory(ctx, memory.HistorySearchRequest{Snapshot: snapshot, CurrentTime: currentTime, Query: query, Limits: limits, Offset: offset, Experiences: view})
 		for _, code := range page.Diagnostics {
 			code = strings.TrimPrefix(code, "search_")
 			switch code {
@@ -97,6 +102,9 @@ func (l *Loop) prepareRetrieval(ctx context.Context, tracer trace.TurnTracer, sn
 		}
 		for _, match := range page.Matches {
 			source := match.Source
+			if !memory.ExperienceVisible(source, view) {
+				continue
+			}
 			if source.Owner != snapshot.Owner || source.ID == "" || source.Sequence <= 0 || source.Sequence > snapshot.Watermark || source.Availability == memory.HistoryPruned {
 				add("search_source_invalid")
 				add("search_scan_incomplete")

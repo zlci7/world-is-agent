@@ -83,7 +83,10 @@ func (s *SQLiteHistoryStore) prepareHistoryDatabase(ctx context.Context, conn *s
 	if err := s.prepareHistoryFoundation(ctx, conn, key); err != nil {
 		return err
 	}
-	return prepareRetrievalDatabase(ctx, conn, key)
+	if err := prepareRetrievalDatabase(ctx, conn, key); err != nil {
+		return err
+	}
+	return prepareExperienceDatabase(ctx, conn)
 }
 
 func (s *SQLiteHistoryStore) prepareHistoryFoundation(ctx context.Context, conn *sql.Conn, key session.AgentSessionKey) error {

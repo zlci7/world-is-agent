@@ -26,6 +26,8 @@ Runtime 和游戏 Adapter 分开发布。安装 WIA 时需要一个 Runtime，�
 
 The development source includes Chinese definitions for all 34 ordinary Stardew friendship NPCs. With a source-built Stardew Adapter 0.1.2, it also provides bounded progress facts, preserves native gift/quest interactions, and exposes an experimental single-player Willy fishing-objective context. Synthetic real-model checks cover dialogue and [bounded DeepSeek tool-argument correction](docs/phase11/tool-call-correction.md); the original unclassified parsing incident, content quality, and live-game acceptance remain open. See the [acceptance record](docs/phase11/phase11.15-acceptance.md). Existing data roots keep their definitions until explicitly updated.
 
+Development builds also record confirmed single-player Stardew gifts as save-scoped experiences. Recent gifts have a separate bounded context block that survives conversation growth, compaction and Runtime restart; expired facts remain available to literal topic search. Receipt membership filters experience sources after rollback. This feature has [background acceptance](docs/phase11/recent-experiences-acceptance.md); in-game gifting and natural dialogue quality remain unverified.
+
 ## 使用前准备
 
 - Windows x64。

@@ -364,6 +364,9 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 	candidate := &runtimeBundle{id: idgen.New("instance"), readContext: readContext, cancelReads: cancelReads, config: cfg, catalog: catalog, provider: provider, history: history}
 	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history))
 	options := []gateway.ServerOption{gateway.WithConnectionReady(func() { r.mu.Lock(); r.lastConnectionError = nil; r.mu.Unlock() })}
+	if cfg.MemoryEnabledValue() {
+		options = append(options, gateway.WithExperienceHistory(history))
+	}
 	if cfg.Task.Enabled {
 		storeOptions := cfg.Task.StoreOptions
 		storeOptions.Path = cfg.Task.DBPath

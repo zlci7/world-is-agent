@@ -226,6 +226,16 @@ if (-not (Test-Path -LiteralPath $protoPath)) {
     }
 }
 
+foreach ($fixture in @('record.json', 'view.json')) {
+    $fixturePath = Join-Path $PSScriptRoot "fixtures/experiences/$fixture"
+    if (-not (Test-Path -LiteralPath $fixturePath)) {
+        Add-Violation "Missing experience extension fixture: $fixture"
+    } else {
+        try { Get-Content -LiteralPath $fixturePath -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null }
+        catch { Add-Violation "Invalid experience extension fixture: $fixture" }
+    }
+}
+
 if ($violations.Count -gt 0) {
     Write-Host 'Protocol static check failed:'
     foreach ($violation in $violations) {

@@ -20,8 +20,9 @@ If History is from today and current game time has not clearly advanced much, tr
 Use only tools in the current View. If no tool is needed, settle the current turn.`
 
 type HistoryInput struct {
-	Summary *memory.SummaryCheckpoint
-	Sources []memory.HistorySource
+	Summary           *memory.SummaryCheckpoint
+	Sources           []memory.HistorySource
+	RecentExperiences *RecentExperiencesInput
 	// MaxTokens bounds summary and sources together; nonpositive values disable display.
 	MaxTokens        int
 	MaxSummaryTokens int
@@ -145,6 +146,9 @@ func projectHistory(input HistoryInput, owner session.AgentSessionKey, current *
 	}
 	var candidates []candidate
 	for _, source := range ordered {
+		if source.Batch != nil && source.Batch.Kind == memory.HistoryKindExperience {
+			continue
+		}
 		if source.Owner != owner || (source.Batch != nil && source.Batch.Owner != owner) || (source.Batch != nil && source.Batch.Legacy != nil && source.Batch.Legacy.SessionKey != owner) {
 			report.diagnose("history_owner_mismatch: " + source.ID)
 			continue

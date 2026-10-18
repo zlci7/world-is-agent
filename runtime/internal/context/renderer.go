@@ -110,7 +110,7 @@ func (r Renderer) renderUserMessage(projection ContextProjection) string {
 		history = RenderHistoryProjection(projection.History)
 	}
 	history += RenderRetrievedHistoryProjection(projection.RetrievedHistory)
-	return history + renderTask(projection.Task) + fmt.Sprintf(`[Game Definition]
+	return history + RenderRecentExperiences(projection.RecentExperiences) + renderTask(projection.Task) + fmt.Sprintf(`[Game Definition]
 %s
 
 [Agent Definition]
@@ -143,6 +143,9 @@ func (r Renderer) renderUserMessage(projection ContextProjection) string {
 
 func renderAuthorityInstruction(projection ContextProjection) string {
 	instruction := projection.Instruction
+	if len(projection.RecentExperiences) > 0 {
+		instruction += "\n\n" + experienceAuthorityInstruction
+	}
 	if projection.Task != nil {
 		instruction += "\n\nTask Context is the current task snapshot. Use only tools in the current View. Confirm task creation only after create_task succeeds. If a task changes, decide again using the next Step's snapshot."
 		if projection.Task.WakeID != "" {

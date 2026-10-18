@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/session"
 )
 
@@ -86,6 +87,7 @@ type HistoryMatch struct {
 	Score        int
 }
 type HistorySearchRequest struct {
+	Experiences *experience.View
 	Snapshot    HistorySnapshot
 	CurrentTime *GameTimeSnapshot
 	Query       string

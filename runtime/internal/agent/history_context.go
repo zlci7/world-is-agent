@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agentcontext "gameagent/runtime/internal/context"
+	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/session"
@@ -70,7 +71,7 @@ func (p *preparedHistory) Release() {
 	}
 }
 
-func (l *Loop) prepareHistory(ctx context.Context, tracer trace.TurnTracer, key session.AgentSessionKey, currentTime *memory.GameTimeSnapshot, effectiveBudget int) *preparedHistory {
+func (l *Loop) prepareHistory(ctx context.Context, tracer trace.TurnTracer, key session.AgentSessionKey, currentTime *memory.GameTimeSnapshot, effectiveBudget int, views ...*experience.View) *preparedHistory {
 	started := time.Now()
 	limits := preparationHistoryLimits(l.config.History)
 	compaction := l.config.Compaction.WithDefaults()
@@ -101,7 +102,11 @@ func (l *Loop) prepareHistory(ctx context.Context, tracer trace.TurnTracer, key 
 	if !l.config.MemoryEnabledValue() || l.historyStore == nil {
 		return prepared
 	}
-	l.readPreparedHistory(ctx, prepared, currentTime, key, limits, &report)
+	var view *experience.View
+	if len(views) > 0 {
+		view = views[0]
+	}
+	l.readPreparedHistory(ctx, prepared, currentTime, key, limits, &report, view)
 	l.compactPreparedHistory(ctx, tracer, prepared, limits, compaction, retry, &report)
 	return prepared
 }
@@ -353,7 +358,7 @@ func preparationHistoryLimits(config memory.HistoryLimits) memory.HistoryLimits 
 	return limits
 }
 
-func (l *Loop) readPreparedHistory(ctx context.Context, prepared *preparedHistory, currentTime *memory.GameTimeSnapshot, key session.AgentSessionKey, limits memory.HistoryLimits, report *historyPreparationReport) {
+func (l *Loop) readPreparedHistory(ctx context.Context, prepared *preparedHistory, currentTime *memory.GameTimeSnapshot, key session.AgentSessionKey, limits memory.HistoryLimits, report *historyPreparationReport, views ...*experience.View) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(limits.ReadTimeoutMS)*time.Millisecond)
 	defer cancel()
 	snapshot, err := l.historyStore.BeginHistorySnapshot(ctx, key)
@@ -365,6 +370,23 @@ func (l *Loop) readPreparedHistory(ctx context.Context, prepared *preparedHistor
 	prepared.Snapshot = snapshot
 	store := l.historyStore
 	prepared.release = func() { store.ReleaseHistorySnapshot(snapshot) }
+	if len(views) > 0 && views[0] != nil {
+		input := &agentcontext.RecentExperiencesInput{Snapshot: snapshot, MaxTokens: min(agentcontext.MaxRecentExperienceTokens, max(0, prepared.Input.MaxTokens-agentcontext.RecentExperienceAuthorityTokens()))}
+		prepared.Input.RecentExperiences = input
+		if experienceStore, ok := store.(memory.ExperienceStore); ok {
+			input.Sources, err = experienceStore.ReadExperiences(ctx, memory.ExperienceQuery{Snapshot: snapshot, View: views[0], Limit: 64})
+			if err != nil {
+				input.Sources = nil
+				input.Diagnostics = append(input.Diagnostics, "experience_read_failed")
+			}
+		} else {
+			input.Diagnostics = append(input.Diagnostics, "experience_store_unavailable")
+		}
+		units, _ := agentcontext.ProjectRecentExperiences(input, key, views[0])
+		if len(units) > 0 {
+			prepared.Input.MaxTokens = max(0, prepared.Input.MaxTokens-agentcontext.EstimateRecentExperiences(units)-agentcontext.RecentExperienceAuthorityTokens())
+		}
+	}
 	if l.summaryStore != nil {
 		started := time.Now()
 		read, err := l.summaryStore.ReadSummary(ctx, snapshot, currentTime, memory.SummaryReadLimits{
@@ -413,6 +435,9 @@ func (l *Loop) readPreparedHistory(ctx context.Context, prepared *preparedHistor
 		report.scanned += page.Scanned
 		report.bytes += page.Bytes
 		for _, source := range page.Sources {
+			if source.Batch != nil && source.Batch.Kind == memory.HistoryKindExperience {
+				continue
+			}
 			if source.Owner != key || source.Sequence <= 0 || source.Sequence > snapshot.Watermark || source.ID == "" || source.Batch == nil || (before != 0 && source.Sequence >= before) {
 				report.add("history_source_invalid")
 				report.add("history_scan_incomplete")

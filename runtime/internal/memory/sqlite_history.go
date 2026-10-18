@@ -42,7 +42,7 @@ func (s *SQLiteHistoryStore) AppendHistory(ctx context.Context, batch HistoryBat
 	if err != nil {
 		return HistorySource{}, err
 	}
-	if batch.Kind != HistoryKindTerminal && batch.Kind != HistoryKindTaskResult {
+	if batch.Kind != HistoryKindTerminal && batch.Kind != HistoryKindTaskResult && batch.Kind != HistoryKindExperience {
 		return HistorySource{}, fmt.Errorf("%w: legacy sources are imported by migration", ErrInvalidHistory)
 	}
 	conn, closeConn, err := s.openHistoryConn(ctx, batch.Owner)
@@ -73,6 +73,9 @@ func (s *SQLiteHistoryStore) AppendHistory(ctx context.Context, batch HistoryBat
 	if err = s.indexHistorySource(ctx, tx, source); err != nil {
 		return HistorySource{}, err
 	}
+	if err = indexExperience(ctx, tx, source); err != nil {
+		return HistorySource{}, err
+	}
 	if err = commitSQLiteTransaction(ctx, tx); err != nil {
 		return HistorySource{}, err
 	}
@@ -98,7 +101,7 @@ func insertHistorySource(ctx context.Context, db sqliteConnector, batch HistoryB
 	if err != nil {
 		return HistorySource{}, err
 	}
-	return HistorySource{ID: id, Sequence: seq, Owner: batch.Owner, BatchKey: key, Fingerprint: fp, CreatedAt: created, Times: HistoryTimes(stored), Batch: &stored, Bytes: len(data), Availability: HistoryAvailable, LegacyMemoryID: legacyID}, nil
+	return HistorySource{ID: id, Sequence: seq, Owner: batch.Owner, BatchKey: key, Fingerprint: fp, CreatedAt: created, Times: HistoryTimes(stored), Batch: &stored, Bytes: len(data), Availability: HistoryAvailable, LegacyMemoryID: legacyID, Experience: stored.Experience, FactID: experienceFactID(stored)}, nil
 }
 
 func (s *SQLiteHistoryStore) BeginHistorySnapshot(ctx context.Context, key session.AgentSessionKey) (HistorySnapshot, error) {
@@ -298,5 +301,7 @@ func scanHistorySource(row interface{ Scan(...any) error }) (HistorySource, erro
 		return HistorySource{}, fmt.Errorf("%w: source time metadata", ErrInvalidHistory)
 	}
 	source.Batch = &batch
+	source.Experience = batch.Experience
+	source.FactID = experienceFactID(batch)
 	return source, nil
 }

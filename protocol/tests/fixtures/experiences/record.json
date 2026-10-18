@@ -1,0 +1,29 @@
+{
+  "eventId": "receipt",
+  "eventType": "gift_received",
+  "worldId": "save",
+  "targetEntityId": "npc:Robin",
+  "gameTime": { "year": 1, "season": 2, "day": 7, "hour": 23, "minute": 50 },
+  "entities": [
+    { "entityId": "player:local", "entityType": "player", "displayName": "玩家", "definitionId": "player:local" },
+    { "entityId": "npc:Robin", "entityType": "npc", "displayName": "罗宾", "definitionId": "npc:Robin" }
+  ],
+  "payload": {
+    "gameagent.experiences.v1": {
+      "version": 1,
+      "clock_id": "stardew.game_time.v1",
+      "occurred_tick": "50390",
+      "focus_until_tick": "54710",
+      "priority": 50
+    }
+  },
+  "contextFacts": [
+    {
+      "kind": "interaction",
+      "actorEntityId": "player:local",
+      "targetEntityId": "npc:Robin",
+      "text": "玩家向罗宾赠送了1个蓝莓；游戏确认赠送成功。",
+      "attributes": { "item_id": "(O)258", "item_name": "蓝莓", "quantity": 1, "quality": 0, "outcome": "accepted" }
+    }
+  ]
+}

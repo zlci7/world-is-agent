@@ -7,6 +7,7 @@ import (
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/definition"
+	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/session"
@@ -79,6 +80,7 @@ type ContextBuildReport struct {
 	AgentDefinitionFallback bool
 	RecentMemory            RetentionReport
 	History                 HistoryReport
+	RecentExperiences       ExperiencesReport
 	RetrievedHistory        RetrievedHistoryReport
 	Transcript              RetentionReport
 	Task                    TaskContextReport
@@ -202,11 +204,12 @@ type ContextProjection struct {
 	CurrentObservation       ObservationProjection
 	Task                     *TaskProjection
 
-	RecentMemory     []MemoryProjection
-	History          HistoryProjection
-	RetrievedHistory RetrievedHistoryProjection
-	historyEnabled   bool
-	retrievalEnabled bool
+	RecentMemory      []MemoryProjection
+	History           HistoryProjection
+	RecentExperiences []ExperienceUnit
+	RetrievedHistory  RetrievedHistoryProjection
+	historyEnabled    bool
+	retrievalEnabled  bool
 
 	Tools []model.ToolDefinition
 
@@ -259,9 +262,10 @@ type BuildInput struct {
 
 	RuntimePolicy string
 
-	RecentMemories []memory.Record
-	History        *HistoryInput
-	Retrieval      *RetrievedHistoryInput
+	RecentMemories    []memory.Record
+	History           *HistoryInput
+	Retrieval         *RetrievedHistoryInput
+	RecentExperiences *RecentExperiencesInput
 
 	Event       *protocolv1alpha2.GameEvent
 	Observation *protocolv1alpha2.Observation
@@ -286,6 +290,11 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 
 	bounds := projectionBoundsFromEngineConfig(e.config)
 	currentTime := currentGameTimeFromEventObservation(input.Event, input.Observation)
+	experienceView, viewErr := experience.ParseView(input.Observation)
+	units, experiencesReport := ProjectRecentExperiences(input.RecentExperiences, input.SessionKey, experienceView)
+	if viewErr != nil {
+		experiencesReport.Diagnostics = appendUnique(experiencesReport.Diagnostics, "experience_view_invalid")
+	}
 	var recentMemory []MemoryProjection
 	var recentMemoryReport RetentionReport
 	var history HistoryProjection
@@ -321,6 +330,7 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 		Task:                     currentTask,
 		RecentMemory:             recentMemory,
 		History:                  history,
+		RecentExperiences:        units,
 		historyEnabled:           input.History != nil,
 		retrievalEnabled:         input.Retrieval != nil,
 		Tools:                    input.TurnToolView.Available(),
@@ -331,12 +341,30 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 	}
 	report := newContextBuildReport(projection, input, e.config, recentMemoryReport, transcriptReport)
 	report.History = historyReport
+	report.RecentExperiences = experiencesReport
 	projection, report, err = applyProjectionBudgets(projection, e.config, report)
 	if input.Retrieval != nil {
+		filtered := *input.Retrieval
+		filtered.Matches = nil
+		for _, match := range input.Retrieval.Matches {
+			if !memory.ExperienceVisible(match.Source, experienceView) {
+				continue
+			}
+			duplicate := false
+			for _, unit := range projection.RecentExperiences {
+				if unit.SourceID == match.Source.ID {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				filtered.Matches = append(filtered.Matches, match)
+			}
+		}
 		// Select against the actual final history and spend only remaining request
 		// capacity, so retrieval cannot displace current context or causal groups.
 		if err == nil {
-			projection.RetrievedHistory, report.RetrievedHistory, err = projectRetrievedHistory(*input.Retrieval, input.SessionKey, currentTime, projection.History, func(retrieved RetrievedHistoryProjection) (bool, error) {
+			projection.RetrievedHistory, report.RetrievedHistory, err = projectRetrievedHistory(filtered, input.SessionKey, currentTime, projection.History, func(retrieved RetrievedHistoryProjection) (bool, error) {
 				candidate := projection
 				candidate.RetrievedHistory = retrieved
 				return projectionFitsRequestBudget(candidate, e.config)
@@ -396,6 +424,7 @@ func sectionReportsForProjection(projection ContextProjection) SectionReports {
 		{Name: "current_observation", Included: projection.CurrentObservation.EntityID != "", ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.CurrentObservation)},
 		{Name: "task_context", Included: projection.Task != nil, ProjectionEstimatedTokens: estimateTaskProjection(projection.Task)},
 		{Name: "recent_memory", Included: len(projection.RecentMemory) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.RecentMemory)},
+		{Name: "recent_experiences", Included: len(projection.RecentExperiences) > 0, ProjectionEstimatedTokens: EstimateRecentExperiences(projection.RecentExperiences)},
 		{Name: "tools", Included: len(projection.Tools) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.Tools)},
 		{Name: "current_turn_transcript", Included: len(projection.CurrentTurnTranscript) > 0, ProjectionEstimatedTokens: sectionProjectionEstimatedTokens(projection.CurrentTurnTranscript)},
 	}
@@ -410,6 +439,9 @@ func sectionReportsForProjection(projection ContextProjection) SectionReports {
 
 func applyProjectionBudgets(projection ContextProjection, budget BudgetConfig, report ContextBuildReport) (ContextProjection, ContextBuildReport, error) {
 	sectionCropped := map[string]string{}
+	if report.RecentExperiences.DroppedCount > 0 {
+		sectionCropped["recent_experiences"] = "recent_experiences_budget_exceeded"
+	}
 	for _, diagnostic := range report.History.Diagnostics {
 		if diagnostic == ReasonHistoryBudgetExceeded {
 			report.addReason(ReasonHistoryBudgetExceeded)
@@ -551,6 +583,9 @@ func enforceGlobalRequestBudget(projection ContextProjection, budget BudgetConfi
 		case dropOldestHistoryDisplay(&projection, &report):
 			report.addReason(ReasonHistoryBudgetExceeded)
 			sectionCropped["history"] = ReasonHistoryBudgetExceeded
+		case dropExperience(&projection, &report):
+			report.addReason("recent_experiences_budget_exceeded")
+			sectionCropped["recent_experiences"] = "recent_experiences_budget_exceeded"
 		case dropOldestTranscriptGroup(&projection, &report):
 			report.addReason(ReasonTranscriptBudgetExceeded)
 			sectionCropped["current_turn_transcript"] = ReasonTranscriptBudgetExceeded
@@ -1099,6 +1134,7 @@ func projectCurrentObservation(observation *protocolv1alpha2.Observation) Observ
 	extensions := map[string]any(nil)
 	if observation.GetExtensions() != nil {
 		extensions = copyMap(observation.GetExtensions().AsMap())
+		delete(extensions, experience.Extension)
 	}
 
 	return ObservationProjection{

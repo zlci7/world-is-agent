@@ -12,6 +12,7 @@ import (
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/agent"
+	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/session"
 	"gameagent/runtime/internal/task"
@@ -22,16 +23,17 @@ import (
 type Server struct {
 	protocolv1alpha2.UnimplementedGameAgentGatewayServer
 
-	streams         StreamGroup
-	closeErr        error
-	agentLoop       eventHandler
-	worlds          *WorldRegistry
-	dispatcher      *task.Dispatcher
-	resultHistory   *ResultHistorySink
-	mu              sync.Mutex
-	connections     map[*worldConnection]struct{}
-	stopped         bool
-	connectionReady func()
+	streams           StreamGroup
+	closeErr          error
+	agentLoop         eventHandler
+	worlds            *WorldRegistry
+	dispatcher        *task.Dispatcher
+	resultHistory     *ResultHistorySink
+	experienceHistory memory.HistoryStore
+	mu                sync.Mutex
+	connections       map[*worldConnection]struct{}
+	stopped           bool
+	connectionReady   func()
 }
 
 type eventHandler interface {
@@ -149,6 +151,16 @@ func (s *Server) connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 		}
 	}
 	tasksNegotiated := len(acceptedExtensions) != 0
+	experiencesNegotiated := false
+	if s.experienceHistory != nil {
+		for _, ext := range hello.SupportedExtensions {
+			if ext == experience.Extension {
+				acceptedExtensions = append(acceptedExtensions, ext)
+				experiencesNegotiated = true
+				break
+			}
+		}
+	}
 
 	// EnvironmentReady 只表示协议连接已经建立；Runtime 是否能执行
 	// AgentRun，还要等 capability discovery 完成。
@@ -335,6 +347,12 @@ func (s *Server) connect(stream protocolv1alpha2.GameAgentGateway_ConnectServer)
 			}
 		case *protocolv1alpha2.AdapterMessage_Event:
 			if payload.Event == nil {
+				continue
+			}
+			if experience.HasEvent(payload.Event) {
+				if err := s.recordExperience(env, conn, msg.MessageId, payload.Event, experiencesNegotiated); err != nil {
+					return err
+				}
 				continue
 			}
 			if err := s.dispatchGameEvent(env, laneStore, seenEventIDs, conn, catalog, msg.MessageId, payload.Event); err != nil {

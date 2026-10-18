@@ -136,6 +136,7 @@ func (s *SQLiteHistoryStore) SearchHistory(ctx context.Context, request HistoryS
 					}
 					var unknown bool
 					value.visible, unknown = HistoryVisibility(source.Times, request.CurrentTime)
+					value.visible = value.visible && ExperienceVisible(source, request.Experiences)
 					if unknown {
 						page.Diagnostics = appendUniqueDiagnostic(page.Diagnostics, "time_unknown")
 					}
@@ -179,6 +180,10 @@ func (s *SQLiteHistoryStore) SearchHistory(ctx context.Context, request HistoryS
 			continue
 		}
 		outputBytes := value.headBytes + len(field.Path) + len(field.ActorID) + len(field.Kind) + len(field.Text) + 24
+		if value.source.Experience != nil {
+			meta, _ := json.Marshal(value.source.Experience)
+			outputBytes += len(meta) + len(value.source.FactID)
+		}
 		for _, term := range matched {
 			outputBytes += len(term)
 		}
@@ -234,6 +239,15 @@ func (s *SQLiteHistoryStore) historySearchCandidates(ctx context.Context, db sql
 	for _, term := range terms {
 		args = append(args, term)
 	}
+	clock, now, ids := "", int64(-1), []string{}
+	if request.Experiences != nil {
+		clock, now = request.Experiences.ClockID, request.Experiences.NowTick
+		for id := range request.Experiences.ValidFactIDs {
+			ids = append(ids, id)
+		}
+	}
+	validIDs, _ := json.Marshal(ids)
+	args = append(args, HistoryKindExperience, clock, now, string(validIDs))
 	args = append(args, limits.ScanCandidates-request.Offset+1, request.Offset)
 	query := `SELECT h.sequence,MIN(t.rowid),length(CAST(t.field_path AS BLOB)),length(CAST(h.source_id AS BLOB)),COUNT(*)
 		FROM history_terms AS t JOIN session_history AS h ON h.source_id=t.source_id
@@ -242,6 +256,7 @@ func (s *SQLiteHistoryStore) historySearchCandidates(ctx context.Context, db sql
 		AND h.game_id=? AND h.world_id=? AND h.entity_id=? AND h.sequence<=? AND h.availability=?
 		AND i.status=? AND i.index_signature=? AND i.content_fingerprint=h.content_fingerprint
 		AND t.term IN (` + strings.TrimSuffix(strings.Repeat("?,", len(terms)), ",") + `)
+		AND (h.kind<>? OR EXISTS (SELECT 1 FROM experience_index AS e WHERE e.source_id=h.source_id AND e.clock_id=? AND e.occurred_tick<=? AND e.fact_id IN (SELECT value FROM json_each(?))))
 		GROUP BY t.source_id,t.field_path ORDER BY COUNT(*) DESC,h.sequence DESC,t.field_path ASC LIMIT ? OFFSET ?`
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

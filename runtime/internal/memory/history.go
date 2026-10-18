@@ -10,6 +10,7 @@ import (
 	"time"
 
 	protocol "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/session"
 )
@@ -93,6 +94,7 @@ type HistoryBatch struct {
 	Terminal     HistoryTerminal         `json:"terminal"`
 	Legacy       *Record                 `json:"legacy,omitempty"`
 	TaskResult   *HistoryTaskResult      `json:"task_result,omitempty"`
+	Experience   *experience.Record      `json:"experience,omitempty"`
 }
 
 type HistoryTime struct {
@@ -113,6 +115,8 @@ type HistorySource struct {
 	Bytes          int
 	Availability   string
 	LegacyMemoryID string
+	Experience     *experience.Record
+	FactID         string
 }
 
 type HistorySnapshot struct {
@@ -179,7 +183,15 @@ func CanonicalHistoryBatch(batch HistoryBatch, maxBytes int) ([]byte, string, st
 		return nil, "", "", ErrInvalidHistory
 	}
 	var keyParts []any
+	if batch.Kind != HistoryKindExperience && batch.Experience != nil {
+		return nil, "", "", ErrInvalidHistory
+	}
 	switch batch.Kind {
+	case HistoryKindExperience:
+		if !validExperienceBatch(batch) {
+			return nil, "", "", ErrInvalidHistory
+		}
+		keyParts = []any{batch.Owner.GameID, batch.Owner.WorldID, batch.Owner.EntityID, batch.Event.ID, batch.Kind, batch.Version}
 	case HistoryKindTerminal:
 		if batch.TurnID == "" || batch.Legacy != nil || batch.TaskResult != nil ||
 			(batch.Terminal.Status != "completed" && batch.Terminal.Status != "failed" && batch.Terminal.Status != "cancelled") {
@@ -243,7 +255,7 @@ func historyKeySegments(kind string) int {
 	switch kind {
 	case HistoryKindTerminal:
 		return 7
-	case HistoryKindLegacy, HistoryKindTaskResult:
+	case HistoryKindLegacy, HistoryKindTaskResult, HistoryKindExperience:
 		return 6
 	default:
 		return 0

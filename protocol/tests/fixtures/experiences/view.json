@@ -1,0 +1,10 @@
+{
+  "extensions": {
+    "gameagent.experiences.v1": {
+      "version": 1,
+      "clock_id": "stardew.game_time.v1",
+      "now_tick": "51830",
+      "valid_fact_ids": ["receipt"]
+    }
+  }
+}
