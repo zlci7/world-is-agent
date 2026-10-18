@@ -4,6 +4,8 @@
 
 状态：邀请内测源码与后台验证具备；真实 Linux Docker 部署、公网游戏连接、完整卷恢复及容量验收待完成。验证范围见 [验收记录](phase11.2-acceptance.md)，部署操作见 [Hosted invitation beta](../../deploy/hosted/README.md)。
 
+邮箱验证、密码恢复、管理员后台与后续上线验收按[执行方案](phase11.2-execution.md)推进。
+
 ## 1. 产品范围
 
 首版面向 Windows 单人 Stardew Valley。玩家安装 SMAPI 与 WIA Mod，在网站凭邀请码、邮箱和密码注册，取得个人 WIA Key，在游戏中按 F8 配置连接。平台提供模型凭据，玩家电脑负责游戏模拟与动作执行，服务端保存角色历史、预约与显式玩家偏好。
