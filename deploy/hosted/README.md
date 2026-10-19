@@ -66,21 +66,27 @@ Provide the password through stdin and end input. This operation revokes the acc
 
 ## Administrator setup
 
-Register and verify the intended administrator account, then grant its role through the private CLI:
+Create a new operator-owned administrator account through the private CLI, supply its password through stdin, and end input:
+
+```sh
+docker compose exec -T hosted /usr/local/bin/wia-hosted -config /etc/wia/hosted.json -command init-admin -email YOUR_ADMIN_EMAIL
+```
+
+This operator action records a trusted administrator identity and does not send a verification email. It rejects an existing email. For an existing enabled, mailbox-verified account, grant the role instead:
 
 ```sh
 docker compose exec -T hosted /usr/local/bin/wia-hosted -config /etc/wia/hosted.json -command grant-admin -email YOUR_VERIFIED_ADMIN_EMAIL
 ```
 
-The account must already be enabled and mailbox-verified. The role is not assigned automatically to the first registrant or to an email string in configuration. Refresh or sign in again to see **内测管理**. Revoke it with `-command revoke-admin -email YOUR_VERIFIED_ADMIN_EMAIL`; subsequent requests check the current stored role.
+Open `/admin/login` and sign in to the independent management website. Player sessions and administrator sessions have separate cookies and stored scopes. The role is not assigned automatically to the first registrant or to an email string in configuration. Revoke it with `-command revoke-admin -email YOUR_VERIFIED_ADMIN_EMAIL`; subsequent requests check the current stored role.
 
-The administrator can create one-use 72-hour invitations, copy a newly created invitation once, revoke an unused invitation, inspect paginated users, disable/enable accounts, and read per-user instance/connection state, UTC usage and audit entries. Status queries do not allocate or start workers. The website excludes player conversation bodies, role editing, database operations and manual release of uncertain quota reservations. An administrator cannot disable their own account through this interface. Enabling an account retains previous credential revocations.
+The administrator can create one-use invitations with a 1–720 hour lifetime and note, inspect registration origin, search users, disable/enable accounts, set personal daily token limits, and read instance state, global/user usage and audit entries. Matching usage exports are limited to 5,000 rows. Status queries do not allocate or start workers. The website excludes player conversation bodies, role editing, database operations and manual release of uncertain quota reservations. An administrator cannot disable their own account through this interface. Enabling an account retains previous credential revocations. See [hosted administration](../../docs/development/hosted-administration.md) for accounting and API rules.
 
 ## Account upgrades
 
-Account schema version 1 is migrated transactionally. An existing version-0 database is backed up beside the database as `accounts.sqlite.pre-v1-<timestamp>.sqlite` before the migration. Copy maintenance backups off-host; a same-volume migration snapshot does not provide host-loss recovery.
+Account schema version 2 is migrated transactionally. Existing version-0/1 databases are backed up beside the database with a `.pre-v<next>-<timestamp>.sqlite` suffix before migration. Existing identities, invitation links and ledger values remain. Unrecorded historical request metadata stays unknown. Copy maintenance backups off-host; a same-volume migration snapshot does not provide host-loss recovery.
 
-Existing users keep their IDs, volumes and data. Their mailbox verification time starts empty. Password login leads to a restricted verification screen before ordinary website access or new key creation. Existing WIA Keys retain their expiration/revocation lifecycle. Verification rotates the current web session. Preserve `WIA_ACCOUNT_SECRET` across the upgrade and stop the controller before replacing its image.
+Existing users keep their IDs, volumes and data. Version-0 accounts start with an empty mailbox verification time; version-1 accounts preserve their stored verification state. An unverified account's password login leads to a restricted verification screen before ordinary website access or new key creation. Existing WIA Keys retain their expiration/revocation lifecycle. Verification rotates the current web session. Preserve `WIA_ACCOUNT_SECRET` across the upgrade and stop the controller before replacing its image.
 
 ## Operator email acceptance
 
@@ -100,6 +106,7 @@ Players install SMAPI and the matching WIA Mod into `Mods`, launch the game, pre
 ## Quota and failure semantics
 
 - Usage periods use UTC calendar days. Before a model call, the controller reserves the configured context window as a conservative token ceiling. Reliable upstream usage settles the call and releases the unused reservation.
+- `daily_tokens` supplies the inherited personal limit; administrators can override it per user. `global_daily_tokens` caps whole-service daily use plus unsettled reservations in the same admission transaction. An omitted/zero global value derives `daily_tokens × max_workers`; the sample explicitly sets 3,000,000. Set a measured operating limit for production.
 - Failed, cancelled, or uncertain upstream calls retain their reservation. They are not automatically replayed. A supplied platform request ID can execute once.
 - Account and global model concurrency are bounded. An exhausted quota does not delete memories or mark a game action as successful.
 - Explicit nickname, language, and response-length preferences are account data, projected separately from NPC definitions. Workers refresh them within approximately five seconds; a temporary read failure retains the last confirmed values.

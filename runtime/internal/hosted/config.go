@@ -34,6 +34,7 @@ type Config struct {
 	ContextTokens          int        `json:"context_tokens"`
 	OutputTokens           int        `json:"output_tokens"`
 	DailyTokens            int64      `json:"daily_tokens"`
+	GlobalDailyTokens      int64      `json:"global_daily_tokens"`
 	GlobalModelConcurrency int        `json:"global_model_concurrency"`
 	ModelTimeoutSeconds    int        `json:"model_timeout_seconds"`
 	SessionHours           int        `json:"session_hours"`
@@ -59,6 +60,9 @@ func LoadConfig(path string) (Config, error) {
 	return c, c.Validate()
 }
 func (c Config) Validate() error {
+	if c.DailyTokens > 1_000_000_000_000 || c.GlobalDailyTokens < 0 || c.GlobalDailyTokens > 100_000_000_000_000 {
+		return errors.New("daily token limits are outside the supported range")
+	}
 	if err := c.Mail.Validate(); err != nil {
 		return err
 	}
@@ -88,6 +92,13 @@ func (c Config) Validate() error {
 		return errors.New("explicit model and credential budgets are required")
 	}
 	return nil
+}
+
+func (c Config) GlobalTokenLimit() int64 {
+	if c.GlobalDailyTokens > 0 {
+		return c.GlobalDailyTokens
+	}
+	return c.DailyTokens * int64(max(1, c.MaxWorkers))
 }
 
 func OpenAccounts(c Config) (*accounts.Store, error) {

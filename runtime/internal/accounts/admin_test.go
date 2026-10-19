@@ -12,13 +12,13 @@ func TestAdminInvitationsAndAccountLifecycle(t *testing.T) {
 	ctx := t.Context()
 	admin := registerFixture(t, s, "admin@example.com")
 	player := registerFixture(t, s, "player@example.com")
-	if _, _, err := s.NewInvitation(ctx, player.ID, time.Hour); !errors.Is(err, ErrCredentials) {
+	if _, _, err := s.NewInvitation(ctx, player.ID, time.Hour, ""); !errors.Is(err, ErrCredentials) {
 		t.Fatal("ordinary user created invitation")
 	}
 	if err := s.SetAdmin(ctx, admin.Email, true); err != nil {
 		t.Fatal(err)
 	}
-	inv, secret, err := s.NewInvitation(ctx, admin.ID, time.Hour)
+	inv, secret, err := s.NewInvitation(ctx, admin.ID, time.Hour, "")
 	if err != nil || secret == "" {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestAdminInvitationsAndAccountLifecycle(t *testing.T) {
 	if err = s.SetAdmin(ctx, admin.Email, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = s.NewInvitation(ctx, admin.ID, time.Hour); !errors.Is(err, ErrCredentials) {
+	if _, _, err = s.NewInvitation(ctx, admin.ID, time.Hour, ""); !errors.Is(err, ErrCredentials) {
 		t.Fatal("revoked admin retained authority")
 	}
 	records, err := s.Audit(ctx, 0)

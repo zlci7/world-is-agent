@@ -29,7 +29,7 @@ func main() {
 }
 func run() error {
 	configPath := flag.String("config", "hosted.json", "hosted service configuration")
-	command := flag.String("command", "serve", "serve, invite, reset-password, disable, grant-admin, revoke-admin, backup-accounts, or deployment-id")
+	command := flag.String("command", "serve", "serve, invite, init-admin, reset-password, disable, grant-admin, revoke-admin, backup-accounts, or deployment-id")
 	inviteHours := flag.Int("invite-hours", 72, "one-use invitation lifetime in hours")
 	email := flag.String("email", "", "account email for private password recovery")
 	backupPath := flag.String("backup-path", "", "new account database backup destination")
@@ -64,12 +64,16 @@ func run() error {
 			fmt.Println(secret)
 		}
 		return err
-	case "reset-password":
+	case "reset-password", "init-admin":
 		data, err := io.ReadAll(io.LimitReader(os.Stdin, 514))
 		if err != nil {
 			return err
 		}
-		return store.ResetPassword(ctx, *email, strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r"))
+		password := strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
+		if *command == "init-admin" {
+			return store.BootstrapAdmin(ctx, *email, password)
+		}
+		return store.ResetPassword(ctx, *email, password)
 	case "disable":
 		return store.Disable(ctx, *email)
 	case "grant-admin":
@@ -84,6 +88,9 @@ func run() error {
 	}
 	if os.Getenv(c.ModelKeyEnv) == "" {
 		return fmt.Errorf("platform model credential is missing")
+	}
+	if err = store.RecoverPendingCalls(ctx); err != nil {
+		return err
 	}
 	workers := hosted.NewDockerWorkers(c, store)
 	server := hosted.New(c, store, workers, console.Assets())

@@ -166,7 +166,7 @@ func TestQuotaIsAtomicDurableAndUnknownCallsStayReserved(t *testing.T) {
 	results := make(chan error, 12)
 	for i := 0; i < 12; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); results <- s.Reserve(ctx, u.ID, NewID("call_"), 100, 500) }()
+		go func() { defer wg.Done(); results <- s.Reserve(ctx, u.ID, NewID("call_"), 100, 500, 0, "test") }()
 	}
 	wg.Wait()
 	close(results)
@@ -191,19 +191,19 @@ func TestQuotaIsAtomicDurableAndUnknownCallsStayReserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s2.Close()
-	if err = s2.Reserve(ctx, u.ID, "after-restart", 100, 500); !errors.Is(err, ErrLimit) {
+	if err = s2.Reserve(ctx, u.ID, "after-restart", 100, 500, 0, "test"); !errors.Is(err, ErrLimit) {
 		t.Fatalf("restart cleared quota: %v", err)
 	}
-	if err = s2.Reserve(ctx, u.ID, "idempotent", 100, 1000); err != nil {
+	if err = s2.Reserve(ctx, u.ID, "idempotent", 100, 1000, 0, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if err = s2.Reserve(ctx, u.ID, "idempotent", 100, 1000); !errors.Is(err, ErrConflict) {
+	if err = s2.Reserve(ctx, u.ID, "idempotent", 100, 1000, 0, "test"); !errors.Is(err, ErrConflict) {
 		t.Fatal("duplicate request accepted")
 	}
-	if err = s2.Settle(ctx, u.ID, "idempotent", 25); err != nil {
+	if err = s2.Settle(ctx, u.ID, "idempotent", 25, tokenPointer(20), tokenPointer(5)); err != nil {
 		t.Fatal(err)
 	}
-	if err = s2.Settle(ctx, u.ID, "idempotent", 0); err == nil {
+	if err = s2.Settle(ctx, u.ID, "idempotent", 0, nil, nil); err == nil {
 		t.Fatal("settlement replayed")
 	}
 	usage, err := s2.Usage(ctx, u.ID, 1000)
@@ -216,7 +216,7 @@ func TestBackupRestoresAccountAndQuota(t *testing.T) {
 	s, _ := accountFixture(t)
 	ctx := context.Background()
 	u := registerFixture(t, s, "backup@example.com")
-	if err := s.Reserve(ctx, u.ID, "uncertain", 100, 500); err != nil {
+	if err := s.Reserve(ctx, u.ID, "uncertain", 100, 500, 0, "test"); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "restored.db")

@@ -1,13 +1,16 @@
 package hosted
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gameagent/runtime/internal/accounts"
 )
@@ -42,18 +45,55 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, session acco
 	var data any
 	var err error
 	switch {
+	case r.URL.Path == "/api/admin/overview" && r.Method == "GET":
+		var overview accounts.Overview
+		overview, err = s.Accounts.Overview(r.Context(), s.Config.DailyTokens, s.Config.GlobalTokenLimit())
+		s.mu.Lock()
+		overview.Connected = len(s.connections)
+		s.mu.Unlock()
+		data = overview
+	case (r.URL.Path == "/api/admin/usage" || r.URL.Path == "/api/admin/usage/export") && r.Method == "GET":
+		f, e := usageFilter(r, page)
+		if e != nil {
+			problem(w, 400, "filter_invalid", "日期范围最多 93 天，请检查日期、用户和状态")
+			return true
+		}
+		if r.URL.Path == "/api/admin/usage/export" {
+			s.exportUsage(w, r, f)
+			return true
+		}
+		data, err = s.Accounts.UsageReport(r.Context(), f)
 	case r.URL.Path == "/api/admin/invitations" && r.Method == "GET":
 		data, err = s.Accounts.Invitations(r.Context(), page)
 	case r.URL.Path == "/api/admin/invitations" && r.Method == "POST":
+		var b struct {
+			Hours int    `json:"hours"`
+			Note  string `json:"note"`
+		}
+		if !decode(w, r, &b) {
+			return true
+		}
+		if b.Hours == 0 {
+			b.Hours = 72
+		}
+		if b.Hours < 1 || b.Hours > 720 {
+			problem(w, 400, "invitation_invalid", "邀请有效期为 1–720 小时")
+			return true
+		}
 		var invite accounts.Invitation
 		var secret string
-		invite, secret, err = s.Accounts.NewInvitation(r.Context(), actor, 72*time.Hour)
+		invite, secret, err = s.Accounts.NewInvitation(r.Context(), actor, time.Duration(b.Hours)*time.Hour, b.Note)
 		data = map[string]any{"invitation": invite, "secret": secret}
 	case strings.HasPrefix(r.URL.Path, "/api/admin/invitations/") && r.Method == "DELETE":
 		err = s.Accounts.RevokeInvitation(r.Context(), actor, strings.TrimPrefix(r.URL.Path, "/api/admin/invitations/"))
 		data = map[string]bool{"ok": true}
 	case r.URL.Path == "/api/admin/users" && r.Method == "GET":
-		data, err = s.Accounts.Users(r.Context(), page)
+		query := strings.TrimSpace(r.URL.Query().Get("q"))
+		if utf8.RuneCountInString(query) > 120 {
+			problem(w, 400, "query_invalid", "搜索内容最多 120 个字符")
+			return true
+		}
+		data, err = s.Accounts.Users(r.Context(), page, query, s.Config.DailyTokens)
 	case r.URL.Path == "/api/admin/audit" && r.Method == "GET":
 		data, err = s.Accounts.Audit(r.Context(), page)
 	case strings.HasPrefix(r.URL.Path, "/api/admin/users/"):
@@ -64,6 +104,25 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, session acco
 		}
 		user := parts[0]
 		switch {
+		case len(parts) == 2 && parts[1] == "limit" && r.Method == "PUT":
+			var b struct {
+				Limit  json.RawMessage `json:"daily_limit"`
+				Reason string          `json:"reason"`
+			}
+			if !decode(w, r, &b) {
+				return true
+			}
+			if len(b.Limit) == 0 {
+				problem(w, 400, "limit_invalid", "请选择继承默认额度或指定个人额度")
+				return true
+			}
+			var limit *int64
+			if json.Unmarshal(b.Limit, &limit) != nil {
+				problem(w, 400, "limit_invalid", "额度必须是整数或默认值")
+				return true
+			}
+			err = s.Accounts.SetDailyLimit(r.Context(), actor, user, limit, b.Reason)
+			data = map[string]bool{"ok": true}
 		case len(parts) == 1 && r.Method == "PATCH":
 			var b struct {
 				Enabled *bool `json:"enabled"`
@@ -121,6 +180,78 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, session acco
 	}
 	writeJSON(w, 200, map[string]any{"items": data, "page": page})
 	return true
+}
+
+func usageFilter(r *http.Request, page int) (accounts.UsageFilter, error) {
+	q := r.URL.Query()
+	today := time.Now().UTC().Format("2006-01-02")
+	f := accounts.UsageFilter{From: q.Get("from"), To: q.Get("to"), User: q.Get("user"), Status: q.Get("status"), Page: page}
+	if f.From == "" {
+		f.From = today
+	}
+	if f.To == "" {
+		f.To = today
+	}
+	from, e := time.Parse("2006-01-02", f.From)
+	if e != nil {
+		return f, e
+	}
+	to, e := time.Parse("2006-01-02", f.To)
+	if e != nil || to.Before(from) || to.Sub(from) > 92*24*time.Hour {
+		return f, accounts.ErrInput
+	}
+	if f.User != "" && !safeID.MatchString(f.User) {
+		return f, accounts.ErrInput
+	}
+	if f.Status != "" && f.Status != "pending" && f.Status != "settled" && f.Status != "uncertain" && f.Status != "failed" {
+		return f, accounts.ErrInput
+	}
+	return f, nil
+}
+func (s *Server) exportUsage(w http.ResponseWriter, r *http.Request, f accounts.UsageFilter) {
+	calls, err := s.Accounts.CallsForExport(r.Context(), f)
+	if err != nil {
+		s.storageError(w)
+		return
+	}
+	if len(calls) > 5000 {
+		problem(w, 413, "export_limit", "结果超过 5000 条，请缩小日期范围或选择账号")
+		return
+	}
+	var buffer bytes.Buffer
+	buffer.WriteString("\xef\xbb\xbf")
+	writer := csv.NewWriter(&buffer)
+	_ = writer.Write([]string{"请求ID", "用户ID", "邮箱", "日期UTC", "时间UTC", "模型", "状态", "预留tokens", "已结算tokens", "输入tokens", "输出tokens", "原因"})
+	number := func(v *int64) string {
+		if v == nil {
+			return ""
+		}
+		return strconv.FormatInt(*v, 10)
+	}
+	for _, call := range calls {
+		created := ""
+		if call.Created > 0 {
+			created = time.Unix(call.Created, 0).UTC().Format(time.RFC3339)
+		}
+		row := []string{call.ID, call.User, call.Email, call.Period, created, call.Model, call.Status, strconv.FormatInt(call.Reserved, 10), number(call.Charged), number(call.Prompt), number(call.Completion), call.ErrorCode}
+		for i, value := range row {
+			if strings.ContainsAny(firstRune(strings.TrimSpace(value)), "=+-@") || strings.ContainsAny(firstRune(value), "\t\r\n") {
+				row[i] = "'" + value
+			}
+		}
+		_ = writer.Write(row)
+	}
+	writer.Flush()
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="wia-usage.csv"`)
+	w.WriteHeader(200)
+	_, _ = w.Write(buffer.Bytes())
+}
+func firstRune(v string) string {
+	for _, r := range v {
+		return string(r)
+	}
+	return ""
 }
 
 func (d *DockerWorkers) Inspect(ctx context.Context, user string) (WorkerStatus, error) {

@@ -19,6 +19,7 @@
   "context_tokens": 131072,
   "output_tokens": 4096,
   "daily_tokens": 1000000,
+  "global_daily_tokens": 3000000,
   "global_model_concurrency": 2,
   "model_timeout_seconds": 45,
   "session_hours": 24,

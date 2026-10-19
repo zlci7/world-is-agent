@@ -20,6 +20,7 @@ import (
 )
 
 const sessionCookie = "wia_session"
+const adminCookie = "wia_admin_session"
 
 type Server struct {
 	protocol.UnimplementedGameAgentGatewayServer
@@ -102,18 +103,51 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.asset(w, r)
 		return
 	}
-	cookie, err := r.Cookie(sessionCookie)
+	if r.URL.Path == "/api/admin/session" && r.Method == "POST" {
+		s.adminLogin(w, r)
+		return
+	}
+	adminRequest := strings.HasPrefix(r.URL.Path, "/api/admin/")
+	cookieName := sessionCookie
+	if adminRequest {
+		cookieName = adminCookie
+	}
+	cookie, err := r.Cookie(cookieName)
 	if err != nil {
 		problem(w, 401, "unauthenticated", "请先登录")
 		return
 	}
 	session, err := s.Accounts.Session(r.Context(), cookie.Value)
-	if err != nil {
+	if err != nil || (adminRequest && session.Scope != "admin") || (!adminRequest && session.Scope != "player") {
 		problem(w, 401, "unauthenticated", "登录已过期，请重新登录")
 		return
 	}
 	if r.Method != "GET" && !subtleToken(r.Header.Get("X-CSRF-Token"), session.CSRF) {
 		problem(w, 403, "csrf_invalid", "请刷新页面后重试")
+		return
+	}
+	if adminRequest {
+		if !session.User.IsAdmin || session.User.VerifiedAt == 0 {
+			problem(w, 403, "admin_required", "当前账号没有管理权限")
+			return
+		}
+		if r.URL.Path == "/api/admin/session" {
+			switch r.Method {
+			case "GET":
+				writeJSON(w, 200, session)
+			case "DELETE":
+				if s.Accounts.Logout(r.Context(), cookie.Value) != nil {
+					s.storageError(w)
+					return
+				}
+				s.setAdminCookie(w, "", -1)
+				writeJSON(w, 200, map[string]bool{"ok": true})
+			default:
+				problem(w, 405, "method_not_allowed", "请求方式不正确")
+			}
+			return
+		}
+		s.adminRoute(w, r, session)
 		return
 	}
 	if r.URL.Path == "/api/session" && r.Method == "DELETE" {
@@ -135,9 +169,6 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if session.User.VerifiedAt == 0 {
 		problem(w, 403, "email_verification_required", "请先验证邮箱")
-		return
-	}
-	if s.adminRoute(w, r, session) {
 		return
 	}
 	switch {
@@ -334,6 +365,10 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 	}
 	if name == "index.html" {
 		name = "hosted.html"
+	}
+	switch r.URL.Path {
+	case "/admin", "/admin/", "/admin/login", "/admin/users", "/admin/invitations", "/admin/usage", "/admin/audit":
+		name = "admin.html"
 	}
 	if _, err := fs.Stat(s.Assets, name); err != nil {
 		http.NotFound(w, r)

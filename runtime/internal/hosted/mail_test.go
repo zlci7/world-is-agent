@@ -126,7 +126,7 @@ func TestLegacyVerificationRestrictsSessionAndRotatesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/api/me/keys", "/api/me/status", "/api/admin/users"} {
-		if r := f.request(t, "GET", path, "", cookie, ""); r.Code != 403 {
+		if r := f.request(t, "GET", path, "", cookie, ""); r.Code != 403 && r.Code != 401 {
 			t.Fatal("unverified session escaped", path)
 		}
 	}

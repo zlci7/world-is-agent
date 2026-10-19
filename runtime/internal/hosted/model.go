@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -85,10 +87,27 @@ func (s *Server) serveModel(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "request_id_invalid", "请求标识不正确")
 		return
 	}
-	if err = s.Accounts.Reserve(r.Context(), a.UserID, requestID, int64(s.Config.ContextTokens), s.Config.DailyTokens); err != nil {
-		problem(w, 429, "quota_exceeded", "今日额度不足或请求已处理")
+	if err = s.Accounts.Reserve(r.Context(), a.UserID, requestID, int64(s.Config.ContextTokens), s.Config.DailyTokens, s.Config.GlobalTokenLimit(), s.Config.Model); err != nil {
+		if errors.Is(err, accounts.ErrLimit) || errors.Is(err, accounts.ErrConflict) {
+			problem(w, 429, "quota_exceeded", "账号或全站今日额度不足，或请求已处理")
+		} else if errors.Is(err, accounts.ErrCredentials) {
+			problem(w, 403, "connection_inactive", "账号状态已变化")
+		} else {
+			s.storageError(w)
+		}
 		return
 	}
+	settled := false
+	outcome, code := "uncertain", "request_interrupted"
+	defer func() {
+		if !settled {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if s.Accounts.MarkCallOutcome(ctx, a.UserID, requestID, outcome, code) != nil {
+				log.Print("model outcome recording failed; reservation retained")
+			}
+		}
+	}()
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.Config.ModelTimeoutSeconds)*time.Second)
 	defer cancel()
 	s.mu.Lock()
@@ -119,24 +138,32 @@ func (s *Server) serveModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if response.StatusCode != 200 {
+		outcome, code = "failed", "upstream_failed"
 		problem(w, 503, "upstream_failed", "模型服务暂不可用，预留额度保留")
 		return
 	}
 	var usage struct {
 		Usage *struct {
-			Prompt     int64 `json:"prompt_tokens"`
-			Completion int64 `json:"completion_tokens"`
-			Total      int64 `json:"total_tokens"`
+			Prompt     *int64 `json:"prompt_tokens"`
+			Completion *int64 `json:"completion_tokens"`
+			Total      int64  `json:"total_tokens"`
 		} `json:"usage"`
 	}
-	if json.Unmarshal(body, &usage) == nil && usage.Usage != nil && usage.Usage.Prompt >= 0 && usage.Usage.Completion >= 0 && usage.Usage.Total > 0 && usage.Usage.Total >= usage.Usage.Prompt+usage.Usage.Completion {
+	if json.Unmarshal(body, &usage) == nil && usage.Usage != nil && usage.Usage.Total > 0 {
 		settleCtx, settleCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err = s.Accounts.Settle(settleCtx, a.UserID, requestID, usage.Usage.Total)
+		err = s.Accounts.Settle(settleCtx, a.UserID, requestID, usage.Usage.Total, usage.Usage.Prompt, usage.Usage.Completion)
 		settleCancel()
-		if err != nil {
+		if errors.Is(err, accounts.ErrInput) {
+			code = "usage_missing"
+		} else if err != nil {
+			code = "settlement_unavailable"
 			problem(w, 503, "settlement_unavailable", "额度结算失败，预留额度保留")
 			return
+		} else {
+			settled = true
 		}
+	} else {
+		code = "usage_missing"
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-WIA-Request-ID", requestID)

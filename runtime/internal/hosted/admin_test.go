@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAdminPermissionsAndReadOnlyWorkerInspection(t *testing.T) {
@@ -12,12 +13,21 @@ func TestAdminPermissionsAndReadOnlyWorkerInspection(t *testing.T) {
 	admin := f.user(t, "operator@example.com")
 	player := f.user(t, "player@example.com")
 	cookie, csrf := f.webSession(t, admin.ID)
-	if r := f.request(t, "GET", "/api/admin/users", "", cookie, ""); r.Code != 403 {
+	if r := f.request(t, "GET", "/api/admin/users", "", cookie, ""); r.Code != 401 {
 		t.Fatal("ordinary session saw admin data")
 	}
 	if err := f.store.SetAdmin(t.Context(), admin.Email, true); err != nil {
 		t.Fatal(err)
 	}
+	cookie, err := f.store.NewAdminSession(t.Context(), admin.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminSession, err := f.store.Session(t.Context(), cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrf = adminSession.CSRF
 	if r := f.request(t, "POST", "/api/admin/invitations", "{}", cookie, ""); r.Code != 403 {
 		t.Fatal("admin CSRF bypass")
 	}

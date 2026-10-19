@@ -164,7 +164,11 @@ func (f *fixture) request(t *testing.T, method, path, body, secret, csrf string)
 		r.Header.Set("X-CSRF-Token", csrf)
 	}
 	if secret != "" {
-		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: secret})
+		name := sessionCookie
+		if strings.HasPrefix(path, "/api/admin/") {
+			name = adminCookie
+		}
+		r.AddCookie(&http.Cookie{Name: name, Value: secret})
 	}
 	r.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()

@@ -39,8 +39,9 @@ type User struct {
 }
 
 type Session struct {
-	User User   `json:"user"`
-	CSRF string `json:"csrf"`
+	User  User   `json:"user"`
+	CSRF  string `json:"csrf"`
+	Scope string `json:"-"`
 }
 
 type Key struct {
@@ -162,7 +163,7 @@ func (s *Store) password(ctx context.Context, value, salt string) (string, error
 }
 
 func (s *Store) Invite(ctx context.Context, lifetime time.Duration) (string, error) {
-	_, secret, err := s.NewInvitation(ctx, "operator", lifetime)
+	_, secret, err := s.NewInvitation(ctx, "operator", lifetime, "")
 	return secret, err
 }
 
@@ -203,7 +204,7 @@ func (s *Store) Register(ctx context.Context, email, password, invitation string
 	if _, err = tx.ExecContext(ctx, "INSERT INTO users(id,email,password,created,verified) VALUES(?,?,?,?,?)", u.ID, email, "argon2id-v1$"+salt+"$"+hash, u.CreatedAt, u.VerifiedAt); err != nil {
 		return User{}, err
 	}
-	result, err := tx.ExecContext(ctx, "UPDATE invitations SET used_by=? WHERE digest=? AND used_by IS NULL AND revoked=0 AND expires>?", u.ID, s.Digest(invitation), time.Now().Unix())
+	result, err := tx.ExecContext(ctx, "UPDATE invitations SET used_by=?,redeemed=? WHERE digest=? AND used_by IS NULL AND revoked=0 AND expires>?", u.ID, time.Now().Unix(), s.Digest(invitation), time.Now().Unix())
 	if err != nil {
 		return User{}, err
 	}
@@ -259,7 +260,7 @@ func (s *Store) NewSession(ctx context.Context, user string, lifetime time.Durat
 }
 func (s *Store) Session(ctx context.Context, secret string) (Session, error) {
 	var result Session
-	err := s.db.QueryRowContext(ctx, "SELECT u.id,u.email,u.created,u.verified,u.admin FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.digest=? AND s.expires>? AND u.enabled=1", s.Digest(secret), time.Now().Unix()).Scan(&result.User.ID, &result.User.Email, &result.User.CreatedAt, &result.User.VerifiedAt, &result.User.IsAdmin)
+	err := s.db.QueryRowContext(ctx, "SELECT u.id,u.email,u.created,u.verified,u.admin,s.scope FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.digest=? AND s.expires>? AND u.enabled=1", s.Digest(secret), time.Now().Unix()).Scan(&result.User.ID, &result.User.Email, &result.User.CreatedAt, &result.User.VerifiedAt, &result.User.IsAdmin, &result.Scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, ErrCredentials
 	}

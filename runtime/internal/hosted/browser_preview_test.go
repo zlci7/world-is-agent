@@ -36,7 +36,21 @@ func TestHostedBrowserPreview(t *testing.T) {
 	if err := f.store.SetAdmin(t.Context(), admin.Email, true); err != nil {
 		t.Fatal(err)
 	}
-	_ = f.user(t, "player@example.test")
+	player := f.user(t, "player@example.test")
+	for _, id := range []string{"preview-settled", "preview-failed", "preview-uncertain"} {
+		if err := f.store.Reserve(t.Context(), player.ID, id, 1000, f.s.Config.DailyTokens, f.s.Config.GlobalTokenLimit(), "test-model"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.store.Settle(t.Context(), player.ID, "preview-settled", 250, tokenPointer(200), tokenPointer(50)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.MarkCallOutcome(t.Context(), player.ID, "preview-failed", "failed", "upstream_failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.MarkCallOutcome(t.Context(), player.ID, "preview-uncertain", "uncertain", "request_interrupted"); err != nil {
+		t.Fatal(err)
+	}
 	legacy := f.user(t, "legacy@example.test")
 	db, err := sql.Open("sqlite", filepath.Join(f.workers.root, "accounts.db"))
 	if err != nil {

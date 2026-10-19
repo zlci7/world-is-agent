@@ -1,0 +1,302 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-19T01:56:11.612Z",
+  "title": "Design System: World Is Agent Administration",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Administration Blue"
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "Deep Administration Blue"
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Cool Gray-Blue Canvas"
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Solid White"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Slate Ink"
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Supporting Slate"
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Cool Section Line"
+      },
+      "field-line": {
+        "role": "neutral",
+        "displayName": "Field Outline"
+      },
+      "placeholder": {
+        "role": "neutral",
+        "displayName": "Placeholder Slate"
+      },
+      "secondary-line": {
+        "role": "neutral",
+        "displayName": "Secondary Outline"
+      },
+      "secondary-ink": {
+        "role": "neutral",
+        "displayName": "Secondary Ink"
+      },
+      "secondary-hover": {
+        "role": "neutral",
+        "displayName": "Secondary Hover"
+      },
+      "navigation-ink": {
+        "role": "neutral",
+        "displayName": "Navigation Slate"
+      },
+      "navigation-hover": {
+        "role": "neutral",
+        "displayName": "Navigation Hover"
+      },
+      "navigation-active": {
+        "role": "primary",
+        "displayName": "Selected Navigation Blue"
+      },
+      "text-action-hover": {
+        "role": "primary",
+        "displayName": "Text Action Wash"
+      },
+      "table-heading": {
+        "role": "neutral",
+        "displayName": "Table Header White"
+      },
+      "table-heading-ink": {
+        "role": "neutral",
+        "displayName": "Table Header Slate"
+      },
+      "table-line": {
+        "role": "neutral",
+        "displayName": "Table Divider"
+      },
+      "table-hover": {
+        "role": "neutral",
+        "displayName": "Table Hover White"
+      },
+      "badge-fill": {
+        "role": "neutral",
+        "displayName": "Slate Badge Fill"
+      },
+      "badge-ink": {
+        "role": "neutral",
+        "displayName": "Slate Badge Ink"
+      },
+      "danger": {
+        "role": "danger",
+        "displayName": "Destructive Red"
+      },
+      "danger-hover": {
+        "role": "danger",
+        "displayName": "Deep Destructive Red"
+      },
+      "error-fill": {
+        "role": "danger",
+        "displayName": "Error Wash"
+      },
+      "error-ink": {
+        "role": "danger",
+        "displayName": "Error Ink"
+      },
+      "error-line": {
+        "role": "danger",
+        "displayName": "Error Outline"
+      },
+      "danger-badge-fill": {
+        "role": "danger",
+        "displayName": "Unavailable Badge Fill"
+      },
+      "success-fill": {
+        "role": "success",
+        "displayName": "Success Wash"
+      },
+      "success-ink": {
+        "role": "success",
+        "displayName": "Success Ink"
+      },
+      "success-line": {
+        "role": "success",
+        "displayName": "Success Outline"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Page Heading",
+        "purpose": "The administration page title; 23px at the narrow breakpoint."
+      },
+      "title": {
+        "displayName": "Section Title",
+        "purpose": "Titles within white content sections."
+      },
+      "group-title": {
+        "displayName": "Group Title",
+        "purpose": "Subsections within user management."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Chinese interface copy and supporting task instructions."
+      },
+      "label": {
+        "displayName": "Field Label",
+        "purpose": "Visible labels above native controls."
+      },
+      "table": {
+        "displayName": "Table",
+        "purpose": "Data rows and summary fact labels."
+      },
+      "metadata": {
+        "displayName": "Metadata",
+        "purpose": "Read timestamps, account metadata, badges, and pagination."
+      },
+      "metric": {
+        "displayName": "Summary Metric",
+        "purpose": "Tabular overview values; 21px at the narrow breakpoint."
+      },
+      "technical": {
+        "displayName": "Technical Identifier",
+        "purpose": "Wrapping user, invitation, actor, and request identifiers."
+      }
+    },
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "1050px"
+      },
+      {
+        "name": "narrow",
+        "value": "700px"
+      }
+    ],
+    "focus": [
+      {
+        "name": "keyboard-outline",
+        "value": "3px solid var(--focus)",
+        "offset": "3px",
+        "purpose": "Keyboard focus for native controls, links, details, confirmations, and scrollable table regions."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The main action within a form or task.",
+      "html": "<button class=\"ds-btn-primary\">保存个人额度</button>",
+      "css": ".ds-btn-primary{font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:14px;line-height:1.65;font-weight:600;border:1px solid transparent;border-radius:6px;padding:9px 16px;min-height:42px;cursor:pointer;white-space:nowrap;background:var(--accent,#214fa4);color:#fff}.ds-btn-primary:hover{background:#183e85}.ds-btn-primary:focus-visible{outline:3px solid var(--focus,#214fa4);outline-offset:3px}.ds-btn-primary:disabled{opacity:.55;cursor:not-allowed}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Refresh, search, pagination, and supporting actions.",
+      "html": "<button class=\"ds-btn-secondary\">刷新总览</button>",
+      "css": ".ds-btn-secondary{font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:14px;line-height:1.65;font-weight:600;border:1px solid transparent;border-radius:6px;padding:9px 16px;min-height:42px;cursor:pointer;white-space:nowrap;background:#fff;border-color:#bac6d6;color:#30435e}.ds-btn-secondary:hover{background:#eef2f7}.ds-btn-secondary:focus-visible{outline:3px solid var(--focus,#214fa4);outline-offset:3px}.ds-btn-secondary:disabled{opacity:.55;cursor:not-allowed}"
+    },
+    {
+      "name": "Text Action",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "An underlined action in a record or notice.",
+      "html": "<button class=\"ds-btn-text\">管理用户</button>",
+      "css": ".ds-btn-text{font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:14px;line-height:1.65;font-weight:600;border:1px solid transparent;border-radius:6px;padding:9px 16px;min-height:42px;cursor:pointer;white-space:nowrap;padding:6px 4px;min-height:40px;background:transparent;color:var(--accent,#214fa4);border:0;text-decoration:underline;text-underline-offset:4px}.ds-btn-text:hover{background:#edf2fa;color:#183e85}.ds-btn-text:focus-visible{outline:3px solid var(--focus,#214fa4);outline-offset:3px}.ds-btn-text:disabled{opacity:.55;cursor:not-allowed}"
+    },
+    {
+      "name": "Destructive Confirmation Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "The explicit destructive action inside an inline confirmation.",
+      "html": "<button class=\"ds-btn-danger\">撤销此邀请码</button>",
+      "css": ".ds-btn-danger{font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:14px;line-height:1.65;font-weight:600;border:1px solid transparent;border-radius:6px;padding:9px 16px;min-height:42px;cursor:pointer;white-space:nowrap;background:#a62e35;color:#fff}.ds-btn-danger:hover{background:#85252b}.ds-btn-danger:focus-visible{outline:3px solid var(--focus,#214fa4);outline-offset:3px}.ds-btn-danger:disabled{opacity:.55;cursor:not-allowed}"
+    },
+    {
+      "name": "Labeled Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A native field with a visible Chinese label.",
+      "html": "<label class=\"ds-field-label\" for=\"ds-user-search\">查找账号<input class=\"ds-field\" id=\"ds-user-search\" placeholder=\"邮箱或用户 ID\" /></label>",
+      "css": ".ds-field-label{display:block;max-width:350px;min-width:0;color:#243147;font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:14px;line-height:1.65;font-weight:500}.ds-field{display:block;width:100%;min-height:42px;padding:9px 11px;border:1px solid #abb8c9;border-radius:5px;background:#fff;color:#243147;margin-top:6px;caret-color:var(--accent,#214fa4);font:inherit}.ds-field::placeholder{color:#66768b}.ds-field:focus-visible{outline:3px solid var(--focus,#214fa4);outline-offset:3px}"
+    },
+    {
+      "name": "Administration Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "Five text destinations with a filled current-page state.",
+      "html": "<nav class=\"ds-navigation\" aria-label=\"管理导航\"><a href=\"/admin\">总览</a><a href=\"/admin/users\" aria-current=\"page\">用户管理</a><a href=\"/admin/invitations\">邀请码</a><a href=\"/admin/usage\">用量审计</a><a href=\"/admin/audit\">操作日志</a></nav>",
+      "css": ".ds-navigation{display:grid;gap:6px;max-width:224px;font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:14px;line-height:1.65}.ds-navigation a{padding:11px 14px;border-radius:5px;color:#40516b;text-decoration:none}.ds-navigation a:hover{background:#f1f4f9}.ds-navigation a[aria-current]{background:#e8eef9;color:#214fa4;font-weight:700}.ds-navigation a:focus-visible{outline:3px solid var(--focus,#214fa4);outline-offset:3px}@media(max-width:700px){.ds-navigation{display:flex;flex-wrap:wrap;gap:4px;max-width:none}.ds-navigation a{padding:8px 10px}}"
+    },
+    {
+      "name": "Account State Badges",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Written account states in neutral and unavailable variants.",
+      "html": "<span class=\"ds-badge\">启用</span> <span class=\"ds-badge ds-badge-danger\">停用</span>",
+      "css": ".ds-badge{display:inline-block;background:#edf2f8;color:#405573;padding:3px 8px;border-radius:4px;font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:12px;line-height:1.65;white-space:nowrap}.ds-badge-danger{color:#8a2931;background:#fbeceb}"
+    },
+    {
+      "name": "Summary Section",
+      "kind": "card",
+      "refersTo": "section",
+      "description": "A bordered white section with aligned summary facts.",
+      "html": "<section class=\"ds-section\"><h2>账号与连接</h2><dl class=\"ds-facts\"><div><dt>注册账号</dt><dd>128</dd></div><div><dt>启用账号</dt><dd>120</dd></div><div><dt>邮箱已验证</dt><dd>118</dd></div><div><dt>当前网关连接</dt><dd>12</dd></div></dl></section>",
+      "css": ".ds-section{background:#fff;border:1px solid var(--line,#dce2ea);border-radius:7px;padding:24px;min-width:0;font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:14px;line-height:1.65;color:#243147}.ds-section h2{font-size:17px;line-height:1.5;font-weight:700;margin:0 0 16px}.ds-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px;margin:0}.ds-facts dt{color:var(--muted,#57667a);font-size:13px}.ds-facts dd{margin:8px 0 0;font-size:24px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}@media(max-width:1050px){.ds-facts{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.ds-section{padding:20px 16px}.ds-facts{gap:20px 16px}.ds-facts dd{font-size:21px}}"
+    },
+    {
+      "name": "Scrollable Numeric Table",
+      "kind": "custom",
+      "description": "A focusable data region with complete columns and right-aligned tabular values.",
+      "html": "<div class=\"ds-table-scroll\" tabindex=\"0\" role=\"region\" aria-label=\"按日用量，可横向滚动\"><table class=\"ds-table\"><thead><tr><th>日期 UTC</th><th class=\"ds-numeric\">请求数</th><th class=\"ds-numeric\">已结算</th><th class=\"ds-numeric\">未结算预留</th></tr></thead><tbody><tr><td>2026-10-19</td><td class=\"ds-numeric\">128</td><td class=\"ds-numeric\">64,000</td><td class=\"ds-numeric\">2,000</td></tr><tr><td>2026-10-18</td><td class=\"ds-numeric\">96</td><td class=\"ds-numeric\">48,000</td><td class=\"ds-numeric\">0</td></tr></tbody></table></div>",
+      "css": ".ds-table-scroll{overflow:auto;max-width:100%;background:#fff;border:1px solid var(--line,#dce2ea);border-radius:7px}.ds-table-scroll:focus-visible{outline:3px solid var(--focus,#214fa4);outline-offset:3px}.ds-table{width:100%;border-collapse:collapse;min-width:680px;font-family:\"Microsoft YaHei UI\",\"Microsoft YaHei\",\"PingFang SC\",sans-serif;font-size:13px;line-height:1.65;color:#243147}.ds-table th,.ds-table td{text-align:left;padding:14px 16px;border-bottom:1px solid #e5e9ef;vertical-align:top;overflow-wrap:anywhere;max-width:290px}.ds-table th{background:#f8fafc;color:#52627a;font-weight:600;white-space:nowrap}.ds-table tbody tr:last-child td{border-bottom:0}.ds-table tbody tr:hover{background:#fbfcff}.ds-table .ds-numeric{text-align:right;font-variant-numeric:tabular-nums}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Clear Administration",
+    "overview": "Solid white surfaces sit on a light gray-blue canvas. Chinese system typography, restrained blue actions, and aligned records make account operations and usage inspection easy to scan. The visual character is quiet, direct, and data-focused.\n\nThis design system governs the independent administration entry at `/admin/login` and the `/admin` workspace, including users, invitations, usage, and audit pages. The player console retains the separate [Pixel Game Windows design system](../../DESIGN.md). Administration uses its own [stylesheet](admin.css) and [application entry](AdminApp.vue).",
+    "keyCharacteristics": [
+      "Opaque white surfaces, fine borders, and gently curved corners.",
+      "Blue actions and active navigation with explicit text labels.",
+      "Desktop sidebar navigation and a wrapping top navigation on narrow screens.",
+      "Full data tables with local horizontal scrolling and aligned numeric columns."
+    ],
+    "rules": [
+      {
+        "name": "The Solid Surface Rule",
+        "body": "Administration panels, navigation, and fields use opaque fills over the canvas.",
+        "section": "colors"
+      },
+      {
+        "name": "The Numeric Alignment Rule",
+        "body": "Align numeric table headings and values to the right and preserve tabular figures.",
+        "section": "typography"
+      },
+      {
+        "name": "The Contained Table Rule",
+        "body": "Keep horizontal data overflow within the table region so the surrounding page remains readable at narrow widths.",
+        "section": "layout"
+      }
+    ],
+    "dos": [
+      "Do use opaque white administration surfaces and the blue action palette.",
+      "Do preserve readable Chinese system typography and aligned numeric columns.",
+      "Do keep complete table columns inside keyboard-focusable horizontal scroll regions.",
+      "Do pair every account, request, and feedback state with explicit text.",
+      "Do retain visible focus when opening user details or cancelling confirmations."
+    ],
+    "donts": [
+      "Don't apply player-console farm scenery, translucent game windows, or game-connection navigation to administration.",
+      "Don't substitute decorative typefaces for the Chinese system font stack.",
+      "Don't make the page itself the horizontal scrolling surface for a data table.",
+      "Don't use color alone to communicate state or destructive consequences."
+    ]
+  }
+}
