@@ -20,6 +20,34 @@ go test -race ./runtime/...
 
 On Windows, the race detector requires a working 64-bit C toolchain. Run it on Linux, CI, or a Windows machine with the required compiler installed.
 
+## Knowledge Retrieval
+
+The official Stardew source profile enables `knowledge.enabled`. Other and older profiles default to disabled. The catalog is `<definition_catalog_root>/<game_id>/knowledge/catalog.json`; relative roots resolve against the Runtime data root. It uses the `v1` JSON schema, explicit public or definition-scoped visibility, stable entry IDs and a source version. Source files persist; each Runtime instance rebuilds its own in-memory SQLite index. No separate database service, Protocol update or Mod rebuild is required.
+
+Automatic retrieval runs once after observation and before the first model call. The model may call `search_knowledge` during subsequent steps. Both paths share filtering and ranking. The automatic block is limited to three whole entries and 768 estimated tokens; each tool result is limited to three entries and 1024 tokens. Knowledge uses remaining request capacity and existing turn/tool limits. It cannot establish current progress or replace personal history and recent experiences.
+
+Run deterministic coverage with:
+
+```powershell
+go test ./runtime/internal/knowledge ./runtime/internal/tool ./runtime/internal/context ./runtime/internal/agent ./runtime/internal/bootstrap ./runtime/config -run 'Knowledge|SearchScope|CatalogValidation|TaskContext' -count=1
+```
+
+The suite uses SQLite, independent game scopes, captured Provider requests and synthetic observations. It covers visibility, query and output bounds, automatic retrieval, standard tool-result continuation, argument correction, Task invalidation, restart, switching, rollback and preserved configurations. The ordinary full Go suite skips external model calls.
+
+The shared argument validator enforces declared top-level string `minLength` and `maxLength` using Unicode code points. It remains a supported Schema subset; game-side validation retains responsibility for additional capability-specific constraints.
+
+For an opt-in real-provider check, point to an existing model configuration whose credential reference is available, then clear the test opt-in:
+
+```powershell
+$env:WIA_KNOWLEDGE_REAL_CONFIG = Join-Path $env:LOCALAPPDATA 'WorldIsAgent/config/model.json'
+go test ./runtime/internal/agent -run '^TestKnowledgeRealModel$' -count=1 -timeout=180s -v
+$env:WIA_KNOWLEDGE_REAL_CONFIG = $null
+```
+
+This check uses the official profile and a simulated dialogue capability. It does not operate a game window or edit a save. Model replies and current-progress handling must be reviewed separately from deterministic retrieval assertions. See [acceptance](../phase11/phase11.3-acceptance.md) for the current evidence and remaining live-game scope.
+
+Existing Runtime data roots preserve their profile files. To enable the new content, stop that instance and back up its game configuration. Copy the shipped `knowledge/catalog.json` and corresponding `definitions/game.json` to the effective game catalog; merge `knowledge.enabled: true` and the official knowledge-aware `prompt.tool_instruction` into the existing `agent.json`, preserving custom settings. Restart and check `knowledge_retrieved` and the context report's `knowledge_*` fields. Do not replace Memory or Task databases. A missing or invalid enabled catalog prevents the replacement from becoming Ready; a failed replacement restores the prior validated knowledge snapshot.
+
 ## Local Client
 
 The client is built from `console/web` and embedded into the Runtime binary. Build it before running a Runtime whose UI you want to see:

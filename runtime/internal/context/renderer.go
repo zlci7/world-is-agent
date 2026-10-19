@@ -7,6 +7,7 @@ import (
 
 	"gameagent/runtime/internal/definition"
 	"gameagent/runtime/internal/model"
+	"gameagent/runtime/internal/tool"
 )
 
 type Renderer struct{}
@@ -110,6 +111,7 @@ func (r Renderer) renderUserMessage(projection ContextProjection) string {
 		history = RenderHistoryProjection(projection.History)
 	}
 	history += RenderRetrievedHistoryProjection(projection.RetrievedHistory)
+	history += RenderRetrievedKnowledge(projection.RetrievedKnowledge)
 	return renderPlayerPreferences(projection.PlayerPreferences) + history + RenderRecentExperiences(projection.RecentExperiences) + renderTask(projection.Task) + fmt.Sprintf(`[Game Definition]
 %s
 
@@ -154,6 +156,16 @@ func renderAuthorityInstruction(projection ContextProjection) string {
 	}
 	if len(projection.RetrievedHistory.Snippets) > 0 {
 		instruction += "\n\n" + retrievedHistoryAuthorityInstruction
+	}
+	hasKnowledge := len(projection.RetrievedKnowledge.Entries) > 0
+	for _, entry := range projection.Tools {
+		if entry.Name == tool.KnowledgeToolName {
+			hasKnowledge = true
+			break
+		}
+	}
+	if hasKnowledge {
+		instruction += "\n\n" + knowledgeAuthorityInstruction
 	}
 	return instruction
 }

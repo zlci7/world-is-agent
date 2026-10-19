@@ -90,6 +90,10 @@ func (v TurnToolView) RuntimeContext() *RuntimeCallContext {
 }
 
 func cloneRuntimeCallContext(value RuntimeCallContext) RuntimeCallContext {
+	if value.Knowledge != nil {
+		scope := *value.Knowledge
+		value.Knowledge = &scope
+	}
 	value.Execution.Source = cloneRuntimeSource(value.Execution.Source)
 	if value.ObservedTask == nil {
 		return value

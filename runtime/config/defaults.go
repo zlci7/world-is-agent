@@ -14,6 +14,7 @@ import (
 
 	"gameagent/runtime/internal/agent"
 	"gameagent/runtime/internal/definition"
+	"gameagent/runtime/internal/knowledge"
 )
 
 const (
@@ -125,7 +126,14 @@ func AssetsStatus(configDir, gameID string) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return &Error{Code: CodeStorageUnavailable, Path: profilePath, Err: err}
 	}
+	cfg, err := agent.LoadConfigFile(profilePath)
+	if err != nil {
+		return &Error{Code: CodeProfileInvalid, Path: profilePath, Err: err}
+	}
 	for _, asset := range shippedAssets(gameID) {
+		if !cfg.Knowledge.Enabled && strings.HasPrefix(filepath.ToSlash(asset), "games/"+gameID+"/knowledge/") {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(configDir, filepath.FromSlash(asset))); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return &Error{Code: CodeProfileAssetsMissing, Path: asset, Err: err}
@@ -133,8 +141,14 @@ func AssetsStatus(configDir, gameID string) error {
 			return &Error{Code: CodeStorageUnavailable, Path: asset, Err: err}
 		}
 	}
-	if _, err := definition.LoadGameCatalogFromDir(filepath.Join(configDir, "games"), gameID); err != nil {
+	catalog, err := definition.LoadGameCatalogFromDir(filepath.Join(configDir, "games"), gameID)
+	if err != nil {
 		return &Error{Code: CodeProfileInvalid, Path: filepath.Join(configDir, "games", gameID, "definitions"), Err: err}
+	}
+	if cfg.Knowledge.Enabled {
+		if err := knowledge.ValidateFile(filepath.Join(configDir, "games"), gameID, catalog); err != nil {
+			return &Error{Code: CodeProfileInvalid, Path: profilePath, Err: err}
+		}
 	}
 	return nil
 }
@@ -167,6 +181,11 @@ func PrepareGame(configDir, gameID string) (*PreparedGame, error) {
 	p.Catalog, err = definition.LoadGameCatalogFromDir(filepath.Join(stage, "games"), gameID)
 	if err != nil {
 		return fail(&Error{Code: CodeProfileInvalid, Path: filepath.Join(stage, "games", gameID, "definitions"), Err: err})
+	}
+	if p.AgentConfig.Knowledge.Enabled {
+		if err := knowledge.ValidateFile(filepath.Join(stage, "games"), gameID, p.Catalog); err != nil {
+			return fail(&Error{Code: CodeProfileInvalid, Path: p.AgentConfigPath, Err: err})
+		}
 	}
 	return p, nil
 }
@@ -404,7 +423,7 @@ func shippedAssets(gameID string) []string {
 	var paths []string
 	_ = fs.WalkDir(defaults, "games/"+gameID, func(path string, e fs.DirEntry, err error) error {
 		relative := strings.TrimPrefix(path, "games/"+gameID+"/")
-		if err == nil && !e.IsDir() && (relative == profileFile || strings.HasPrefix(relative, "definitions/")) {
+		if err == nil && !e.IsDir() && (relative == profileFile || strings.HasPrefix(relative, "definitions/") || relative == "knowledge/catalog.json") {
 			paths = append(paths, path)
 		}
 		return err

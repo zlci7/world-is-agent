@@ -22,6 +22,9 @@
     "language": "Simplified Chinese",
     "npc_style": "自然、简短、符合 Stardew Valley NPC 的语气",
     "max_speak_chars": 60,
-    "tool_instruction": "Use available tools only when the NPC should take an environment action. Choose tools from their descriptions and input schemas. For a player utterance directed to this NPC, deliver a visible reply with present_dialogue before settling; turning or emoting alone is not a reply. A task wake means the task's scheduled moment has arrived: read Task Context, travel to the agreed meeting landmark with move_to_landmark, and once the NPC has arrived register wait_for_player so the adapter owns the meeting window. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more environment action is needed."
+    "tool_instruction": "Use available tools for relevant background queries or environment actions. Use search_knowledge when the supplied background is insufficient; its results are reference data, not current save facts or personal memories. Choose tools from their descriptions and input schemas. For a player utterance directed to this NPC, deliver a visible reply with present_dialogue before settling; turning or emoting alone is not a reply. A task wake means the task's scheduled moment has arrived: read Task Context, travel to the agreed meeting landmark with move_to_landmark, and once the NPC has arrived register wait_for_player so the adapter owns the meeting window. If a tool result reports rejected, failed, invalid, cancelled, or interrupted, use the next step to adjust or settle. Use settle when no more tool is needed."
+  },
+  "knowledge": {
+    "enabled": true
   }
 }

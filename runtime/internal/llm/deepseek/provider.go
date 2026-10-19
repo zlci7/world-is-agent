@@ -308,7 +308,7 @@ func buildSystemContent(system string, controls []model.ControlDefinition) strin
 		if control.Kind != model.ControlSettle {
 			continue
 		}
-		settleInstruction := "When the current turn needs no environment action, return no tool calls."
+		settleInstruction := "When the current turn needs no further tool, return no tool calls."
 		if control.Description != "" {
 			settleInstruction += " " + control.Description
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	agentcontext "gameagent/runtime/internal/context"
+	"gameagent/runtime/internal/knowledge"
 	"gameagent/runtime/internal/memory"
 	"os"
 	"time"
@@ -42,6 +43,7 @@ var removedByteBudgetFields = []removedBudgetField{
 
 type Config struct {
 	Task                          TaskConfig
+	Knowledge                     knowledge.Config
 	TurnTimeout                   time.Duration
 	LLMTimeout                    time.Duration
 	ObserveTimeout                time.Duration
@@ -86,6 +88,7 @@ type Config struct {
 
 type fileConfig struct {
 	Task                          TaskConfig            `json:"task"`
+	Knowledge                     knowledge.Config      `json:"knowledge"`
 	TurnTimeoutMS                 int64                 `json:"turn_timeout_ms"`
 	LLMTimeoutMS                  int64                 `json:"llm_timeout_ms"`
 	ObserveTimeoutMS              int64                 `json:"observe_timeout_ms"`
@@ -234,6 +237,7 @@ func LoadConfigFile(path string) (Config, error) {
 
 	cfg := Config{
 		Task:                          raw.Task,
+		Knowledge:                     raw.Knowledge,
 		MemoryEnabled:                 raw.MemoryEnabled,
 		TurnTimeout:                   durationMS(raw.TurnTimeoutMS),
 		LLMTimeout:                    durationMS(raw.LLMTimeoutMS),

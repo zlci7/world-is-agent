@@ -43,7 +43,7 @@ func (r *Runtime) replaceLocked(cfg agent.Config, catalog definition.Catalog, pr
 			return r.publishFailure(previous, StateBlocked, "initialization_failed", err)
 		}
 	}
-	candidate, err := r.prepareBundle(cfg, catalog, provider)
+	candidate, err := r.prepareBundle(cfg, catalog, provider, next.ConfiguredGame.ID)
 	if err == nil && r.testBeforePublish != nil {
 		if err = r.testBeforePublish(); err != nil {
 			err = r.abortCandidate(candidate, err)
@@ -67,7 +67,7 @@ func (r *Runtime) replaceLocked(cfg agent.Config, catalog definition.Catalog, pr
 			r.mu.Unlock()
 			return r.publishFailure(previous, StateNeedsConfiguration, "initialization_failed", err)
 		}
-		restored, restoreErr := r.prepareBundle(old.config, old.catalog, old.provider)
+		restored, restoreErr := r.prepareBundle(old.config, old.catalog, old.provider, old.gameID, old.knowledge)
 		if restoreErr != nil {
 			return r.publishFailure(previous, StateBlocked, "initialization_failed", errors.Join(err, restoreErr))
 		}

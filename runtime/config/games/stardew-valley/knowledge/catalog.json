@@ -1,0 +1,191 @@
+{
+  "schema_version": "v1",
+  "game_id": "stardew-valley",
+  "source_version": "stardew-knowledge-v1",
+  "entries": [
+    {
+      "id": "town.center",
+      "title": "鹈鹕镇与商店",
+      "aliases": [
+        "鹈鹕镇",
+        "皮埃尔",
+        "杂货店",
+        "格斯",
+        "星之果实餐吧",
+        "餐吧",
+        "酒吧",
+        "Pierre",
+        "Gus",
+        "saloon"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "鹈鹕镇是居民日常交往的中心。皮埃尔的杂货店售卖种子等商品；格斯经营星之果实餐吧，居民会在那里吃饭、聊天和消遣。营业与人物当前在场情况以游戏事实为准。"
+    },
+    {
+      "id": "mountain.neighbors",
+      "title": "山地与木匠店",
+      "aliases": [
+        "山地",
+        "木匠店",
+        "罗宾",
+        "德米特里厄斯",
+        "玛鲁",
+        "塞巴斯蒂安",
+        "莱纳斯",
+        "Robin",
+        "Demetrius",
+        "Maru",
+        "Sebastian",
+        "Linus"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "山地一带有湖泊、矿洞和罗宾的木匠店。罗宾从事建造与房屋升级；德米特里厄斯研究自然，玛鲁喜欢科学与制作，塞巴斯蒂安从事编程。莱纳斯平常在附近搭帐篷生活。"
+    },
+    {
+      "id": "abigail.public-life",
+      "title": "阿比盖尔的家庭与兴趣",
+      "aliases": [
+        "阿比盖尔",
+        "皮埃尔",
+        "卡罗琳",
+        "音乐",
+        "冒险",
+        "Abigail",
+        "Caroline"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "阿比盖尔是皮埃尔和卡罗琳的女儿，与山姆、塞巴斯蒂安是朋友。她关心音乐、游戏和冒险；这类兴趣不表示已经发生某段共同剧情。"
+    },
+    {
+      "id": "activities.seasons",
+      "title": "季节与生活活动",
+      "aliases": [
+        "季节",
+        "作物",
+        "种植",
+        "觅食",
+        "采矿",
+        "钓鱼",
+        "森林",
+        "海滩",
+        "fishing",
+        "crops"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "森林、山地和海滩与种植、觅食、采矿、钓鱼等生活活动有关。不同季节会有不同的作物、采集物和节日；不凭背景知识断言玩家已经种植、采集或参加过。"
+    },
+    {
+      "id": "facilities.transport",
+      "title": "建设设施与交通用途",
+      "aliases": [
+        "社区中心",
+        "Joja",
+        "公交",
+        "巴士",
+        "沙漠",
+        "矿车",
+        "温室",
+        "greenhouse",
+        "bus",
+        "minecart"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "社区中心与 Joja 都涉及镇上的建设变化。公交用于往返沙漠，矿车连接部分地点，温室能够提供跨季节种植的环境；它们在当前存档中的状态须由观察确认。"
+    },
+    {
+      "id": "town.services",
+      "title": "镇民的职业与服务",
+      "aliases": [
+        "诊所",
+        "哈维",
+        "铁匠铺",
+        "克林特",
+        "玛妮",
+        "牧场",
+        "潘妮",
+        "贾斯",
+        "文森特",
+        "Harvey",
+        "Clint",
+        "Marnie",
+        "Penny",
+        "clinic"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "哈维经营诊所，玛鲁在那里帮忙；克林特经营铁匠铺，玛妮经营牧场，潘妮教导贾斯和文森特。职业提供讨论领域，当前营业、订单、库存和具体服务须由游戏事实确认。"
+    },
+    {
+      "id": "families.public",
+      "title": "公开的家庭关系",
+      "aliases": [
+        "乔迪",
+        "肯特",
+        "山姆",
+        "文森特",
+        "艾芙琳",
+        "乔治",
+        "亚历克斯",
+        "艾米丽",
+        "海莉",
+        "Jodi",
+        "Kent",
+        "Sam",
+        "Vincent",
+        "Evelyn",
+        "George",
+        "Alex",
+        "Emily",
+        "Haley"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "乔迪与肯特是山姆和文森特的父母；艾芙琳与乔治是亚历克斯的祖父母；艾米丽与海莉是姐妹。亲属关系不表示玩家已经认识所有家庭成员。"
+    },
+    {
+      "id": "friends.public",
+      "title": "公开的朋友关系",
+      "aliases": [
+        "朋友",
+        "山姆",
+        "塞巴斯蒂安",
+        "阿比盖尔",
+        "艾米丽",
+        "桑迪",
+        "Sam",
+        "Sebastian",
+        "Abigail",
+        "Emily",
+        "Sandy"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "山姆、塞巴斯蒂安和阿比盖尔有共同兴趣；艾米丽与桑迪是朋友。角色可以知道公开关系，不自动知道彼此的私人谈话、玩家任务或当前行踪。"
+    },
+    {
+      "id": "buildings.coop",
+      "title": "鸡舍的一般用途",
+      "aliases": [
+        "鸡舍",
+        "coop"
+      ],
+      "visibility": {
+        "kind": "public"
+      },
+      "text": "鸡舍用于饲养鸡等动物，建造与升级由木匠店提供。当前是否能够建造，以及玩家已有建筑和资源，以当前游戏事实为准。"
+    }
+  ]
+}

@@ -17,12 +17,13 @@ type taskRuntimeEnvironment interface {
 }
 
 type taskTurnContext struct {
-	env       Environment
-	service   *task.Service
-	world     tool.TaskWorld
-	tools     *tool.TaskTools
-	authority tool.RuntimeCallContext
-	catalog   *tool.EnvironmentToolCatalog
+	env         Environment
+	service     *task.Service
+	world       tool.TaskWorld
+	tools       *tool.TaskTools
+	authority   tool.RuntimeCallContext
+	catalog     *tool.EnvironmentToolCatalog
+	readEntries []tool.Entry
 	// checkpointID is the authority this snapshot was read under.
 	checkpointID string
 }
@@ -64,7 +65,7 @@ func (t *taskTurnContext) snapshot(ctx context.Context, config tool.ToolAdmissio
 		if t.background() {
 			return tool.ToolAdmissionResult{}, task.ErrGenerationStale
 		}
-		return t.catalog.BuildTurnToolView(config), nil
+		return admitReadTools(t.catalog, config, t.readEntries, tool.RuntimeCallContext{Knowledge: rc.Knowledge})
 	}
 	t.checkpointID = head.CheckpointID
 	if rc.Execution.Source.Kind == task.SourceKindTaskWake {
@@ -94,9 +95,10 @@ func (t *taskTurnContext) snapshot(ctx context.Context, config tool.ToolAdmissio
 		if t.background() {
 			return tool.ToolAdmissionResult{}, task.ErrGenerationStale
 		}
-		return t.catalog.BuildTurnToolView(config), nil
+		return admitReadTools(t.catalog, config, t.readEntries, tool.RuntimeCallContext{Knowledge: rc.Knowledge})
 	}
-	registry, err := tool.NewRegistry(t.catalog, t.tools.Entries(rc))
+	entries := append(append([]tool.Entry{}, t.readEntries...), t.tools.Entries(rc)...)
+	registry, err := tool.NewRegistry(t.catalog, entries)
 	if err != nil {
 		return tool.ToolAdmissionResult{}, tool.SanitizeTaskError(err)
 	}

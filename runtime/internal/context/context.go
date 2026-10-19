@@ -8,6 +8,7 @@ import (
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
 	"gameagent/runtime/internal/definition"
 	"gameagent/runtime/internal/experience"
+	"gameagent/runtime/internal/knowledge"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/session"
@@ -82,6 +83,7 @@ type ContextBuildReport struct {
 	History                 HistoryReport
 	RecentExperiences       ExperiencesReport
 	RetrievedHistory        RetrievedHistoryReport
+	Knowledge               KnowledgeReport
 	Transcript              RetentionReport
 	Task                    TaskContextReport
 	ToolAdmission           ToolAdmissionSummary
@@ -205,12 +207,13 @@ type ContextProjection struct {
 	CurrentObservation       ObservationProjection
 	Task                     *TaskProjection
 
-	RecentMemory      []MemoryProjection
-	History           HistoryProjection
-	RecentExperiences []ExperienceUnit
-	RetrievedHistory  RetrievedHistoryProjection
-	historyEnabled    bool
-	retrievalEnabled  bool
+	RecentMemory       []MemoryProjection
+	History            HistoryProjection
+	RecentExperiences  []ExperienceUnit
+	RetrievedHistory   RetrievedHistoryProjection
+	RetrievedKnowledge knowledge.Result
+	historyEnabled     bool
+	retrievalEnabled   bool
 
 	Tools []model.ToolDefinition
 
@@ -267,6 +270,7 @@ type BuildInput struct {
 	RecentMemories    []memory.Record
 	History           *HistoryInput
 	Retrieval         *RetrievedHistoryInput
+	Knowledge         *RetrievedKnowledgeInput
 	RecentExperiences *RecentExperiencesInput
 
 	Event       *protocolv1alpha2.GameEvent
@@ -380,8 +384,21 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 		}
 		refreshRetrievedHistoryReport(projection, &report)
 	}
+	var knowledgeErr error
+	projection, knowledgeErr = e.projectKnowledge(projection, input.Knowledge, &report, err)
+	for i := range report.Sections {
+		if report.Sections[i].Name == "instruction" {
+			report.Sections[i].ProjectionEstimatedTokens = sectionProjectionEstimatedTokens(renderAuthorityInstruction(projection))
+		}
+	}
+	if input.Knowledge != nil {
+		report.Sections = append(report.Sections, SectionReport{Name: "retrieved_knowledge", Included: len(projection.RetrievedKnowledge.Entries) > 0, ProjectionEstimatedTokens: report.Knowledge.EstimatedTokens, Cropped: report.Knowledge.DroppedCount > 0, Reason: report.Knowledge.Diagnostic})
+	}
 	if err != nil {
 		return BuildResult{Projection: projection, Report: report}, err
+	}
+	if knowledgeErr != nil {
+		return BuildResult{Projection: projection, Report: report}, knowledgeErr
 	}
 	size, err := measureProjectionRequest(projection)
 	if err != nil {
@@ -397,6 +414,7 @@ func (e Engine) Build(input BuildInput) (BuildResult, error) {
 func newContextBuildReport(projection ContextProjection, input BuildInput, budget BudgetConfig, recentMemory RetentionReport, transcript RetentionReport) ContextBuildReport {
 	report := ContextBuildReport{
 		EffectiveBudget:         budget,
+		Knowledge:               KnowledgeReport{Status: "disabled"},
 		Sections:                sectionReportsForProjection(projection),
 		GameDefinitionFallback:  input.GameDefinition == nil,
 		AgentDefinitionFallback: input.CanonicalTarget.GetDefinitionId() != "" && input.AgentDefinition == nil,

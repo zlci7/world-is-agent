@@ -11,6 +11,7 @@ import (
 	"gameagent/runtime/internal/definition"
 	"gameagent/runtime/internal/experience"
 	"gameagent/runtime/internal/idgen"
+	"gameagent/runtime/internal/knowledge"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/session"
@@ -49,6 +50,7 @@ type Loop struct {
 	historyState      historyRuntimeState
 	maintenanceState  historyMaintenanceState
 	definitions       definition.Catalog
+	knowledge         *knowledge.Service
 	contextEngine     agentcontext.Engine
 	contextRenderer   agentcontext.Renderer
 	playerPreferences func() agentcontext.PlayerPreferences
@@ -263,10 +265,32 @@ func (l *Loop) handleEventWithToolAdmission(
 	if len(catalogs) > 0 {
 		taskContext = l.beginTaskContext(env, key, event, turnID, catalogs[0])
 	}
-	return l.handleTurn(ctx, env, conn, key, target, toolAdmission, event, turnID, taskContext)
+	var catalog *tool.EnvironmentToolCatalog
+	if len(catalogs) > 0 {
+		catalog = catalogs[0]
+	}
+	return l.handleTurn(ctx, env, conn, key, target, toolAdmission, event, turnID, taskContext, catalog)
 }
 
-func (l *Loop) handleTurn(ctx context.Context, env Environment, conn ConnectionContext, key session.AgentSessionKey, target *protocolv1alpha2.EntityRef, toolAdmission tool.ToolAdmissionResult, event *protocolv1alpha2.GameEvent, turnID string, taskContext *taskTurnContext) error {
+func (l *Loop) handleTurn(ctx context.Context, env Environment, conn ConnectionContext, key session.AgentSessionKey, target *protocolv1alpha2.EntityRef, toolAdmission tool.ToolAdmissionResult, event *protocolv1alpha2.GameEvent, turnID string, taskContext *taskTurnContext, catalog *tool.EnvironmentToolCatalog) error {
+	var knowledgeScope *knowledge.ReadScope
+	if l.config.Knowledge.Enabled {
+		if l.knowledge == nil {
+			return fmt.Errorf("knowledge is enabled without a loaded catalog")
+		}
+		scope := l.knowledge.Scope(key, target.GetDefinitionId(), target.GetDisplayName())
+		knowledgeScope = &scope
+		entries := []tool.Entry{tool.NewKnowledgeTools(l.knowledge).Entry()}
+		var err error
+		toolAdmission, err = admitReadTools(catalog, l.toolAdmissionConfig(), entries, tool.RuntimeCallContext{Knowledge: knowledgeScope})
+		if err != nil {
+			return err
+		}
+		if taskContext != nil {
+			taskContext.readEntries = entries
+			taskContext.authority.Knowledge = knowledgeScope
+		}
+	}
 	toolView := toolAdmission.View
 	tools := toolView.Available()
 	ctx, cancelTurn := context.WithTimeout(ctx, l.config.TurnTimeout)
@@ -352,7 +376,11 @@ func (l *Loop) handleTurn(ctx context.Context, env Environment, conn ConnectionC
 			retrieval = l.prepareRetrieval(ctx, turnTracer, prepared.Snapshot, memory.CurrentGameTime(event, obs), event, experienceView)
 		}
 	}
-	return l.runBoundedSteps(ctx, env, key, target, descriptor, event, obs, recentMemories, toolView, toolAdmission.Report, turnID, turnTracer, history, retrieval, taskContext)
+	var retrievedKnowledge *agentcontext.RetrievedKnowledgeInput
+	if knowledgeScope != nil {
+		retrievedKnowledge = l.prepareKnowledge(ctx, turnTracer, *knowledgeScope, event)
+	}
+	return l.runBoundedSteps(ctx, env, key, target, descriptor, event, obs, recentMemories, toolView, toolAdmission.Report, turnID, turnTracer, history, retrieval, retrievedKnowledge, taskContext)
 }
 
 func (l *Loop) runBoundedSteps(
@@ -370,6 +398,7 @@ func (l *Loop) runBoundedSteps(
 	turnTracer trace.TurnTracer,
 	history *agentcontext.HistoryInput,
 	retrieval *agentcontext.RetrievedHistoryInput,
+	retrievedKnowledge *agentcontext.RetrievedKnowledgeInput,
 	taskContexts ...*taskTurnContext,
 ) error {
 	var taskContext *taskTurnContext
@@ -417,7 +446,7 @@ func (l *Loop) runBoundedSteps(
 			toolView, toolAdmissionReport = admission.View, admission.Report
 			taskContext.emitTrace(turnTracer, toolView, stepIndex)
 		}
-		req, buildReport, err := l.buildModelRequestWithRetrieval(key, target, descriptor, event, obs, recentMemories, toolView, toolAdmissionReport, transcript, history, retrieval)
+		req, buildReport, err := l.buildModelRequestWithRetrieval(key, target, descriptor, event, obs, recentMemories, toolView, toolAdmissionReport, transcript, history, retrieval, retrievedKnowledge)
 		if err != nil {
 			turnTracer.Emit(trace.EventContextRequestBuildFailed, trace.EventData{
 				Fields: contextBuildTraceFields(stepIndex, buildReport),
@@ -867,7 +896,12 @@ func (l *Loop) buildModelRequestWithRetrieval(
 	transcript []model.Message,
 	history *agentcontext.HistoryInput,
 	retrieval *agentcontext.RetrievedHistoryInput,
+	knowledgeInputs ...*agentcontext.RetrievedKnowledgeInput,
 ) (model.Request, agentcontext.ContextBuildReport, error) {
+	var retrievedKnowledge *agentcontext.RetrievedKnowledgeInput
+	if len(knowledgeInputs) > 0 {
+		retrievedKnowledge = knowledgeInputs[0]
+	}
 	gameDefinition, agentDefinition := l.resolveDefinitions(key, descriptor)
 	toolAdmissionSummary := agentcontext.ToolAdmissionSummaryFromReport(toolAdmissionReport)
 	var recentExperiences *agentcontext.RecentExperiencesInput
@@ -887,6 +921,7 @@ func (l *Loop) buildModelRequestWithRetrieval(
 		RecentMemories:    recentMemories,
 		History:           history,
 		Retrieval:         retrieval,
+		Knowledge:         retrievedKnowledge,
 		RecentExperiences: recentExperiences,
 		TurnToolView:      toolView,
 		Transcript:        transcript,
@@ -1145,6 +1180,13 @@ func contextBuildTraceFields(stepIndex int, report agentcontext.ContextBuildRepo
 		"request_user_message_estimated_tokens": report.FinalRequestSize.UserMessageEstimatedTokens,
 		"request_tools_estimated_tokens":        report.FinalRequestSize.ToolsEstimatedTokens,
 		"request_controls_estimated_tokens":     report.FinalRequestSize.ControlsEstimatedTokens,
+		"knowledge_status":                      report.Knowledge.Status,
+		"knowledge_source_version":              report.Knowledge.SourceVersion,
+		"knowledge_content_hash":                report.Knowledge.ContentHash,
+		"knowledge_entry_ids":                   report.Knowledge.EntryIDs,
+		"knowledge_dropped_count":               report.Knowledge.DroppedCount,
+		"knowledge_estimated_tokens":            report.Knowledge.EstimatedTokens,
+		"knowledge_diagnostic":                  report.Knowledge.Diagnostic,
 	}
 	return fields
 }

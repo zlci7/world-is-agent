@@ -4,6 +4,7 @@ import (
 	"context"
 
 	protocolv1alpha2 "gameagent/protocol/gen/go/gameagent/protocol/v1alpha2"
+	"gameagent/runtime/internal/knowledge"
 	"gameagent/runtime/internal/model"
 	"gameagent/runtime/internal/task"
 
@@ -41,6 +42,7 @@ type Entry struct {
 }
 
 type RuntimeCallContext struct {
+	Knowledge           *knowledge.ReadScope
 	Execution           task.ExecutionContext
 	InteractionSourceID string
 	ObservedTask        *task.Record

@@ -62,3 +62,16 @@ func TestValidateArgumentsAppliesCommonInputSchemaConstraints(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateArgumentsStringLengthsUseUnicodeCharacters(t *testing.T) {
+	schema := `{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":2}},"required":["query"]}`
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{{"", false}, {"鱼", true}, {"鱼🐟", true}, {"鱼🐟鱼", false}, {"ab", true}, {"abc", false}} {
+		err := ValidateArguments(schema, map[string]any{"query": tc.value})
+		if (err == nil) != tc.valid {
+			t.Fatalf("query=%q valid=%v error=%v", tc.value, tc.valid, err)
+		}
+	}
+}

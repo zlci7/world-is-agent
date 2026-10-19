@@ -32,7 +32,7 @@ func (l *Loop) HandleTaskWake(ctx context.Context, env Environment, conn Connect
 	exec.Source = task.SourceRef{Kind: task.SourceKindTaskWake, EventID: exec.WakeID, TurnID: turnID, CallID: exec.WakeID}
 	authority := tool.RuntimeCallContext{Execution: exec, ObservedTask: &record, AuthorityEpoch: epoch}
 	turn := &taskTurnContext{env: env, service: service, world: world, tools: tool.NewTaskTools(service, world, authority), authority: authority, catalog: catalog}
-	return l.handleTurn(ctx, env, conn, exec.Owner, target, catalog.BuildTurnToolView(l.toolAdmissionConfig()), nil, turnID, turn)
+	return l.handleTurn(ctx, env, conn, exec.Owner, target, catalog.BuildTurnToolView(l.toolAdmissionConfig()), nil, turnID, turn, catalog)
 }
 
 func (t *taskTurnContext) background() bool {

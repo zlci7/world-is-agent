@@ -91,7 +91,8 @@ These are the core cognitive layers of WIA.
 
 - Identity decides which agent a world event belongs to.
 - Memory stores agent state under that identity. The default MVP0 backend is SQLite, physically separated by game and world and scoped by entity, with an in-memory backend available for tests and local runs.
-- Context builds the model input from current observation, recent memory, transcript, tools, and runtime policy.
+- Knowledge stores authored background under the selected Game Profile. An immutable catalog and an instance-local SQLite index serve automatic retrieval and the read-only `search_knowledge` Runtime tool. Visibility is filtered by game and character definition before ranking; knowledge does not establish current save progress or personal experience.
+- Context builds the model input from current observations, definitions, memory and recent experiences, retrieved history and knowledge, task state, transcript, tools, and runtime policy. Optional retrieved knowledge uses remaining request capacity after existing projections.
 
 ### Agent
 
@@ -155,6 +156,7 @@ The current MVP0 implementation includes:
 - Stable agent identity by game, world, and entity.
 - SQLite-backed memory, physically separated by game and world and scoped by entity, with bounded recent memory, session history, summaries, and history retrieval; an in-memory backend remains for tests and local runs.
 - Context projection with a deterministic estimated-token budget.
+- Optional profile-scoped background retrieval and a bounded knowledge-query tool, independent of Memory and Task enablement.
 - Bounded multi-step AgentTurn.
 - Dynamic capability-driven tools.
 - Sync and async action lifecycle.

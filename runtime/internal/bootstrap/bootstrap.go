@@ -21,6 +21,7 @@ import (
 	"gameagent/runtime/internal/definition"
 	"gameagent/runtime/internal/gateway"
 	"gameagent/runtime/internal/idgen"
+	"gameagent/runtime/internal/knowledge"
 	"gameagent/runtime/internal/llm"
 	"gameagent/runtime/internal/memory"
 	"gameagent/runtime/internal/model"
@@ -92,6 +93,8 @@ type Snapshot struct {
 
 type runtimeBundle struct {
 	id          string
+	gameID      string
+	knowledge   *knowledge.Service
 	readContext context.Context
 	cancelReads context.CancelFunc
 	config      agent.Config
@@ -306,7 +309,7 @@ func (r *Runtime) configureLocked() error {
 	if err != nil {
 		return fail(StateNeedsConfiguration, "model_configuration_required", errors.New(modelReason(r.modelPath, err)))
 	}
-	candidate, err := r.prepareBundle(cfg, catalog, provider)
+	candidate, err := r.prepareBundle(cfg, catalog, provider, game.ID)
 	if err == nil && r.testBeforePublish != nil {
 		if err = r.testBeforePublish(); err != nil {
 			err = r.abortCandidate(candidate, err)
@@ -357,8 +360,23 @@ func (r *Runtime) rejectOverride(err error) error {
 	return &config.Error{Code: "override_configuration_invalid", Err: err}
 }
 
-func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, provider model.Provider) (*runtimeBundle, error) {
+func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, provider model.Provider, gameID string, restoreSources ...*knowledge.Service) (*runtimeBundle, error) {
+	var knowledgeService *knowledge.Service
+	if cfg.Knowledge.Enabled {
+		var err error
+		if len(restoreSources) > 0 && restoreSources[0] != nil {
+			knowledgeService, err = restoreSources[0].Reopen(context.Background())
+		} else {
+			knowledgeService, err = knowledge.Load(context.Background(), cfg.DefinitionCatalogRoot, gameID, catalog)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := os.MkdirAll(cfg.MemoryStore.Root, 0o755); err != nil {
+		if knowledgeService != nil {
+			_ = knowledgeService.Close()
+		}
 		return nil, err
 	}
 	history := memory.NewSQLiteHistoryStore(memory.SQLiteStoreOptions{
@@ -367,8 +385,8 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 		MaxProjectionBatchesPerEntity: cfg.MemoryStore.MaxProjectionBatchesPerEntity,
 	}, cfg.History, memory.WithHistoryIndexLimits(cfg.HistoryIndex))
 	readContext, cancelReads := context.WithCancel(context.Background())
-	candidate := &runtimeBundle{id: idgen.New("instance"), readContext: readContext, cancelReads: cancelReads, config: cfg, catalog: catalog, provider: provider, history: history}
-	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history), agent.WithPlayerPreferences(r.playerPreferences))
+	candidate := &runtimeBundle{id: idgen.New("instance"), gameID: gameID, knowledge: knowledgeService, readContext: readContext, cancelReads: cancelReads, config: cfg, catalog: catalog, provider: provider, history: history}
+	candidate.loop = agent.NewLoop(provider, r.recorder, cfg, agent.WithDefinitionCatalog(catalog), agent.WithHistoryStore(history), agent.WithPlayerPreferences(r.playerPreferences), agent.WithKnowledge(knowledgeService))
 	options := []gateway.ServerOption{gateway.WithConnectionReady(func() { r.mu.Lock(); r.lastConnectionError = nil; r.mu.Unlock() })}
 	if cfg.MemoryEnabledValue() {
 		options = append(options, gateway.WithExperienceHistory(history))
@@ -378,8 +396,7 @@ func (r *Runtime) prepareBundle(cfg agent.Config, catalog definition.Catalog, pr
 		storeOptions.Path = cfg.Task.DBPath
 		store, err := task.OpenSQLiteStore(context.Background(), storeOptions)
 		if err != nil {
-			cancelReads()
-			return nil, err
+			return nil, r.abortCandidate(candidate, err)
 		}
 		candidate.taskStore = store
 		options = append(options, gateway.WithTaskService(task.NewService(store)), gateway.WithTaskResultHistory(history))
@@ -741,6 +758,9 @@ func closeBundle(bundle *runtimeBundle) error {
 	}
 	if bundle.taskStore != nil {
 		result = errors.Join(result, bundle.taskStore.Close())
+	}
+	if bundle.knowledge != nil {
+		result = errors.Join(result, bundle.knowledge.Close())
 	}
 	return result
 }

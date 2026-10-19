@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 )
 
 type argumentSchema struct {
@@ -16,8 +17,10 @@ type argumentSchema struct {
 }
 
 type propertySchema struct {
-	Type string `json:"type"`
-	Enum []any  `json:"enum"`
+	Type      string `json:"type"`
+	Enum      []any  `json:"enum"`
+	MinLength *int   `json:"minLength"`
+	MaxLength *int   `json:"maxLength"`
 }
 
 func ValidateArguments(inputSchema string, arguments map[string]any) error {
@@ -53,6 +56,15 @@ func ValidateArguments(inputSchema string, arguments map[string]any) error {
 		}
 		if property.Type != "" && !valueMatchesJSONSchemaType(value, property.Type) {
 			return fmt.Errorf("argument %q must be %s", name, property.Type)
+		}
+		if text, ok := value.(string); ok {
+			length := utf8.RuneCountInString(text)
+			if property.MinLength != nil && length < *property.MinLength {
+				return fmt.Errorf("argument %q must contain at least %d characters", name, *property.MinLength)
+			}
+			if property.MaxLength != nil && length > *property.MaxLength {
+				return fmt.Errorf("argument %q must contain at most %d characters", name, *property.MaxLength)
+			}
 		}
 	}
 	return nil
